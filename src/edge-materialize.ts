@@ -3,6 +3,7 @@ import {
 	DEFAULT_ENDPOINT_CLEARANCE,
 	type EndpointAttach,
 	type EndpointOutline,
+	outlineReach,
 	trimEdgeEndpoints,
 } from "./edge-endpoint-attach";
 import { type EdgeLodTier, sampleEdgePath } from "./edge-paths";
@@ -29,6 +30,9 @@ export interface EdgeSegmentInstance {
 	width: number;
 	opacity: number;
 	style: GraphraumEdgeStyle;
+	/** World units the shader trims off the start / end on screen (3D boundary ends); 0 keeps it. */
+	trimStart: number;
+	trimEnd: number;
 }
 
 export interface EdgeMarkerInstance {
@@ -43,6 +47,8 @@ export interface EdgeMarkerInstance {
 	color: GraphraumColor;
 	size: number; // screen px, derived from width * markerSize
 	opacity: number;
+	/** World units the shader pulls the apex back from (x, y, z) on screen (3D boundary ends). */
+	trim: number;
 }
 
 export function packEdgeInstances(input: {
@@ -63,7 +69,10 @@ export function packEdgeInstances(input: {
 	edgeNodeIndices?: Uint32Array;
 	/** Host-owned edge states (selection) applied on top of the edge visual. */
 	edgeStates?: EdgeStateStyling;
-	/** Render mode; `3d` trims boundary ends along the 3D segment. */
+	/**
+	 * Render mode. `2d` trims boundary ends here. `3d` keeps node centers and leaves the trim to the
+	 * shader, which knows the camera: the end then meets the camera-facing outline from every view.
+	 */
 	mode: GraphraumMode;
 }): { segments: EdgeSegmentInstance[]; markers: EdgeMarkerInstance[]; truncated: boolean } {
 	const segments: EdgeSegmentInstance[] = [];
@@ -80,26 +89,32 @@ export function packEdgeInstances(input: {
 		let x2 = input.endpointPositions[base + 3] ?? 0;
 		let y2 = input.endpointPositions[base + 4] ?? 0;
 		let z2 = input.endpointPositions[base + 5] ?? 0;
+		let trimSource = 0;
+		let trimTarget = 0;
 		if (attach === "boundary" && input.nodeOutlines && input.edgeNodeIndices) {
 			const sourceIndex = input.edgeNodeIndices[edgeIndex * 2] ?? 0;
 			const targetIndex = input.edgeNodeIndices[edgeIndex * 2 + 1] ?? 0;
 			const sourceOutline = input.nodeOutlines[sourceIndex] ?? {};
 			const targetOutline = input.nodeOutlines[targetIndex] ?? {};
-			const trimmed = trimEdgeEndpoints({
-				attach,
-				clearance,
-				mode: input.mode,
-				source: { x: x1, y: y1, z: z1 },
-				target: { x: x2, y: y2, z: z2 },
-				sourceOutline,
-				targetOutline,
-			});
-			x1 = trimmed.source.x;
-			y1 = trimmed.source.y;
-			z1 = trimmed.source.z ?? 0;
-			x2 = trimmed.target.x;
-			y2 = trimmed.target.y;
-			z2 = trimmed.target.z ?? 0;
+			if (input.mode === "3d") {
+				trimSource = outlineReach(sourceOutline, clearance);
+				trimTarget = outlineReach(targetOutline, clearance);
+			} else {
+				const trimmed = trimEdgeEndpoints({
+					attach,
+					clearance,
+					source: { x: x1, y: y1, z: z1 },
+					target: { x: x2, y: y2, z: z2 },
+					sourceOutline,
+					targetOutline,
+				});
+				x1 = trimmed.source.x;
+				y1 = trimmed.source.y;
+				z1 = trimmed.source.z ?? 0;
+				x2 = trimmed.target.x;
+				y2 = trimmed.target.y;
+				z2 = trimmed.target.z ?? 0;
+			}
 		}
 		const { color, opacity } = resolveEdgePaint(edgeIndex, visual, input.defaults, input.tier, input.edgeStates);
 		const width = input.tier === "overview" ? input.defaults.width : (visual.width ?? input.defaults.width);
@@ -136,6 +151,8 @@ export function packEdgeInstances(input: {
 				width,
 				opacity,
 				style,
+				trimStart: index === 0 ? trimSource : 0,
+				trimEnd: index === segmentSpans - 1 ? trimTarget : 0,
 			});
 		}
 
@@ -163,6 +180,7 @@ export function packEdgeInstances(input: {
 				color,
 				size: markerSize,
 				opacity,
+				trim: fromSource ? trimSource : trimTarget,
 			});
 		};
 		if (ends === "source" || ends === "both") add("source");

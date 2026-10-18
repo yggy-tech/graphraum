@@ -12,6 +12,7 @@ attribute vec3 instanceEndB;
 attribute vec4 instanceColor;
 attribute float instanceWidth;
 attribute float instanceStyle;
+attribute vec2 instanceTrim;
 
 varying vec4 edgeColor;
 varying float edgeKind;
@@ -35,6 +36,18 @@ void main() {
 		vec2 delta = viewB.xy - viewA.xy;
 		float len = length(delta);
 		vec2 dir = len > 0.0001 ? delta / len : vec2(1.0, 0.0);
+		// 3D boundary ends (see trimViewSegment): stop on the camera-facing outline. A trimmed end
+		// keeps its node's depth, where the billboard is, so it meets the rim from every view.
+		if (instanceTrim.x + instanceTrim.y > 0.0) {
+			if (len - instanceTrim.x - instanceTrim.y <= 0.0) {
+				gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // hidden behind its nodes: clip it away
+				return;
+			}
+			viewA.xy += dir * instanceTrim.x;
+			viewB.xy -= dir * instanceTrim.y;
+			delta = viewB.xy - viewA.xy;
+			len = length(delta);
+		}
 		vec2 perp = vec2(-dir.y, dir.x);
 		vec2 mid = (viewA.xy + viewB.xy) * 0.5;
 		vec2 offset = dir * position.x * len + perp * position.y * instanceWidth;
@@ -49,8 +62,10 @@ void main() {
 		vec2 dir = dirLen > 0.0001 ? dirVec / dirLen : vec2(1.0, 0.0);
 		vec2 perp = vec2(-dir.y, dir.x);
 		float t = position.x + 0.5;
+		// 3D boundary ends pull the apex back onto the camera-facing outline (see markerApexInView).
+		vec2 apex = viewA.xy - dir * instanceTrim.x;
 		vec2 offset = dir * instanceWidth * (t - 1.0) + perp * position.y * instanceWidth;
-		viewPosition = vec4(viewA.xy + offset, viewA.z, 1.0);
+		viewPosition = vec4(apex + offset, viewA.z, 1.0);
 	}
 
 	gl_Position = projectionMatrix * viewPosition;
@@ -85,6 +100,56 @@ void main() {
 }
 `;
 
+/** Per-instance attributes of the edge geometry; updates mark each of them dirty. */
+export const EDGE_INSTANCE_ATTRIBUTES = [
+	"instanceKind",
+	"instanceEndA",
+	"instanceEndB",
+	"instanceColor",
+	"instanceWidth",
+	"instanceStyle",
+	"instanceTrim",
+] as const;
+
+interface ViewPoint {
+	x: number;
+	y: number;
+	z: number;
+}
+
+/**
+ * Reference for the vertex shader's segment trim: moves each view-space end toward the other by its
+ * trim, along the on-screen direction, and keeps its depth. A camera-facing billboard of radius r
+ * sits at its center's view depth, so an end trimmed by r lies exactly on its outline. Returns
+ * `[null, null]` when the trims meet, where the shader drops the segment.
+ */
+export function trimViewSegment(
+	a: ViewPoint,
+	b: ViewPoint,
+	trimA: number,
+	trimB: number,
+): [ViewPoint, ViewPoint] | [null, null] {
+	const length = Math.hypot(b.x - a.x, b.y - a.y);
+	if (length - trimA - trimB <= 0) return [null, null];
+	const dx = (b.x - a.x) / length;
+	const dy = (b.y - a.y) / length;
+	return [
+		{ x: a.x + dx * trimA, y: a.y + dy * trimA, z: a.z },
+		{ x: b.x - dx * trimB, y: b.y - dy * trimB, z: b.z },
+	];
+}
+
+/** Reference for the shader's marker apex: `trim` back from `tip` toward `previous`, at the tip's depth. */
+export function markerApexInView(tip: ViewPoint, previous: ViewPoint, trim: number): ViewPoint {
+	const length = Math.hypot(tip.x - previous.x, tip.y - previous.y);
+	if (length < 1e-4) return { ...tip };
+	return {
+		x: tip.x - ((tip.x - previous.x) / length) * trim,
+		y: tip.y - ((tip.y - previous.y) / length) * trim,
+		z: tip.z,
+	};
+}
+
 export function createEdgeGeometry(capacity: number): BufferGeometry {
 	const geometry = new PlaneGeometry(1, 1);
 	geometry.setAttribute("instanceKind", new InstancedBufferAttribute(new Float32Array(capacity), 1));
@@ -93,6 +158,7 @@ export function createEdgeGeometry(capacity: number): BufferGeometry {
 	geometry.setAttribute("instanceColor", new InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
 	geometry.setAttribute("instanceWidth", new InstancedBufferAttribute(new Float32Array(capacity), 1));
 	geometry.setAttribute("instanceStyle", new InstancedBufferAttribute(new Float32Array(capacity), 1));
+	geometry.setAttribute("instanceTrim", new InstancedBufferAttribute(new Float32Array(capacity * 2), 2));
 	return geometry;
 }
 
@@ -135,6 +201,7 @@ export function writeEdgeSegmentInstance(geometry: BufferGeometry, slot: number,
 	writeEdgeColorSlots(color, slot, 1, segment);
 	width.setX(slot, segment.width);
 	style.setX(slot, encodeEdgeStyle(segment.style));
+	getInstancedAttribute(geometry, "instanceTrim").setXY(slot, segment.trimStart, segment.trimEnd);
 }
 
 export function writeEdgeMarkerInstance(geometry: BufferGeometry, slot: number, marker: EdgeMarkerInstance): void {
@@ -151,6 +218,7 @@ export function writeEdgeMarkerInstance(geometry: BufferGeometry, slot: number, 
 	writeEdgeColorSlots(color, slot, 1, marker);
 	width.setX(slot, marker.size);
 	style.setX(slot, 0);
+	getInstancedAttribute(geometry, "instanceTrim").setXY(slot, marker.trim, 0);
 }
 
 /** Writes one color and opacity into `count` consecutive instance slots starting at `start`. */

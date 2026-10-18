@@ -5,6 +5,7 @@ import { type EdgeMarkerInstance, type EdgeSegmentInstance, packEdgeInstances } 
 import type { EdgeLodTier } from "./edge-paths";
 import type { PickableEdgeSegment } from "./edge-picking";
 import {
+	EDGE_INSTANCE_ATTRIBUTES,
 	getInstancedAttribute,
 	writeEdgeColorSlots,
 	writeEdgeMarkerInstance,
@@ -19,15 +20,6 @@ export interface VisibleEdgeLayout {
 	segmentCount: number;
 	segmentStart: number;
 }
-
-const EDGE_INSTANCE_ATTRIBUTES = [
-	"instanceKind",
-	"instanceEndA",
-	"instanceEndB",
-	"instanceColor",
-	"instanceWidth",
-	"instanceStyle",
-] as const;
 
 /** Records GPU slot ranges for each visible edge after a full viewport materialize. */
 export function buildVisibleEdgeLayouts(

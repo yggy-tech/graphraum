@@ -112,3 +112,42 @@ describe("edgeTierFromDiagnosticsLod", () => {
 		expect(edgeTierFromDiagnosticsLod("density")).toBe("overview");
 	});
 });
+
+describe("3D boundary ends", () => {
+	const outlines = [
+		{ shape: "circle" as const, size: 4 },
+		{ shape: "circle" as const, size: 10, strokeWidth: 1 },
+	];
+	const pack = (mode: "2d" | "3d") =>
+		packEdgeInstances({
+			edgeIndices: [0],
+			edgeVisuals: [
+				{ marker: "triangle", markerEnd: "both", path: "quadratic", controlPoints: [{ x: 5, y: 5, z: 3 }] },
+			],
+			endpointPositions: new Float32Array([0, 0, 0, 30, 0, 40]),
+			defaults: { color: "#226f54", opacity: 0.55, width: 1.5 },
+			endpointClearance: 0.75,
+			nodeOutlines: outlines,
+			edgeNodeIndices: new Uint32Array([0, 1]),
+			mode,
+			tier: "detail",
+		});
+
+	it("keeps node centers and hands the outline reach to the shader, which trims on screen", () => {
+		const { segments, markers } = pack("3d");
+		const first = segments[0];
+		const last = segments.at(-1);
+		expect(first).toMatchObject({ x1: 0, y1: 0, z1: 0, trimStart: expect.closeTo(3.25, 5), trimEnd: 0 });
+		expect(last).toMatchObject({ x2: 30, y2: 0, z2: 40, trimStart: 0, trimEnd: expect.closeTo(10.25, 5) });
+		expect(segments.slice(1, -1).every((segment) => segment.trimStart === 0 && segment.trimEnd === 0)).toBe(true);
+		expect(markers.find((marker) => marker.end === "source")).toMatchObject({ x: 0, trim: expect.closeTo(3.25, 5) });
+		expect(markers.find((marker) => marker.end === "target")).toMatchObject({ z: 40, trim: expect.closeTo(10.25, 5) });
+	});
+
+	it("still trims 2D ends in world space, with nothing left for the shader", () => {
+		const { segments, markers } = pack("2d");
+		expect(segments[0]?.x1).toBeGreaterThan(0);
+		expect(segments.every((segment) => segment.trimStart === 0 && segment.trimEnd === 0)).toBe(true);
+		expect(markers.every((marker) => marker.trim === 0)).toBe(true);
+	});
+});

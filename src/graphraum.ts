@@ -34,6 +34,7 @@ import { type PickableEdgeSegment, pickClosestEdgeIndex } from "./edge-picking";
 import {
 	createEdgeGeometry,
 	createEdgeMaterial,
+	EDGE_INSTANCE_ATTRIBUTES,
 	EDGE_RENDER_ORDER,
 	writeEdgeMarkerInstance,
 	writeEdgeSegmentInstance,
@@ -151,15 +152,6 @@ function disposeMaterial(material: Material | Material[]) {
 
 /** Canvas input that cancels a running `flyTo`, so people take over the camera at once. */
 const FLIGHT_CANCEL_EVENTS = ["keydown", "pointerdown", "wheel"] as const;
-
-const EDGE_INSTANCE_ATTRIBUTES = [
-	"instanceKind",
-	"instanceEndA",
-	"instanceEndB",
-	"instanceColor",
-	"instanceWidth",
-	"instanceStyle",
-] as const;
 
 /** A small, explicit WebGL graph renderer: one instanced node mesh and one batched edge geometry. */
 export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {

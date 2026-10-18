@@ -1,9 +1,11 @@
-import type { InstancedBufferAttribute } from "three";
+import { type InstancedBufferAttribute, PerspectiveCamera, Vector3 } from "three";
 import { describe, expect, test } from "vitest";
 
 import {
 	createEdgeGeometry,
 	createEdgeMaterial,
+	markerApexInView,
+	trimViewSegment,
 	writeEdgeMarkerInstance,
 	writeEdgeSegmentInstance,
 } from "./edge-rendering";
@@ -57,6 +59,8 @@ describe("edge-rendering attributes", () => {
 			width: 2,
 			opacity: 0.5,
 			style: "dashed",
+			trimStart: 0,
+			trimEnd: 0,
 		});
 		expect(kind.getX(0)).toBe(0);
 		expect(a.getX(0)).toBe(0);
@@ -90,6 +94,7 @@ describe("edge-rendering attributes", () => {
 			color: "#226f54",
 			size: 3,
 			opacity: 0.9,
+			trim: 0,
 		});
 		expect(kind.getX(1)).toBe(1);
 		expect(width.getX(1)).toBe(3);
@@ -118,6 +123,8 @@ describe("edge-rendering attributes", () => {
 			width: 1,
 			opacity: 1,
 			style: "solid",
+			trimStart: 0,
+			trimEnd: 0,
 		});
 		writeEdgeMarkerInstance(geometry, 1, {
 			edgeIndex: 0,
@@ -131,8 +138,87 @@ describe("edge-rendering attributes", () => {
 			color: "#ffffff",
 			size: 2,
 			opacity: 1,
+			trim: 0,
 		});
 		expect(kind.getX(0)).toBe(0);
 		expect(kind.getX(1)).toBe(1);
+	});
+});
+
+describe("view-space edge ends", () => {
+	/** Screen distance from the projected center, as a fraction of the node's projected radius. */
+	function reach(camera: PerspectiveCamera, center: Vector3, viewPoint: Vector3, radius: number) {
+		const viewCenter = center.clone().applyMatrix4(camera.matrixWorldInverse);
+		const screen = (view: Vector3) => [view.x / -view.z, view.y / -view.z];
+		const [cx, cy] = screen(viewCenter);
+		const [px, py] = screen(viewPoint);
+		return Math.hypot(px - cx, py - cy) / (radius / -viewCenter.z);
+	}
+
+	const random = (() => {
+		let state = 7;
+		return () => {
+			state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+			return state / 2 ** 32;
+		};
+	})();
+
+	test("segment ends and marker apexes land on the camera-facing outline from any view", () => {
+		for (let index = 0; index < 300; index += 1) {
+			const camera = new PerspectiveCamera(45, 1.5, 0.1, 10_000);
+			camera.position.setFromSphericalCoords(600, Math.acos(random() * 2 - 1), random() * Math.PI * 2);
+			camera.lookAt(0, 0, 0);
+			camera.updateMatrixWorld();
+			const source = new Vector3(random() * 200 - 100, random() * 200 - 100, random() * 200 - 100);
+			const target = new Vector3(random() * 200 - 100, random() * 200 - 100, random() * 200 - 100);
+			const viewSource = source.clone().applyMatrix4(camera.matrixWorldInverse);
+			const viewTarget = target.clone().applyMatrix4(camera.matrixWorldInverse);
+			const [a, b] = trimViewSegment(viewSource, viewTarget, 4, 9);
+			if (!a || !b) continue; // fully hidden behind the two nodes
+			expect(reach(camera, source, new Vector3(a.x, a.y, a.z), 4)).toBeCloseTo(1, 6);
+			expect(reach(camera, target, new Vector3(b.x, b.y, b.z), 9)).toBeCloseTo(1, 6);
+			const apex = markerApexInView(viewTarget, viewSource, 9);
+			expect(reach(camera, target, new Vector3(apex.x, apex.y, apex.z), 9)).toBeCloseTo(1, 6);
+		}
+	});
+
+	test("hides a segment whose trimmed ends would cross", () => {
+		expect(trimViewSegment({ x: 0, y: 0, z: -100 }, { x: 5, y: 0, z: -120 }, 3, 3)).toEqual([null, null]);
+	});
+
+	test("writes trims into the instance buffer", () => {
+		const geometry = createEdgeGeometry(2);
+		const trim = geometry.getAttribute("instanceTrim") as InstancedBufferAttribute;
+		writeEdgeSegmentInstance(geometry, 0, {
+			edgeIndex: 0,
+			x1: 0,
+			y1: 0,
+			z1: 0,
+			x2: 10,
+			y2: 0,
+			z2: 0,
+			color: "#226f54",
+			width: 2,
+			opacity: 1,
+			style: "solid",
+			trimStart: 2,
+			trimEnd: 3,
+		});
+		writeEdgeMarkerInstance(geometry, 1, {
+			edgeIndex: 0,
+			end: "target",
+			x: 10,
+			y: 0,
+			z: 0,
+			dx: 1,
+			dy: 0,
+			dz: 0,
+			color: "#226f54",
+			size: 4,
+			opacity: 1,
+			trim: 3,
+		});
+		expect([trim.getX(0), trim.getY(0), trim.getX(1), trim.getY(1)]).toEqual([2, 3, 3, 0]);
+		geometry.dispose();
 	});
 });

@@ -72,14 +72,13 @@ describe("edge and node draw order", () => {
 
 describe("edge ends at node outlines", () => {
 	// Hub fixture: default size 4, default clearance 0.75, chord (20, 0, 40) of length √2000.
-	test("trims along the 3D segment in 3D and along xy in 2D", () => {
+	test("leaves 3D ends at the centers for the shader to trim on screen, and trims 2D along xy", () => {
 		const graph = hub("3d");
 		const length = Math.hypot(20, 40);
-		const spatialT = (4 - 0.75) / length;
-		const [x, y, z] = edgeBuffers(graph).instanceEndA ?? [];
-		expect(x).toBeCloseTo(20 * spatialT, 4);
-		expect(y).toBeCloseTo(0, 4);
-		expect(z).toBeCloseTo(40 * spatialT, 4);
+		expect(edgeBuffers(graph).instanceEndA).toEqual([0, 0, 0]);
+		const [trimStart, trimEnd] = edgeBuffers(graph).instanceTrim ?? [];
+		expect(trimStart).toBeCloseTo(4 - 0.75, 5);
+		expect(trimEnd).toBeCloseTo(4 - 0.75, 5);
 
 		graph.setMode("2d");
 		const flatT = 4 / 20 - 0.75 / length;

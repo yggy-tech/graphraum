@@ -54,6 +54,15 @@ function outlineRadius(outline: EndpointOutline, headingX: number, headingY: num
 }
 
 /**
+ * How far an edge end stops short of a 3D node's center, in world units: the outline radius (stroke
+ * included) less `clearance`. The renderer applies it on screen, where the camera-facing outline
+ * is, so it is exact for circles from every view. Other shapes use their radius along +x.
+ */
+export function outlineReach(outline: EndpointOutline, clearance = DEFAULT_ENDPOINT_CLEARANCE): number {
+	return Math.max(0, outlineRadius(outline, 1, 0) - Math.max(clearance, 0));
+}
+
+/**
  * Walk from the node center toward the far point and stop on the outline,
  * then pull back by `clearance` so the stroke is not stabbed.
  *

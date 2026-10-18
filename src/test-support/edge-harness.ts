@@ -3,7 +3,7 @@
  * WebGLRenderer with `FakeWebGLRenderer` before importing this module.
  */
 import type { BufferAttribute, InstancedMesh, OrthographicCamera, PerspectiveCamera } from "three";
-
+import { EDGE_INSTANCE_ATTRIBUTES } from "../edge-rendering";
 import type { VisibleEdgeLayout } from "../edge-viewport-patch";
 import { Graphraum } from "../graphraum";
 import type { GraphraumData, GraphraumEdge, GraphraumOptions } from "../types";
@@ -18,14 +18,7 @@ export interface GraphraumInternals {
 	visibleEdgeLayouts: Map<number, VisibleEdgeLayout>;
 }
 
-export const EDGE_ATTRIBUTES = [
-	"instanceKind",
-	"instanceEndA",
-	"instanceEndB",
-	"instanceColor",
-	"instanceWidth",
-	"instanceStyle",
-] as const;
+export const EDGE_ATTRIBUTES = EDGE_INSTANCE_ATTRIBUTES;
 
 export function internals(graph: Graphraum): GraphraumInternals {
 	return graph as unknown as GraphraumInternals;

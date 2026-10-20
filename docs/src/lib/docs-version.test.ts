@@ -6,20 +6,20 @@ describe("docs version", () => {
 	test("normalizes a semantic release tag into immutable references", () => {
 		expect(resolveDocsVersion(" v0.4.0 ")).toEqual({
 			display: "v0.4.0",
-			installCommand: "bun add @domudev/graphraum@0.4.0",
+			packageSpec: "@yggy-tech/graphraum@0.4.0",
 			isRelease: true,
-			referenceUrl: "https://github.com/domudev/graphraum/releases/tag/v0.4.0",
-			sourceUrl: "https://github.com/domudev/graphraum/tree/v0.4.0",
+			referenceUrl: "https://github.com/yggy-tech/graphraum/releases/tag/v0.4.0",
+			sourceUrl: "https://github.com/yggy-tech/graphraum/tree/v0.4.0",
 		});
 	});
 
 	test("labels builds without a release tag as development", () => {
 		expect(resolveDocsVersion()).toEqual({
 			display: "development",
-			installCommand: null,
+			packageSpec: null,
 			isRelease: false,
-			referenceUrl: "https://github.com/domudev/graphraum",
-			sourceUrl: "https://github.com/domudev/graphraum/tree/main",
+			referenceUrl: "https://github.com/yggy-tech/graphraum",
+			sourceUrl: "https://github.com/yggy-tech/graphraum/tree/main",
 		});
 	});
 
@@ -27,10 +27,10 @@ describe("docs version", () => {
 		const revision = "0123456789abcdef0123456789abcdef01234567";
 		expect(resolveDocsVersion("next", revision)).toEqual({
 			display: "next",
-			installCommand: null,
+			packageSpec: null,
 			isRelease: false,
-			referenceUrl: `https://github.com/domudev/graphraum/commit/${revision}`,
-			sourceUrl: `https://github.com/domudev/graphraum/tree/${revision}`,
+			referenceUrl: `https://github.com/yggy-tech/graphraum/commit/${revision}`,
+			sourceUrl: `https://github.com/yggy-tech/graphraum/tree/${revision}`,
 		});
 	});
 

@@ -100,9 +100,9 @@ export function createVersionManifest(releases: readonly ReleaseMetadata[], next
 					channel: "development",
 					href: `${docsBasePath}next/`,
 					publishedAt: next.publishedAt,
-					releaseNotes: `https://github.com/domudev/graphraum/compare/${latest}...${next.revision}`,
+					releaseNotes: `https://github.com/yggy-tech/graphraum/compare/${latest}...${next.revision}`,
 					revision: next.revision,
-					source: `https://github.com/domudev/graphraum/tree/${next.revision}`,
+					source: `https://github.com/yggy-tech/graphraum/tree/${next.revision}`,
 					summary: next.summary,
 					version: "next",
 				},
@@ -110,9 +110,9 @@ export function createVersionManifest(releases: readonly ReleaseMetadata[], next
 					channel: index === 0 ? "latest" : "stable",
 					href: `${docsBasePath}${version}/`,
 					publishedAt,
-					releaseNotes: `https://github.com/domudev/graphraum/releases/tag/${version}`,
+					releaseNotes: `https://github.com/yggy-tech/graphraum/releases/tag/${version}`,
 					revision,
-					source: `https://github.com/domudev/graphraum/tree/${version}`,
+					source: `https://github.com/yggy-tech/graphraum/tree/${version}`,
 					summary,
 					version,
 				})),
@@ -138,8 +138,8 @@ function versionArchiveEntry(release: ReleaseMetadata, latest: string): string {
 	const publishedAt = escapeHtml(release.publishedAt);
 	const summary = escapeHtml(release.summary);
 	const date = publishedAt.slice(0, 10);
-	const releaseUrl = `https://github.com/domudev/graphraum/releases/tag/${version}`;
-	const sourceUrl = `https://github.com/domudev/graphraum/tree/${version}`;
+	const releaseUrl = `https://github.com/yggy-tech/graphraum/releases/tag/${version}`;
+	const sourceUrl = `https://github.com/yggy-tech/graphraum/tree/${version}`;
 	const badge = release.version === latest ? "<span>Latest stable</span>" : "<span>Stable</span>";
 
 	return `<article class="release">
@@ -242,8 +242,8 @@ export function createVersionArchive(releases: readonly ReleaseMetadata[]): stri
 }
 
 export function createReleaseFallback(version: string): string {
-	const releaseUrl = `https://github.com/domudev/graphraum/releases/tag/${version}`;
-	const sourceUrl = `https://github.com/domudev/graphraum/tree/${version}`;
+	const releaseUrl = `https://github.com/yggy-tech/graphraum/releases/tag/${version}`;
+	const sourceUrl = `https://github.com/yggy-tech/graphraum/tree/${version}`;
 	return injectVersionNavigation(`<!doctype html>
 <html lang="en">
   <head>

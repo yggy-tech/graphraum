@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-08  
 **Status:** Approved for planning  
-**Issue:** [#80](https://github.com/domudev/graphraum/issues/80) (shapes-first slice; edge paths deferred)  
-**Related:** [#81](https://github.com/domudev/graphraum/issues/81) rich HTML focus, [#82](https://github.com/domudev/graphraum/issues/82) fidelity ADR, [#83](https://github.com/domudev/graphraum/issues/83) NMS starmap research
+**Issue:** [#80](https://github.com/yggy-tech/graphraum/issues/80) (shapes-first slice; edge paths deferred)  
+**Related:** [#81](https://github.com/yggy-tech/graphraum/issues/81) rich HTML focus, [#82](https://github.com/yggy-tech/graphraum/issues/82) fidelity ADR, [#83](https://github.com/yggy-tech/graphraum/issues/83) NMS starmap research
 
 ---
 

@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-08  
 **Status:** Approved for planning  
-**Issue:** [#30](https://github.com/domudev/graphraum/issues/30) (next delivery slice after typed presentations, SDF node shapes, and bounded DOM overlay)  
-**Related:** [#11](https://github.com/domudev/graphraum/issues/11) LOD, [#16](https://github.com/domudev/graphraum/issues/16) incremental updates, [#9](https://github.com/domudev/graphraum/issues/9) performance roadmap
+**Issue:** [#30](https://github.com/yggy-tech/graphraum/issues/30) (next delivery slice after typed presentations, SDF node shapes, and bounded DOM overlay)  
+**Related:** [#11](https://github.com/yggy-tech/graphraum/issues/11) LOD, [#16](https://github.com/yggy-tech/graphraum/issues/16) incremental updates, [#9](https://github.com/yggy-tech/graphraum/issues/9) performance roadmap
 
 ---
 

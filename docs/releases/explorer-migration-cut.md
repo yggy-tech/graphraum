@@ -1,8 +1,8 @@
 # Explorer migration release cut (PRO-385)
 
-Maintainer checklist for the `@domudev/graphraum` GitHub Packages bump that unlocks the Yggdrasil Graph Lab / Explorer migration.
+Maintainer checklist for the `@yggy-tech/graphraum` npm bump that unlocks the Yggdrasil Graph Lab / Explorer migration.
 
-**Do not bump `package.json` version by hand.** `semantic-release` on `main` owns version, tag, GitHub Release, and publish to GitHub Packages (see CI `release` job and README Install).
+**Do not bump `package.json` version by hand.** `semantic-release` on `main` owns version, tag, GitHub Release, and publish to npm (see CI `release` job and README Install).
 
 ## Blocked by
 
@@ -29,19 +29,13 @@ Confirm the published package exposes:
 2. Curate `changelogs/YYYY-MM.md` for the day of the cut: label budget + edge pick/selection in customer-facing language (see `.agents/skills/changelog/SKILL.md`).
 3. Merge this checklist PR (or skip if the changelog was updated on the feature PRs).
 4. Wait for CI on `main`: `verify` then `release` (`bun run release` / semantic-release).
-5. Confirm the new `v*` tag, GitHub Release notes, and `@domudev/graphraum` on [GitHub Packages](https://github.com/domudev/graphraum/pkgs/npm/graphraum).
+5. Confirm the new `v*` tag, GitHub Release notes, and `@yggy-tech/graphraum` on [npm](https://www.npmjs.com/package/@yggy-tech/graphraum).
 6. Point Yggdrasil Graph Lab at that version (no local path override).
 
 ## Verify install
 
-```ini
-# .npmrc
-@domudev:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
-```
-
 ```sh
-bun add @domudev/graphraum@<published-version>
+bun add @yggy-tech/graphraum@<published-version>
 ```
 
 ## Linear

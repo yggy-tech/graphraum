@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-08  
 **Status:** Approved for planning  
-**Issue:** [#80](https://github.com/domudev/graphraum/issues/80) (edge-path slice after GPU shape catalog)  
-**Related:** [#79](https://github.com/domudev/graphraum/pull/79) GPU edges, [#81](https://github.com/domudev/graphraum/issues/81) rich HTML focus, [#82](https://github.com/domudev/graphraum/issues/82) fidelity ADR
+**Issue:** [#80](https://github.com/yggy-tech/graphraum/issues/80) (edge-path slice after GPU shape catalog)  
+**Related:** [#79](https://github.com/yggy-tech/graphraum/pull/79) GPU edges, [#81](https://github.com/yggy-tech/graphraum/issues/81) rich HTML focus, [#82](https://github.com/yggy-tech/graphraum/issues/82) fidelity ADR
 
 ---
 

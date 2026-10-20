@@ -1,4 +1,4 @@
-import type { GraphraumData } from "@domudev/graphraum";
+import type { GraphraumData } from "@yggy-tech/graphraum";
 
 export interface BenchmarkStatistics {
 	coefficientOfVariation: number | null;

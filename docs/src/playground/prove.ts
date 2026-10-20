@@ -1,4 +1,4 @@
-import { Graphraum, type GraphraumMode } from "@domudev/graphraum";
+import { Graphraum, type GraphraumMode } from "@yggy-tech/graphraum";
 
 import { createFixture, effectivePixelRatio, summarize } from "../lib/benchmark";
 import { measureProgressiveForceLayout } from "../lib/layout-benchmark";

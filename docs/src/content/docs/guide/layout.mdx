@@ -23,7 +23,7 @@ graph.applyLayout(layout);
 The package exports `computeForcePositions()` for a static layout, `computeClusteredForcePositions()` for data-defined coarse communities, and `createForceSimulation()` for incremental or worker-driven layouts. All accept `ForceSettings`; omitted settings use `DEFAULT_FORCE_SETTINGS`. Pass `iterations` to override the size-based default used by `computeForcePositions()`.
 
 ```ts
-import { createForceSimulation, DEFAULT_FORCE_SETTINGS } from "@domudev/graphraum";
+import { createForceSimulation, DEFAULT_FORCE_SETTINGS } from "@yggy-tech/graphraum";
 
 const simulation = createForceSimulation({
   dimensions: 3,

@@ -1,4 +1,4 @@
-import type { CompiledGraphraumPresentation } from "@domudev/graphraum";
+import type { CompiledGraphraumPresentation } from "@yggy-tech/graphraum";
 
 import type { PlaygroundScene } from "../lib/playground-scenes";
 import type { DemoUseCase } from "../lib/use-case-demos";

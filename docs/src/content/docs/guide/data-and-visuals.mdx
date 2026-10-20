@@ -14,7 +14,7 @@ description: Map typed domain data to GPU visuals once, and read titles, propert
 ## Define the domain boundary
 
 ```ts
-import { Graphraum, defineVisuals } from "@domudev/graphraum";
+import { Graphraum, defineVisuals } from "@yggy-tech/graphraum";
 
 type NodeAttributes = {
   kind: "person" | "place";
@@ -106,9 +106,9 @@ Arbitrary HTML per node is not the dense rendering path: it would trade away bat
 
 Every shape accepts an independent `width` and `height` (square by default) plus an optional `strokeWidth` and `strokeColor` for an SDF ring around the outer edge. `strokeColor` falls back to `theme.nodeStroke`, the third canonical Porcelain swatch, so a stroked node stays on-palette without an explicit color.
 
-Edge width, dash styles, direction markers, and path kinds (`straight`, `quadratic`, `cubic`) render as one instanced GPU edge batch, packing segment and marker instances into the same edge draw call rather than one object per edge. Curves compile to polylines at pack time. The overview LOD tier drops markers and forces solid, theme-width, straight segments first to keep frame time flat at scale; detail renders the full per-edge style and path. A bounded overlay can project host HTML onto focused nodes; that is not the dense rendering path. See [ADR: Fidelity on demand](https://github.com/domudev/graphraum/blob/main/docs/adrs/adr-fidelity-on-demand.md).
+Edge width, dash styles, direction markers, and path kinds (`straight`, `quadratic`, `cubic`) render as one instanced GPU edge batch, packing segment and marker instances into the same edge draw call rather than one object per edge. Curves compile to polylines at pack time. The overview LOD tier drops markers and forces solid, theme-width, straight segments first to keep frame time flat at scale; detail renders the full per-edge style and path. A bounded overlay can project host HTML onto focused nodes; that is not the dense rendering path. See [ADR: Fidelity on demand](https://github.com/yggy-tech/graphraum/blob/main/docs/adrs/adr-fidelity-on-demand.md).
 
-Follow the design and benchmark acceptance criteria in [the node and edge visual translation issue](https://github.com/domudev/graphraum/issues/30).
+Follow the design and benchmark acceptance criteria in [the node and edge visual translation issue](https://github.com/yggy-tech/graphraum/issues/30).
 
 ## Render detail only when needed
 

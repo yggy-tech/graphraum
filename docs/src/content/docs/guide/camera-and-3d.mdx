@@ -73,7 +73,7 @@ While the orbit is active graphraum runs a frame loop instead of rendering only 
 `theme.endpointAttach` (`"boundary"` by default) stops each edge at its node's outline, stroke included, with a small clearance; `"center"` joins node centers. The same trim is exported for hosts that draw their own edge geometry, such as overlays or exported paths:
 
 ```ts
-import { attachPointOnOutline, trimEdgeEndpoints } from "@domudev/graphraum";
+import { attachPointOnOutline, trimEdgeEndpoints } from "@yggy-tech/graphraum";
 
 const { source, target } = trimEdgeEndpoints({
   source: { x: 0, y: 0, z: 0 },

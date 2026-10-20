@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-03  
 **Status:** Approved for planning  
-**Issue:** [#111](https://github.com/domudev/graphraum/issues/111)  
+**Issue:** [#111](https://github.com/yggy-tech/graphraum/issues/111)  
 **Delivery:** One Graphraum release; Yggdrasil Graph Lab consumes afterward (Lab companion spec under yggdrasil `docs/superpowers/specs/2026-09-03-graph-lab-typed-springs-edge-polish-design.md`)
 
 ---

@@ -90,4 +90,4 @@ semantic-release runs after a successful push to `main`:
 - breaking changes produce a major release;
 - documentation, tests, chores, and refactors do not release unless they carry a breaking-change footer.
 
-Do not manually edit the package version, create release tags, publish the package, or create routine GitHub Releases. semantic-release derives the version from commits, creates the `v<version>` tag and GitHub Release, and publishes `@domudev/graphraum` to GitHub Packages.
+Do not manually edit the package version, create release tags, publish the package, or create routine GitHub Releases. semantic-release derives the version from commits, creates the `v<version>` tag and GitHub Release, and publishes `@yggy-tech/graphraum` to npm.

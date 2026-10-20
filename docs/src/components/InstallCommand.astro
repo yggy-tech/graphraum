@@ -1,8 +1,17 @@
 ---
-import { Code } from "@astrojs/starlight/components";
+import { Code, TabItem, Tabs } from "@astrojs/starlight/components";
 import { graphraumDocsVersion as version } from "../lib/docs-version";
+import { installCommands } from "../lib/install-commands";
 
-const command = version.installCommand ?? "bun add @domudev/graphraum";
+const commands = installCommands(version.packageSpec ?? undefined);
 ---
 
-<Code code={command} lang="sh" />
+<Tabs syncKey="package-manager">
+	{
+		commands.map(({ manager, command }) => (
+			<TabItem label={manager}>
+				<Code code={command} lang="sh" />
+			</TabItem>
+		))
+	}
+</Tabs>

@@ -6,15 +6,15 @@ title: Fidelity on demand
 
 **Date:** 2026-08-19
 **Status:** Implemented
-**Issues:** [#81](https://github.com/domudev/graphraum/issues/81), [#82](https://github.com/domudev/graphraum/issues/82), [#83](https://github.com/domudev/graphraum/issues/83)
+**Issues:** [#81](https://github.com/yggy-tech/graphraum/issues/81), [#82](https://github.com/yggy-tech/graphraum/issues/82), [#83](https://github.com/yggy-tech/graphraum/issues/83)
 
 ## Context
 
 graphraum’s product question is not “React Flow or 100k nodes.” Hosts need both: a dense WebGL graph that stays two draw calls, and a small focused subset that can look like product UI.
 
-The GPU vocabulary already exists: SDF node shapes, strokes, independent axes, and edge width / dash / markers / path kinds packed into one edge batch ([#80](https://github.com/domudev/graphraum/issues/80)). Overlay labels and a single toolbar already project host HTML ([#59](https://github.com/domudev/graphraum/issues/59), [#93](https://github.com/domudev/graphraum/issues/93), [#94](https://github.com/domudev/graphraum/issues/94)). What is missing is an explicit three-tier contract so later work does not put per-node HTML, arbitrary materials, or unbounded labels on the dense path.
+The GPU vocabulary already exists: SDF node shapes, strokes, independent axes, and edge width / dash / markers / path kinds packed into one edge batch ([#80](https://github.com/yggy-tech/graphraum/issues/80)). Overlay labels and a single toolbar already project host HTML ([#59](https://github.com/yggy-tech/graphraum/issues/59), [#93](https://github.com/yggy-tech/graphraum/issues/93), [#94](https://github.com/yggy-tech/graphraum/issues/94)). What is missing is an explicit three-tier contract so later work does not put per-node HTML, arbitrary materials, or unbounded labels on the dense path.
 
-[#83](https://github.com/domudev/graphraum/issues/83) (No Man’s Sky starmap) is the visual reference for that contract:
+[#83](https://github.com/yggy-tech/graphraum/issues/83) (No Man’s Sky starmap) is the visual reference for that contract:
 
 - Overview stays navigable by dropping detail (brightness, size, aggregation), not by drawing every object as UI.
 - Mid zoom adds glyphs and routes as batched marks, not documents.
@@ -75,19 +75,19 @@ Rejected for the dense path. Curve formulas become samples at update time so ins
 
 ### Wait for a native WebGPU backend before focus HTML
 
-Rejected. Focus HTML is orthogonal to the backend ([#12](https://github.com/domudev/graphraum/issues/12)). Three/WebGL2 remains production until another backend beats it on the graph workload.
+Rejected. Focus HTML is orthogonal to the backend ([#12](https://github.com/yggy-tech/graphraum/issues/12)). Three/WebGL2 remains production until another backend beats it on the graph workload.
 
 ## Consequences
 
 - Graph Lab and other hosts can attach React (or any DOM) to a handful of nodes without forking the renderer.
 - Authors cannot treat graphraum as a general scene graph or CSS layout engine.
 - Label budget and rich-node budget are separate. A graph can show 24 titles and 1 inspector card.
-- Follow-ups: Graph Lab consumption ([#95](https://github.com/domudev/graphraum/issues/95)), optional rich edges, incremental GPU updates ([#16](https://github.com/domudev/graphraum/issues/16)).
+- Follow-ups: Graph Lab consumption ([#95](https://github.com/yggy-tech/graphraum/issues/95)), optional rich edges, incremental GPU updates ([#16](https://github.com/yggy-tech/graphraum/issues/16)).
 
 ## References
 
-- Closed GPU catalog: [#80](https://github.com/domudev/graphraum/issues/80), parent compilation [#30](https://github.com/domudev/graphraum/issues/30)
-- Overlay labels/toolbar: [#59](https://github.com/domudev/graphraum/issues/59), [#93](https://github.com/domudev/graphraum/issues/93), [#94](https://github.com/domudev/graphraum/issues/94)
-- Performance parent: [#9](https://github.com/domudev/graphraum/issues/9)
+- Closed GPU catalog: [#80](https://github.com/yggy-tech/graphraum/issues/80), parent compilation [#30](https://github.com/yggy-tech/graphraum/issues/30)
+- Overlay labels/toolbar: [#59](https://github.com/yggy-tech/graphraum/issues/59), [#93](https://github.com/yggy-tech/graphraum/issues/93), [#94](https://github.com/yggy-tech/graphraum/issues/94)
+- Performance parent: [#9](https://github.com/yggy-tech/graphraum/issues/9)
 - Visual language: [docs/src/content/docs/visual-language.mdx](../src/content/docs/visual-language.mdx)
 - Hello Games, No Man’s Sky galactic map — overview vs local presence, not a copy of in-game UI

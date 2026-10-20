@@ -1,4 +1,4 @@
-import type { GraphraumMode } from "@domudev/graphraum";
+import type { GraphraumMode } from "@yggy-tech/graphraum";
 
 import {
 	type DemoSceneId,

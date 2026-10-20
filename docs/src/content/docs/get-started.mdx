@@ -12,13 +12,6 @@ Install the package, give graphraum a sized container and positioned nodes, and 
 
 <InstallCommand />
 
-The package is on GitHub Packages. Add the `@domudev` scope to `.npmrc` with a classic GitHub token that can read packages:
-
-```ini title=".npmrc"
-@domudev:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
-```
-
 The command pins the version these docs describe. Drop the version suffix only when you want the newest release.
 
 ## Render a graph
@@ -26,7 +19,7 @@ The command pins the version these docs describe. Drop the version suffix only w
 The container needs a real width and height before graphraum is constructed.
 
 ```ts
-import { Graphraum } from "@domudev/graphraum";
+import { Graphraum } from "@yggy-tech/graphraum";
 
 const container = document.querySelector<HTMLElement>("#graph");
 if (!container) throw new Error("Missing graph container");

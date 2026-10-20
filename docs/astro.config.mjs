@@ -6,12 +6,12 @@ import remarkMermaid from "./src/plugins/remark-mermaid.ts";
 const docsThreePath = fileURLToPath(new URL("./node_modules/three", import.meta.url));
 
 export default defineConfig({
-	site: "https://domudev.github.io",
+	site: "https://yggy-tech.github.io",
 	base: "/graphraum",
 	integrations: [
 		starlight({
 			title: "graphraum",
-			description: "An opinionated WebGL engine for interactive graphs in 2D and 3D.",
+			description: "yggy's WebGL engine for interactive graphs in 2D and 3D.",
 			logo: {
 				dark: "./src/assets/logo-dark.svg",
 				light: "./src/assets/logo-light.svg",
@@ -56,7 +56,7 @@ export default defineConfig({
 	vite: {
 		resolve: {
 			alias: {
-				"@domudev/graphraum": fileURLToPath(new URL("../src/index.ts", import.meta.url)),
+				"@yggy-tech/graphraum": fileURLToPath(new URL("../src/index.ts", import.meta.url)),
 				three: docsThreePath,
 			},
 		},

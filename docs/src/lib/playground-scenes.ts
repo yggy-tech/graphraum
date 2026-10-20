@@ -112,7 +112,7 @@ const demoCode = (
 	contents: string,
 	squares: readonly string[],
 	diamonds: readonly string[],
-) => `import { Graphraum, defineVisuals } from "@domudev/graphraum";
+) => `import { Graphraum, defineVisuals } from "@yggy-tech/graphraum";
 
 const shapeFor = (category: string) =>
   ${quoted(squares)}.includes(category) ? "square"
@@ -151,7 +151,7 @@ const sceneCodeById: Record<PlaygroundSceneId, string> = {
 	fraud: demoCode("accounts, devices, payment methods, merchants", ["Payment method"], ["Device"]),
 	knowledge: demoCode("people, places, concepts, sources", ["Place"], ["Concept", "Field"]),
 	software: demoCode("applications, services, gateways, data stores", ["Service", "Database"], ["Gateway"]),
-	stress: `import { Graphraum, createForceSimulation } from "@domudev/graphraum";
+	stress: `import { Graphraum, createForceSimulation } from "@yggy-tech/graphraum";
 
 const graph = new Graphraum(container, { mode: "2d", maxPixelRatio: 1 });
 graph.setData({ nodes, edges }); // 100,000 nodes, 300,000 edges

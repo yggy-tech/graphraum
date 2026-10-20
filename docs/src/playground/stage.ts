@@ -7,7 +7,7 @@ import {
 	type GraphraumMode,
 	type GraphraumNodeShape,
 	type GraphraumOverlay,
-} from "@domudev/graphraum";
+} from "@yggy-tech/graphraum";
 
 import {
 	createPlaygroundFixture,

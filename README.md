@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/src/assets/logo-dark.svg">
-    <img src="./docs/src/assets/logo-light.svg" alt="graphraum logo" width="128" height="128">
+    <img src="./docs/src/assets/logo-light.svg" alt="graphraum" width="128" height="128">
   </picture>
   <br>
   <strong>graphraum</strong>
@@ -11,9 +11,9 @@
 
 # graphraum
 
-An opinionated WebGL engine for interactive node-edge graphs in 2D and 3D.
+yggy's WebGL engine for interactive node-edge graphs in 2D and 3D.
 
-graphraum is deliberately narrow: it renders graphs, accepts positions from any layout engine, and keeps the hot path outside a component framework. Nodes use one instanced mesh, edges use one batched geometry, and rendering happens on demand.
+graphraum renders graphs, accepts positions from any layout engine, and keeps the hot path outside a component framework. Nodes use one instanced mesh, edges use one batched geometry, and rendering happens on demand.
 
 > Pre-1.0 development. The API will continue to evolve while the rendering and visual contracts are proven.
 
@@ -47,25 +47,20 @@ Repository decisions and agent instructions live in [`AGENTS.md`](./AGENTS.md). 
 
 ## Install
 
-graphraum is currently published to the GitHub Packages npm registry. Configure the `@domudev` scope and authenticate with a classic GitHub token that has `read:packages` permission:
-
-```ini
-# .npmrc
-@domudev:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
-```
-
-Then install it with Bun:
-
 ```sh
-bun add @domudev/graphraum
+npm install @yggy-tech/graphraum
+yarn add @yggy-tech/graphraum
+pnpm add @yggy-tech/graphraum
+bun add @yggy-tech/graphraum
 ```
 
-Publishing is automated with semantic-release after CI succeeds on `main`. Commit types determine the next version, semantic-release creates the `v<version>` tag and GitHub Release, and the package is published to GitHub Packages. Do not manually edit the package version or create routine release tags.
+Use the line for your package manager.
+
+Publishing is automated with semantic-release after CI succeeds on `main`. Commit types determine the next version, semantic-release creates the `v<version>` tag and GitHub Release, and the package is published to npm. Do not manually edit the package version or create routine release tags.
 
 ## Documentation
 
-The [documentation](https://domudev.github.io/graphraum/), [API reference](https://domudev.github.io/graphraum/reference/api/), and the live [playground](https://domudev.github.io/graphraum/playground/) with the Prove benchmark are published on GitHub Pages. Run them locally with:
+The [documentation](https://yggy-tech.github.io/graphraum/), [API reference](https://yggy-tech.github.io/graphraum/reference/api/), and the live [playground](https://yggy-tech.github.io/graphraum/playground/) with the Prove benchmark are published on GitHub Pages. Run them locally with:
 
 ```sh
 bun install --cwd docs

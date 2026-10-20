@@ -2,12 +2,13 @@
 import SiteNav from "../components/SiteNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 import { graphraumDocsVersion as version } from "../lib/docs-version";
+import { installCommands } from "../lib/install-commands";
 import { playgroundScenes } from "../lib/playground-scenes";
 import { sitePath } from "../lib/site-path";
 
 const base = sitePath();
 const playground = `${base}playground/`;
-const install = version.installCommand ?? "bun add @domudev/graphraum";
+const install = installCommands(version.packageSpec ?? undefined);
 const sceneCards = playgroundScenes.filter(({ id }) => id !== "stress");
 ---
 
@@ -34,7 +35,18 @@ const sceneCards = playgroundScenes.filter(({ id }) => id !== "stress");
 				<a class="btn btn-primary" href={playground}>Open the playground</a>
 				<a class="btn btn-ghost" href={`${base}get-started/`}>Get started</a>
 			</div>
-			<code class="install"><span aria-hidden="true">$</span>{install}</code>
+			<div class="install" data-install>
+				<div class="install-managers" role="group" aria-label="Package manager">
+					{
+						install.map(({ manager, command }, index) => (
+							<button type="button" data-command={command} aria-pressed={index === 0 ? "true" : "false"}>
+								{manager}
+							</button>
+						))
+					}
+				</div>
+				<code><span class="install-prompt" aria-hidden="true">$</span><span data-install-command>{install[0]?.command}</span></code>
+			</div>
 		</div>
 	</header>
 
@@ -58,7 +70,7 @@ const sceneCards = playgroundScenes.filter(({ id }) => id !== "stress");
 				</p>
 			</div>
 			<pre
-				class="code-block"><span class="k">import</span> {"{"} Graphraum {"}"} <span class="k">from</span> <span class="s">"@domudev/graphraum"</span>;
+				class="code-block"><span class="k">import</span> {"{"} Graphraum {"}"} <span class="k">from</span> <span class="s">"@yggy-tech/graphraum"</span>;
 
 <span class="k">const</span> graph = <span class="k">new</span> <span class="f">Graphraum</span>(container, {"{"} mode: <span class="s">"2d"</span> {"}"});
 graph.<span class="f">setData</span>({"{"} nodes, edges {"}"});
@@ -117,7 +129,7 @@ graph.<span class="f">setMode</span>(<span class="s">"3d"</span>); <span class="
 
 	<footer class="foot">
 		<span>Apache-2.0</span>
-		<a href="https://github.com/domudev/graphraum">GitHub</a>
+		<a href="https://github.com/yggy-tech/graphraum">GitHub</a>
 		<a href={`${base}reference/changelog/`}>Changelog</a>
 		<a href={`${base}why-graphraum/`}>Why graphraum</a>
 		<div class="grow"></div>
@@ -126,7 +138,7 @@ graph.<span class="f">setMode</span>(<span class="s">"3d"</span>); <span class="
 </SiteLayout>
 
 <script>
-	import { Graphraum } from "@domudev/graphraum";
+	import { Graphraum } from "@yggy-tech/graphraum";
 	import { createSceneUseCase, type DemoSceneId } from "../lib/playground-scenes";
 	import { focusNode, incidentEdgeIds } from "../lib/scene-focus";
 	import { demoVisuals } from "../lib/use-case-demos";
@@ -254,8 +266,35 @@ graph.<span class="f">setMode</span>(<span class="s">"3d"</span>); <span class="
 		white-space: nowrap;
 	}
 
-	.install span {
+	.install code {
+		display: flex;
+		gap: 12px;
+	}
+
+	.install-prompt {
 		color: var(--mint);
+	}
+
+	.install-managers {
+		display: flex;
+		gap: 2px;
+	}
+
+	.install-managers button {
+		background: none;
+		border: 0;
+		border-radius: 6px;
+		color: inherit;
+		cursor: pointer;
+		font: inherit;
+		font-size: 12px;
+		opacity: 0.6;
+		padding: 4px 8px;
+	}
+
+	.install-managers button[aria-pressed="true"] {
+		background: rgb(255 255 255 / 10%);
+		opacity: 1;
 	}
 
 	:global(.hero-card) {
@@ -558,3 +597,31 @@ graph.<span class="f">setMode</span>(<span class="s">"3d"</span>); <span class="
 		}
 	}
 </style>
+
+<script>
+	// Shares Starlight's synced-tab key, so the manager picked here is preselected on Get started.
+	const storageKey = "starlight-synced-tabs__package-manager";
+
+	for (const install of document.querySelectorAll<HTMLElement>("[data-install]")) {
+		const buttons = [...install.querySelectorAll<HTMLButtonElement>("button[data-command]")];
+		const command = install.querySelector<HTMLElement>("[data-install-command]");
+		const select = (button: HTMLButtonElement) => {
+			for (const other of buttons) other.setAttribute("aria-pressed", String(other === button));
+			if (command) command.textContent = button.dataset.command ?? "";
+		};
+		let saved: string | null = null;
+		try {
+			saved = localStorage.getItem(storageKey);
+		} catch {}
+		const initial = buttons.find((button) => button.textContent?.trim() === saved);
+		if (initial) select(initial);
+		for (const button of buttons) {
+			button.addEventListener("click", () => {
+				select(button);
+				try {
+					localStorage.setItem(storageKey, button.textContent?.trim() ?? "");
+				} catch {}
+			});
+		}
+	}
+</script>

@@ -21,17 +21,35 @@ export interface VisibleEdgeLayout {
 	segmentStart: number;
 }
 
-/** Records GPU slot ranges for each visible edge after a full viewport materialize. */
-export function buildVisibleEdgeLayouts(
+/** Where appended segments and markers land in the edge instance buffer. */
+export interface AppendedEdgeSlots {
+	/** First marker slot of the appended edges: after the segments and the markers already there. */
+	markerStart: number;
+	/** First slot of the appended segments: the old segment count. */
+	segmentStart: number;
+	/** Segment count after the append; edges without markers point their `markerStart` here. */
+	segmentTotal: number;
+}
+
+/**
+ * Adds the slot ranges of appended edges to `layouts`. Appended segments take the place of the
+ * first markers, which move up by `segments.length` slots, so every existing marker range shifts
+ * with them. The result equals `buildVisibleEdgeLayouts` over the whole edge set.
+ */
+export function appendVisibleEdgeLayouts(
+	layouts: Map<number, VisibleEdgeLayout>,
 	segments: readonly EdgeSegmentInstance[],
 	markers: readonly EdgeMarkerInstance[],
-	segmentInstanceCount: number,
+	slots: AppendedEdgeSlots,
 ): Map<number, VisibleEdgeLayout> {
-	const layouts = new Map<number, VisibleEdgeLayout>();
-	for (const [slot, segment] of segments.entries()) {
+	if (segments.length > 0) {
+		for (const layout of layouts.values()) layout.markerStart += segments.length;
+	}
+	for (const [offset, segment] of segments.entries()) {
+		const slot = slots.segmentStart + offset;
 		const layout = layouts.get(segment.edgeIndex) ?? {
 			markerCount: 0,
-			markerStart: segmentInstanceCount,
+			markerStart: slots.segmentTotal,
 			segmentCount: 0,
 			segmentStart: slot,
 		};
@@ -40,7 +58,7 @@ export function buildVisibleEdgeLayouts(
 		layouts.set(segment.edgeIndex, layout);
 	}
 	for (const [offset, marker] of markers.entries()) {
-		const slot = segmentInstanceCount + offset;
+		const slot = slots.markerStart + offset;
 		const layout = layouts.get(marker.edgeIndex) ?? {
 			markerCount: 0,
 			markerStart: slot,
@@ -52,6 +70,19 @@ export function buildVisibleEdgeLayouts(
 		layouts.set(marker.edgeIndex, layout);
 	}
 	return layouts;
+}
+
+/** Records GPU slot ranges for each visible edge after a full viewport materialize. */
+export function buildVisibleEdgeLayouts(
+	segments: readonly EdgeSegmentInstance[],
+	markers: readonly EdgeMarkerInstance[],
+	segmentInstanceCount: number,
+): Map<number, VisibleEdgeLayout> {
+	return appendVisibleEdgeLayouts(new Map(), segments, markers, {
+		markerStart: segmentInstanceCount,
+		segmentStart: 0,
+		segmentTotal: segmentInstanceCount,
+	});
 }
 
 export interface PatchVisibleEdgesInput {
@@ -66,6 +97,8 @@ export interface PatchVisibleEdgesInput {
 	minHitSlop: number;
 	mode: GraphraumMode;
 	nodeOutlines?: readonly EndpointOutline[];
+	/** Keep the 2D pick segments in step with the instances (default true). 3D picks by raycast and keeps none. */
+	pickable?: boolean;
 	tier: EdgeLodTier;
 	worldPerPixel: number;
 }
@@ -116,14 +149,16 @@ export function patchVisibleEdgeInstances(
 		for (const [offset, segment] of packed.segments.entries()) {
 			const slot = layout.segmentStart + offset;
 			writeEdgeSegmentInstance(geometry, slot, segment);
-			nextPickable[slot] = {
-				edgeIndex,
-				hitSlop: Math.max(input.minHitSlop, (segment.width * input.worldPerPixel) / 2 + 2 * input.worldPerPixel),
-				x1: segment.x1,
-				x2: segment.x2,
-				y1: segment.y1,
-				y2: segment.y2,
-			};
+			if (input.pickable !== false) {
+				nextPickable[slot] = {
+					edgeIndex,
+					hitSlop: Math.max(input.minHitSlop, (segment.width * input.worldPerPixel) / 2 + 2 * input.worldPerPixel),
+					x1: segment.x1,
+					x2: segment.x2,
+					y1: segment.y1,
+					y2: segment.y2,
+				};
+			}
 			dirtySlotStart = Math.min(dirtySlotStart, slot);
 			dirtySlotEnd = Math.max(dirtySlotEnd, slot);
 		}

@@ -91,6 +91,19 @@ export interface GraphraumSetDataOptions {
 	fit?: boolean;
 }
 
+export type GraphraumNodeDragPhase = "start" | "move" | "end" | "cancel";
+
+/** One step of a node drag. `cancel` carries the position the node was restored to (or left at). */
+export interface GraphraumNodeDragEvent {
+	nodeId: string;
+	phase: GraphraumNodeDragPhase;
+	position: GraphraumPosition;
+}
+
+export interface GraphraumNodeDragOptions {
+	enabled: boolean;
+}
+
 export interface GraphraumDataPatch<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	addedNodes?: readonly GraphraumNode<NodeAttributes>[];
 	addedEdges?: readonly GraphraumEdge<EdgeAttributes>[];

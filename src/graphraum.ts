@@ -50,6 +50,8 @@ import { fitPerspective, type PerspectiveFit } from "./fit-3d";
 import { markInstanceColorSlots } from "./instance-color-ranges";
 import { prepareLayoutPositions } from "./layout-positions";
 import { resolveNodeAxes } from "./node-axes";
+import { NodeDragController } from "./node-drag";
+import { createNodeDragSurface } from "./node-drag-surface";
 import { glowBlendModeFor, glowHaloRadius } from "./node-glow";
 import { type GlowNodeTarget, NodeGlowLayer } from "./node-glow-rendering";
 import {
@@ -79,11 +81,14 @@ import type {
 	GraphraumLabelCandidate,
 	GraphraumLayoutPositions,
 	GraphraumMode,
+	GraphraumNodeDragEvent,
+	GraphraumNodeDragOptions,
 	GraphraumNodeState,
 	GraphraumNodeUpdate,
 	GraphraumOptions,
 	GraphraumOverlayOptions,
 	GraphraumPickHit,
+	GraphraumPosition,
 	GraphraumScreenPosition,
 	GraphraumSetDataOptions,
 	GraphraumTheme,
@@ -230,6 +235,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private gpuTimer: GpuTimer | null = null;
 	private readonly viewListeners = new Set<() => void>();
 	private readonly focusListeners = new Set<() => void>();
+	private readonly nodeDragListeners = new Set<(event: GraphraumNodeDragEvent) => void>();
+	private readonly nodeDrag: NodeDragController;
 	private lastHoveredNodeId: string | null = null;
 
 	constructor(container: HTMLElement, options: GraphraumOptions<NodeAttributes, EdgeAttributes> = {}) {
@@ -265,6 +272,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
 		this.renderer.domElement.addEventListener("pointerleave", this.handlePointerLeave);
 		for (const type of FLIGHT_CANCEL_EVENTS) this.renderer.domElement.addEventListener(type, this.cancelFlight);
+		// Before the camera controls attach theirs: a press on a node must reach the drag first.
+		this.nodeDrag = new NodeDragController(this.createNodeDragHost());
 
 		this.camera = this.createCamera();
 		this.controls = this.createControls();
@@ -422,6 +431,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private replaceData(data: GraphraumData<NodeAttributes, EdgeAttributes>, fitView: boolean) {
+		this.nodeDrag.cancel({ restore: false });
 		const compiled = compileGraph(data, this.visuals);
 		this.disposeGraphObjects();
 		this.data = {
@@ -772,6 +782,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	setMode(mode: GraphraumMode) {
 		if (mode === this.mode) return;
 		this.cancelFlight();
+		this.nodeDrag.cancel({ restore: true });
 		this.stopAutoOrbit();
 		this.mode = mode;
 		this.controls.removeEventListener("change", this.handleViewChange);
@@ -881,6 +892,52 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return () => this.viewListeners.delete(listener);
 	}
 
+	/**
+	 * Turns node dragging on or off (default off). A drag starts when the pointer moves past a small
+	 * tolerance after a press on a node (a finger must rest on the node first, so a swipe still pans
+	 * the camera), moves the node on a plane facing the camera, and ends on release. Escape or a
+	 * cancelled pointer put the node back. Not available while the density LOD shows clusters.
+	 */
+	setNodeDrag(options: GraphraumNodeDragOptions) {
+		if (typeof options?.enabled !== "boolean") throw new Error("setNodeDrag option enabled must be a boolean.");
+		this.nodeDrag.setEnabled(options.enabled);
+	}
+
+	/** Subscribes to node drag steps (`start`, `move`, `end`, `cancel`). Returns an unsubscribe function. */
+	onNodeDrag(listener: (event: GraphraumNodeDragEvent) => void) {
+		this.nodeDragListeners.add(listener);
+		return () => this.nodeDragListeners.delete(listener);
+	}
+
+	private createNodeDragHost() {
+		const element = this.renderer.domElement;
+		return {
+			canStart: () => !this.destroyed && this.nodeMesh !== null && !this.densityLodActive,
+			createSurface: (anchor: GraphraumPosition) =>
+				createNodeDragSurface({
+					anchor,
+					bounds: () => element.getBoundingClientRect(),
+					camera: this.camera,
+					raycaster: this.raycaster,
+				}),
+			document: element.ownerDocument,
+			element,
+			emit: (event: GraphraumNodeDragEvent) => {
+				for (const listener of this.nodeDragListeners) listener(event);
+			},
+			moveNode: (nodeId: string, position: GraphraumPosition) => this.updateNodes([{ id: nodeId, position }]),
+			nodePosition: (nodeId: string) => {
+				const index = this.nodeIndices.get(nodeId);
+				const node = index === undefined ? undefined : this.data.nodes[index];
+				return node ? { ...node.position } : null;
+			},
+			pickNode: (clientX: number, clientY: number) => this.pickNode(clientX, clientY),
+			setControlsEnabled: (enabled: boolean) => {
+				this.controls.enabled = enabled;
+			},
+		};
+	}
+
 	/** Subscribes to selection and hover changes that affect overlay focus chrome. */
 	onFocusChange(listener: () => void) {
 		this.focusListeners.add(listener);
@@ -893,6 +950,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private handlePointerMove = (event: PointerEvent) => {
+		if (this.nodeDrag.active) return;
 		const nodeId = this.pickNode(event.clientX, event.clientY);
 		if (nodeId === this.lastHoveredNodeId) return;
 		this.lastHoveredNodeId = nodeId;
@@ -1206,6 +1264,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	destroy() {
 		this.destroyed = true;
 		this.cancelFlight();
+		this.nodeDrag.dispose();
 		this.stopAutoOrbit();
 		this.resizeObserver.disconnect();
 		this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
@@ -1271,6 +1330,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * without a loop.
 	 */
 	private readonly stepAutoOrbit = (deltaSeconds: number) => {
+		// The camera stays put while a node follows the pointer.
+		if (this.nodeDrag.active) return;
 		try {
 			this.controls.autoRotate = true;
 			this.orbitUpdating = true;

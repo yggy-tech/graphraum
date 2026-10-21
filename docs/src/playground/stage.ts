@@ -75,6 +75,7 @@ export class PlaygroundStage {
 		const useCase = createSceneUseCase(sceneId);
 		const graph = new Graphraum(this.container, { maxPixelRatio: 2, mode, theme, visuals: demoVisuals });
 		graph.setData(useCase.data);
+		graph.setNodeDrag({ enabled: true });
 		this.overlay = graph.createOverlay({
 			labelClassName: "playground-overlay-label",
 			labelPolicy: "focus",

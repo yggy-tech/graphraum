@@ -53,6 +53,24 @@ async function tour(clusters: string[][]) {
 
 In 2D, drag pans and the wheel or a pinch zooms. One finger pans on touch screens. In 3D, drag rotates, and two fingers zoom and pan.
 
+## Drag nodes
+
+```ts
+graph.setNodeDrag({ enabled: true });
+
+const stop = graph.onNodeDrag(({ phase, nodeId, position }) => {
+  if (phase === "end") savePosition(nodeId, position);
+});
+```
+
+Dragging is off by default. With it on, a press on a node followed by a move of more than 5 pixels drags that node. The node keeps the offset at which you grabbed it, so it does not jump to the pointer, and its edges follow on every move. A press that stays under 5 pixels is still a click, and a press on empty space moves the camera as before.
+
+In 2D the node moves in the view plane. In 3D it moves in a plane that faces the camera through the node, so it keeps its distance from the camera and stays under the pointer while you drag.
+
+`onNodeDrag` reports `"start"` (with the position the node had), `"move"` for every step, and `"end"` on release. Escape, a cancelled pointer or lost pointer capture put the node back and report `"cancel"` with the position it was restored to. Replacing the data with `setData()` or switching mode during a drag cancels it. graphraum does not store the new position: write it back to your own data in the `"end"` listener, because a later `setData()` uses the positions you pass.
+
+Camera input is paused while a node is dragged, and a running auto-orbit holds still until the node is dropped. Hover highlighting also waits. On touch screens a finger must rest on a node for about a third of a second before it drags, so a swipe that starts on a node still pans the camera. Dragging is not available while the density LOD shows clusters instead of nodes.
+
 ## Auto-orbit
 
 ```ts

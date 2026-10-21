@@ -303,6 +303,23 @@ describe("Graphraum flyTo", () => {
 		expect(await graph.flyTo({ nodeIds: ["c"] })).toBe(false);
 	});
 
+	test("setData cancels a running flight, but not with fit: false", async () => {
+		const expected = fittedView(["c", "d"]);
+		const graph = setup();
+		const cancelled = graph.flyTo({ nodeIds: ["c", "d"], durationMs: 1000 });
+		graph.setData(data);
+		expect(await cancelled).toBe(false);
+
+		const arrived = track(graph.flyTo({ nodeIds: ["c", "d"], durationMs: 200 }));
+		runFrame(0);
+		graph.setData(data, { fit: false });
+		runFrame(100);
+		runFrame(200);
+		await Promise.resolve();
+		expect(arrived.value).toBe(true);
+		expect(controlsOf(graph).target.distanceTo(expected.target)).toBeLessThan(1e-9);
+	});
+
 	test("prefers-reduced-motion and a zero duration jump to the destination", async () => {
 		const expected = fittedView(["c", "d"]);
 		const instant = setup();

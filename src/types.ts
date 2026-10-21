@@ -82,6 +82,15 @@ export interface GraphraumData<NodeAttributes = undefined, EdgeAttributes = unde
 	edges: readonly GraphraumEdge<EdgeAttributes>[];
 }
 
+export interface GraphraumSetDataOptions {
+	/**
+	 * Fit the camera to the new data (default `true`). `false` replaces the data and leaves the camera
+	 * where it is, for hosts that pass a full snapshot on every change. On a graph that never had a
+	 * fit the camera keeps its initial pose, so call `fitView()` once after the first data.
+	 */
+	fit?: boolean;
+}
+
 export interface GraphraumDataPatch<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	addedNodes?: readonly GraphraumNode<NodeAttributes>[];
 	addedEdges?: readonly GraphraumEdge<EdgeAttributes>[];

@@ -75,6 +75,7 @@ export type {
 	GraphraumPresentationProperty,
 	GraphraumPropertyValue,
 	GraphraumScreenPosition,
+	GraphraumSetDataOptions,
 	GraphraumTheme,
 	GraphraumThemeName,
 	GraphraumVisualMapper,

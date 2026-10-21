@@ -125,7 +125,7 @@ interface GraphraumEdgeVisual {
 ## Data and updates
 
 <div class="api-grid not-content">
-  <div><code>setData(data)</code><p>Validates and replaces the complete topology, rebuilds canonical buffers, fits the camera, materializes the viewport, and schedules a render.</p></div>
+  <div><code>setData(data, options?)</code><p>Validates and replaces the complete topology, rebuilds canonical buffers, fits the camera, materializes the viewport, and schedules a render. Pass <code>{"{ fit: false }"}</code> to keep the camera where it is, for example when a host sends a full snapshot on every change. On a graph that never had a fit the camera keeps its initial pose, so call <code>fitView()</code> once after the first data.</p></div>
   <div><code>applyDataPatch(patch)</code><p>Merges streamed additions and removals without fitting the camera. Changes that stay within the preallocated capacity reuse existing GPU meshes; capacity growth falls back to one controlled rebuild.</p></div>
   <div><code>updateNodes(updates)</code><p>Changes position, size, shape, or color for existing nodes and updates only the affected instance data and incident edge endpoints. Use <code>setData</code> when topology changes.</p></div>
   <div><code>applyLayout(layout)</code><p>Applies a transferable XYZ position batch for existing nodes. Call it repeatedly as a worker produces progressive positions.</p></div>

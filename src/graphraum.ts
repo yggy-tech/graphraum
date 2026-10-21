@@ -85,6 +85,7 @@ import type {
 	GraphraumOverlayOptions,
 	GraphraumPickHit,
 	GraphraumScreenPosition,
+	GraphraumSetDataOptions,
 	GraphraumTheme,
 	GraphraumThemeName,
 	GraphraumVisualMapper,
@@ -272,8 +273,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.resize();
 	}
 
-	setData(data: GraphraumData<NodeAttributes, EdgeAttributes>) {
-		this.replaceData(data, true);
+	/** Replaces the whole graph. Fits the camera unless `options.fit` is `false`. */
+	setData(data: GraphraumData<NodeAttributes, EdgeAttributes>, options: GraphraumSetDataOptions = {}) {
+		const { fit = true } = options;
+		if (typeof fit !== "boolean") throw new Error("setData option fit must be a boolean.");
+		this.replaceData(data, fit);
 	}
 
 	/** Merge a topology patch without fitting or resetting the current camera. */

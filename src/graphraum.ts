@@ -26,6 +26,7 @@ import { autoRotateSpeedFor, resolveAutoOrbitOptions } from "./auto-orbit";
 import { AutoOrbitLoop } from "./auto-orbit-loop";
 import { applyPerspectiveContainerAspect, containerAspect } from "./camera-aspect";
 import { easeInOutCubic, flightProgress, interpolateScale, resolveFlyToOptions } from "./camera-flight";
+import { perspectiveClipRange, validateCameraState } from "./camera-state";
 import { compileGraph } from "./compile-graph";
 import { dataPatchFitsCapacity, isAppendOnlyDataPatch, type MergedGraphData, mergeDataPatch } from "./data-patch";
 import { edgeTierFromDiagnosticsLod, packEdgeInstances } from "./edge-materialize";
@@ -71,6 +72,7 @@ import type {
 	CompiledGraphraumPresentation,
 	GraphraumAutoOrbitOptions,
 	GraphraumBackground,
+	GraphraumCameraState,
 	GraphraumData,
 	GraphraumDataPatch,
 	GraphraumDiagnostics,
@@ -225,6 +227,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	/** True only during the orbit's own `controls.update(dt)`; see `handleViewChange`. */
 	private orbitUpdating = false;
 	private destroyed = false;
+	private canvasWidth = 0;
+	private canvasHeight = 0;
 	private cpuFrameMilliseconds = 0;
 	private gpuFrameMilliseconds: number | null = null;
 	private gpuTimer: GpuTimer | null = null;
@@ -1021,6 +1025,64 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		});
 	}
 
+	/**
+	 * The camera pose as plain JSON. 2D reports the centre and the world height the canvas shows; 3D
+	 * reports the camera position and the point it orbits. Pass it to `setCameraState()` to return
+	 * to the same view, for example after reloading a saved one.
+	 */
+	getCameraState(): GraphraumCameraState {
+		const camera = this.camera;
+		if (camera instanceof OrthographicCamera) {
+			return {
+				center: { x: camera.position.x, y: camera.position.y },
+				mode: "2d",
+				visibleHeight: (camera.top - camera.bottom) / camera.zoom,
+			};
+		}
+		const { target } = this.controls;
+		return {
+			mode: "3d",
+			position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+			target: { x: target.x, y: target.y, z: target.z },
+		};
+	}
+
+	/**
+	 * Puts the camera on a pose from `getCameraState()` at once, without fitting or animating, and
+	 * cancels a running `flyTo`. Throws for a state of the other mode (switch with `setMode()` first)
+	 * or with a non-finite number. 2D keeps the saved height and takes the width from the canvas, so a
+	 * view saved on one canvas size fits another. 3D derives the clip planes from the pose so the whole
+	 * graph stays in view. Apply it after the canvas has its size: a 2D resize to a new size refits.
+	 */
+	setCameraState(state: GraphraumCameraState) {
+		const next = validateCameraState(state, this.mode);
+		this.cancelFlight();
+		const camera = this.camera;
+		const width = Math.max(this.container.clientWidth, 1);
+		const height = Math.max(this.container.clientHeight, 1);
+		if (next.mode === "2d" && camera instanceof OrthographicCamera) {
+			setOrthographicFrustum(camera, width / height, next.visibleHeight);
+			camera.position.set(next.center.x, next.center.y, camera.position.z);
+			this.controls.target.set(next.center.x, next.center.y, this.controls.target.z);
+			camera.lookAt(this.controls.target);
+			camera.updateProjectionMatrix();
+			this.controls.update();
+			this.materializeViewport();
+		} else if (next.mode === "3d" && camera instanceof PerspectiveCamera) {
+			const target = new Vector3(next.target.x, next.target.y, next.target.z);
+			camera.position.set(next.position.x, next.position.y, next.position.z);
+			this.controls.target.copy(target);
+			camera.lookAt(target);
+			applyPerspectiveContainerAspect(camera, width, height);
+			const clip = perspectiveClipRange(camera.position.distanceTo(target), this.graphRadiusAround(target));
+			camera.near = clip.near;
+			camera.far = clip.far;
+			camera.updateProjectionMatrix();
+			this.controls.update();
+		}
+		this.requestRender();
+	}
+
 	/** Nodes whose id is in `nodeIds`, in graph order; every node when `nodeIds` is omitted. */
 	private nodesWithIds(nodeIds: readonly string[] | undefined): GraphraumNodes<NodeAttributes> {
 		if (!nodeIds) return this.data.nodes;
@@ -1190,12 +1252,16 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	resize() {
 		const width = Math.max(this.container.clientWidth, 1);
 		const height = Math.max(this.container.clientHeight, 1);
+		const sizeChanged = this.canvasWidth !== width || this.canvasHeight !== height;
+		this.canvasWidth = width;
+		this.canvasHeight = height;
 		this.renderer.setSize(width, height, false);
 		if (this.camera instanceof PerspectiveCamera) {
 			applyPerspectiveContainerAspect(this.camera, width, height);
 			this.camera.updateProjectionMatrix();
-		} else if (this.camera instanceof OrthographicCamera) {
+		} else if (this.camera instanceof OrthographicCamera && sizeChanged) {
 			// Ortho frustum must track container aspect or the canvas stretches and the graph skews.
+			// The same size again (the observer's first call, a manual `resize()`) leaves the view alone.
 			this.fitView();
 			return;
 		}

@@ -49,6 +49,25 @@ async function tour(clusters: string[][]) {
 }
 ```
 
+## Save and restore the view
+
+```ts
+const view = graph.getCameraState();
+localStorage.setItem("view", JSON.stringify(view));
+
+// later, on a graph in the same mode with its data loaded
+const saved = localStorage.getItem("view");
+if (saved) graph.setCameraState(JSON.parse(saved));
+```
+
+`getCameraState()` returns plain JSON. In 2D it is the centre and `visibleHeight`, the world height the canvas shows from top to bottom with the current zoom applied. In 3D it is the camera `position` and the `target` it looks at and orbits. Both carry their `mode`.
+
+`setCameraState()` moves the camera there at once, without fitting or animating, and cancels a running `flyTo`. It throws, and leaves the camera where it is, for a state of the other mode (call `setMode()` first) and for a missing or non-finite number. Auto-orbit and `flyTo` carry on from the restored pose, and `fitView()` still frames the graph.
+
+A 2D state keeps its height and takes the width from the canvas, so a view saved on one canvas size fits another. A 3D state sets the clip planes from the pose, so the whole graph stays in view even from far away; restoring a view that was reached by dollying can differ from the original by a handful of pixels where overlapping nodes sit at nearly the same depth.
+
+Apply a state after the canvas has its size and the data is loaded. A 2D canvas that changes size refits the graph, which replaces the restored view; a resize to the same size does not.
+
 ## Touch and mouse
 
 In 2D, drag pans and the wheel or a pinch zooms. One finger pans on touch screens. In 3D, drag rotates, and two fingers zoom and pan.

@@ -49,6 +49,25 @@ async function tour(clusters: string[][]) {
 }
 ```
 
+## Save and restore the view
+
+```ts
+const view = graph.getCameraState();
+localStorage.setItem("view", JSON.stringify(view));
+
+// later, on a graph in the same mode with its data loaded
+const saved = localStorage.getItem("view");
+if (saved) graph.setCameraState(JSON.parse(saved));
+```
+
+`getCameraState()` returns plain JSON. In 2D it is the centre and `visibleHeight`, the world height the canvas shows from top to bottom with the current zoom applied. In 3D it is the camera `position` and the `target` it looks at and orbits. Both carry their `mode`.
+
+`setCameraState()` moves the camera there at once, without fitting or animating, and cancels a running `flyTo`. It throws, and leaves the camera where it is, for a state of the other mode (call `setMode()` first) and for a missing or non-finite number. Auto-orbit and `flyTo` carry on from the restored pose, and `fitView()` still frames the graph.
+
+A 2D state keeps its height and takes the width from the canvas, so a view saved on one canvas size fits another. A 3D state sets the clip planes from the pose, so the whole graph stays in view even from far away; restoring a view that was reached by dollying can differ from the original by a handful of pixels where overlapping nodes sit at nearly the same depth.
+
+Apply a state after the canvas has its size and the data is loaded. A 2D canvas that changes size refits the graph, which replaces the restored view; a resize to the same size does not.
+
 ## Touch and mouse
 
 In 2D, drag pans and the wheel or a pinch zooms. One finger pans on touch screens. In 3D, drag rotates, and two fingers zoom and pan.
@@ -85,6 +104,67 @@ graph.setAutoOrbit(false);
 `speed` is in radians per second (default `0.07`, about 90 seconds per turn; above 0 and at most 2) and holds at any frame rate. Pointer and wheel input on the canvas pause the orbit; it resumes after `resumeAfterMs` (default `3000`) without new input. A drag in progress keeps the camera still even if that delay passes. Pointer input on DOM overlays above the canvas, such as a toolbar or focus cards, does not pause it. The orbit also stops while the tab is hidden or the canvas is scrolled off screen, and resumes when visible again.
 
 While the orbit is active graphraum runs a frame loop instead of rendering only on change. Each active frame rotates the camera, renders once, and calls `onViewChange` listeners so overlays can follow. It does not repack node or edge instances: in 3D they do not depend on the camera angle, so there is no per-frame CPU repacking or buffer re-upload that grows with graph size. The GPU draw still scales with what is drawn. Paused and disabled orbits run no loop. graphraum does not read `prefers-reduced-motion`; check it before enabling the orbit, as above. `getDiagnostics().autoOrbit` reports `"off"`, `"active"` or `"paused"`.
+
+## Depth of field
+
+In 3D, depth of field keeps the selected nodes sharp and blurs the rest of the graph with its distance from them, in front and behind, so a selection stands out without dimming anything:
+
+```ts
+const graph = new Graphraum(container, {
+  mode: "3d",
+  depthOfField: { enabled: true, strength: 0.5 },
+});
+
+graph.setSelection(["ada"]); // the focus moves to Ada
+await graph.setDepthOfField({ strength: 0.8 }); // fades to the new strength; omitted fields keep their values
+graph.setDepthOfField({ enabled: false }); // fades out
+```
+
+It is off by default. It behaves like a camera lens. A surface at distance `d` from the camera, with the focus at distance `f`, blurs by `strength × 24 × |d − f| / d` CSS pixels, up to `maxBlur` (default `12`):
+
+- Surfaces in front of the focus blur faster than those behind it, and a blurred node in front softly covers what is behind it.
+- The closer the camera is to the focus, the shallower the depth of field. Zooming in on a node blurs its surroundings more, and zooming out to an overview sharpens the graph.
+- The blur depends only on ratios of distances, so it looks the same whatever units your layout uses.
+- A flat graph seen head-on is all at one depth, so it only blurs once you rotate it.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `strength` | `0.5` | Aperture, 0 to 1. |
+| `maxBlur` | `12` | Largest blur radius in CSS pixels. |
+| `minBlur` | `0` | Blur radii below this many CSS pixels render sharp, which widens the in-focus band. |
+| `nearDistance`, `farDistance` | `0`, `Infinity` | Camera-to-focus distances in world units. `strength` applies fully up to `nearDistance` and fades out by `farDistance`, so an overview from far away can stay sharp. |
+| `focus` | `"selection"` | `"selection"`, or a fixed camera distance in world units. |
+| `transition` | `{ durationMs: 400, easing: "easeInOut" }` | How focus moves and blur fades animate. |
+
+With `focus: "selection"` the focal plane goes through the mean position of the selected nodes. graphraum measures its distance from the camera again every frame, so the selected nodes stay sharp while the camera orbits, pans, zooms or flies; only a selection change moves the focus. When nothing is selected the blur fades out and the whole graph is sharp. A number as `focus` fixes the focal plane at that camera distance instead; it then blurs whether or not anything is selected.
+
+### Animate it
+
+Changing the selection, turning depth of field on or off and changing `strength` all animate over `transition`. `easing` is `"linear"`, `"easeIn"`, `"easeOut"`, `"easeInOut"` or your own function from progress 0..1 to 0..1:
+
+```ts
+graph.setDepthOfField({ transition: { durationMs: 800, easing: (t) => 1 - (1 - t) ** 2 } });
+
+const arrived = await graph.setDepthOfField({ enabled: false }); // true once the blur has faded out
+graph.setDepthOfField({ strength: 1 }, { animate: false }); // jump
+```
+
+A change during a fade continues from the blur on screen instead of starting over, and the interrupted call resolves `false`. With `prefers-reduced-motion: reduce`, `durationMs: 0` or `{ animate: false }` it jumps.
+
+### Cost and limits
+
+Depth of field is a post-process. While it blurs, each frame:
+
+1. draws the scene into an offscreen target;
+2. draws the edges again to record their depth;
+3. blurs at half resolution;
+4. composites onto the canvas.
+
+That adds 3 draw calls. A fade or focus move renders frames until it ends; otherwise it renders on demand like the rest of graphraum. It has no cost while disabled, in 2D, or with nothing selected: frames then render directly and no render targets exist.
+
+Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and focus cards are unaffected, so labels stay sharp. Glow halos take the depth of what is behind them, so they blur like that.
+
+In 2D there is no depth to focus on, so depth of field does nothing there; `setMode("3d")` brings it back. If the WebGL context cannot run it, frames render without it and graphraum logs one console warning. `getDiagnostics().depthOfField` reports `"off"`, `"inactive"`, `"active"` or `"unsupported"`.
 
 ## Edge endpoints in 3D
 

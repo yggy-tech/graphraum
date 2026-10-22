@@ -22,6 +22,8 @@ export function startPlayground() {
 	const settings = requireElement<HTMLFormElement>(root, "#settings");
 	const settingsButtons = [...root.querySelectorAll<HTMLButtonElement>("[data-settings-open]")];
 	const sceneSelect = requireElement<HTMLSelectElement>(root, "#scene-select");
+	const dofToggle = requireElement<HTMLButtonElement>(root, "[data-dof-toggle]");
+	const dofStrength = requireElement<HTMLInputElement>(root, "[data-dof-strength]");
 	const codeDialog = requireElement<HTMLDialogElement>(root, "#code-dialog");
 	const codeBody = requireElement(codeDialog, "[data-code-body]");
 	const prove = requireElement(root, "#prove");
@@ -93,8 +95,17 @@ export function startPlayground() {
 		});
 	}
 
+	/** Depth of field is a no-op in 2D, so the same settings apply to every scene and mode. */
+	function applyDepthOfField() {
+		stage.current?.graph.setDepthOfField({
+			enabled: dofToggle.getAttribute("aria-pressed") === "true",
+			strength: Number(dofStrength.value),
+		});
+	}
+
 	function syncControls() {
 		root.dataset.scene = state.scene;
+		root.dataset.mode = state.mode;
 		history.replaceState(null, "", `${location.pathname}${serializePlaygroundState(state)}${location.hash}`);
 		sceneSelect.value = state.scene;
 		for (const button of root.querySelectorAll<HTMLButtonElement>("[data-scene-button]")) {
@@ -125,6 +136,7 @@ export function startPlayground() {
 			const first = scene.useCase.data.nodes[0];
 			select(first?.id ?? null);
 		}
+		applyDepthOfField();
 		resetProve();
 	}
 
@@ -262,6 +274,12 @@ export function startPlayground() {
 	settings.addEventListener("change", () => {
 		if (state.scene === "stress" && !proving) mount();
 	});
+
+	dofToggle.addEventListener("click", () => {
+		dofToggle.setAttribute("aria-pressed", String(dofToggle.getAttribute("aria-pressed") !== "true"));
+		applyDepthOfField();
+	});
+	dofStrength.addEventListener("input", applyDepthOfField);
 
 	requireElement(root, "#code-button").addEventListener("click", () => {
 		codeBody.textContent = sceneCode(state.scene);

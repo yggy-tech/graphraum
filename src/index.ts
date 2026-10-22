@@ -44,6 +44,8 @@ export type {
 	GraphraumColor,
 	GraphraumData,
 	GraphraumDataPatch,
+	GraphraumDepthOfFieldOptions,
+	GraphraumDepthOfFieldStatus,
 	GraphraumDiagnostics,
 	GraphraumEdge,
 	GraphraumEdgeEncoding,

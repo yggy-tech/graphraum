@@ -31,6 +31,7 @@ The container must have a non-zero width and height. graphraum appends one canva
 interface GraphraumOptions {
   mode?: "2d" | "3d";             // default: "2d"
   antialias?: boolean;              // default: false
+  depthOfField?: GraphraumDepthOfFieldOptions; // default: off
   maxPixelRatio?: number;           // default: 2
   maxVisibleEdges?: number;         // default: 100_000
   maxVisibleNodes?: number;         // default: 100_000
@@ -193,6 +194,7 @@ Missing coordinates default to zero so layout does not block the first render. M
   <div><code>setMode(mode)</code><p>Switches between orthographic 2D and perspective 3D, replaces controls, and fits the current graph.</p></div>
   <div><code>getMode()</code><p>Returns the active <code>"2d"</code> or <code>"3d"</code> mode.</p></div>
   <div><code>setAutoOrbit(options | false)</code><p>Slowly orbits the 3D camera around the graph. Off by default; pass <code>false</code> to stop. Throws in 2D, and switching to 2D turns it off.</p></div>
+  <div><code>setDepthOfField(options)</code><p>Turns 3D depth of field on or off and changes its strength, focus and transition. Omitted fields keep their values. Off by default; a no-op in 2D. See <a href="../../guide/camera-and-3d/#depth-of-field">Depth of field</a>.</p></div>
   <div><code>setTheme(theme)</code><p>Applies a named preset (<code>"dark"</code> / <code>"light"</code>) or merges a partial palette, then rematerializes colors.</p></div>
   <div><code>setBackground(background)</code><p>Sets a solid color, <code>"transparent"</code> / <code>null</code> for host CSS, or a <code>{'{ type: "pattern", source }'}</code> texture.</p></div>
   <div><code>fitView(options?)</code><p>Fits the active camera to the complete graph and rematerializes the viewport. Pass <code>{'{ nodeIds }'}</code> to frame only those nodes, for example a highlighted path; unknown IDs are ignored, and when none match (or the list is empty) it frames every node. In 2D it frames every node and resets any wheel zoom. In 3D it returns to the front view and moves as close as it can while every node, including its glow halo, stays on the canvas, leaving a small margin on the tighter canvas axis for labels beside edge nodes.</p></div>
@@ -205,6 +207,19 @@ Missing coordinates default to zero so layout does not block the first render. M
 ### Auto-orbit
 
 `setAutoOrbit({ speed, resumeAfterMs })` orbits the 3D camera; see [Camera and 3D](../../guide/camera-and-3d/#auto-orbit).
+
+### Depth of field
+
+```ts
+interface GraphraumDepthOfFieldOptions {
+  enabled?: boolean;                // default: false
+  strength?: number;                // 0..1, default: 0.5 (1 = 12 CSS px largest blur)
+  focus?: "selection" | number;     // default: "selection"; a number is a camera distance in world units
+  transitionMs?: number;            // default: 400; 0 jumps
+}
+```
+
+Pass it as `depthOfField` to the constructor or to `setDepthOfField`. Invalid values throw. See [Camera and 3D](../../guide/camera-and-3d/#depth-of-field).
 
 ## Theme
 
@@ -235,6 +250,7 @@ interface GraphraumDiagnostics {
   aggregatedNodeClusters: number;
   autoOrbit: "active" | "off" | "paused";
   cpuFrameMilliseconds: number;
+  depthOfField: "active" | "inactive" | "off" | "unsupported";
   gpuFrameMilliseconds: number | null;
   gpuDrawCalls: number;
   gpuGeometries: number;
@@ -256,4 +272,4 @@ interface GraphraumDiagnostics {
 }
 ```
 
-Diagnostics describe the final rendered frame. GPU frame time is `null` when WebGL timer queries are unavailable. Node candidates and aggregate clusters expose density LOD decisions; total and visible counts expose the effective node and edge reductions without asking applications to re-derive them. `visibleEdgeSegments` counts rendered edge lines and `visibleEdges` is an alias for it; `visibleEdgeMarkers` counts rendered direction triangles, which the overview LOD tier drops first. `autoOrbit` is `"paused"` when the orbit is enabled but stopped by input, a hidden tab or an off-screen canvas. `visibleGlowNodes` counts rendered glow halos (at most 256, and 0 in the density LOD tier). `gpuDrawCalls` is 2 without halos and 3 while at least one halo is visible; see [Glow](../../guide/theme/#glow).
+Diagnostics describe the final rendered frame. GPU frame time is `null` when WebGL timer queries are unavailable. Node candidates and aggregate clusters expose density LOD decisions; total and visible counts expose the effective node and edge reductions without asking applications to re-derive them. `visibleEdgeSegments` counts rendered edge lines and `visibleEdges` is an alias for it; `visibleEdgeMarkers` counts rendered direction triangles, which the overview LOD tier drops first. `autoOrbit` is `"paused"` when the orbit is enabled but stopped by input, a hidden tab or an off-screen canvas. `visibleGlowNodes` counts rendered glow halos (at most 256, and 0 in the density LOD tier). `gpuDrawCalls` is 2 without halos and 3 while at least one halo is visible; see [Glow](../../guide/theme/#glow). A frame that runs depth of field adds 3 draw calls. `depthOfField` is `"off"` when disabled, `"inactive"` when enabled with nothing to blur (2D, or nothing selected), `"active"` when the last frame blurred and `"unsupported"` when the WebGL context cannot run it.

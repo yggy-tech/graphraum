@@ -73,6 +73,26 @@ body.playground {
 	display: none;
 }
 
+/* Depth of field only exists in 3D, so its controls leave the bar in 2D. */
+.app[data-mode="2d"] .dof {
+	display: none;
+}
+
+.dof-strength {
+	align-items: center;
+	display: flex;
+	padding: 0 10px 0 4px;
+}
+
+.dof-strength input {
+	accent-color: var(--green);
+	width: 96px;
+}
+
+.dof button[aria-pressed="false"] + .dof-strength {
+	opacity: 0.45;
+}
+
 .scene-select {
 	display: none;
 }
@@ -584,6 +604,10 @@ article.playground-overlay-rich span {
 
 	.scene-select {
 		display: block;
+	}
+
+	.dof-strength {
+		display: none;
 	}
 
 	.bar-actions,

@@ -28,6 +28,18 @@ import { applyPerspectiveContainerAspect, containerAspect } from "./camera-aspec
 import { easeInOutCubic, flightProgress, interpolateScale, resolveFlyToOptions } from "./camera-flight";
 import { compileGraph } from "./compile-graph";
 import { dataPatchFitsCapacity, isAppendOnlyDataPatch, type MergedGraphData, mergeDataPatch } from "./data-patch";
+import {
+	DEPTH_OF_FIELD_DEFAULTS,
+	DEPTH_OF_FIELD_MIN_BLUR_PIXELS,
+	DepthOfFieldFocus,
+	depthOfFieldMaxBlurPixels,
+	type FocusPoint,
+	meanPoint,
+	type ResolvedDepthOfFieldOptions,
+	resolveDepthOfFieldOptions,
+	viewDistance,
+} from "./depth-of-field";
+import { type DepthOfFieldFrame, DepthOfFieldPass } from "./depth-of-field-pass";
 import { edgeTierFromDiagnosticsLod, packEdgeInstances } from "./edge-materialize";
 import { DETAIL_MAX_SEGMENTS, type EdgeLodTier } from "./edge-paths";
 import { type PickableEdgeSegment, pickClosestEdgeIndex } from "./edge-picking";
@@ -73,6 +85,8 @@ import type {
 	GraphraumBackground,
 	GraphraumData,
 	GraphraumDataPatch,
+	GraphraumDepthOfFieldOptions,
+	GraphraumDepthOfFieldStatus,
 	GraphraumDiagnostics,
 	GraphraumEdgeState,
 	GraphraumFlyToOptions,
@@ -150,6 +164,9 @@ interface GpuTimer {
 function disposeMaterial(material: Material | Material[]) {
 	for (const item of Array.isArray(material) ? material : [material]) item.dispose();
 }
+
+/** One warning per page when a context cannot run depth of field; diagnostics report it per instance. */
+let warnedDepthOfFieldUnsupported = false;
 
 /** Canvas input that cancels a running `flyTo`, so people take over the camera at once. */
 const FLIGHT_CANCEL_EVENTS = ["keydown", "pointerdown", "wheel"] as const;
@@ -231,6 +248,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private readonly viewListeners = new Set<() => void>();
 	private readonly focusListeners = new Set<() => void>();
 	private lastHoveredNodeId: string | null = null;
+	private readonly antialias: boolean;
+	private depthOfField: ResolvedDepthOfFieldOptions = DEPTH_OF_FIELD_DEFAULTS;
+	private readonly depthOfFieldFocus = new DepthOfFieldFocus();
+	private depthOfFieldPass: DepthOfFieldPass | null = null;
+	private depthOfFieldStatus: GraphraumDepthOfFieldStatus = "off";
 
 	constructor(container: HTMLElement, options: GraphraumOptions<NodeAttributes, EdgeAttributes> = {}) {
 		this.container = container;
@@ -250,7 +272,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			throw new Error("Viewport overscan must be a non-negative finite number.");
 		}
 		this.theme = resolveGraphraumTheme(options.theme);
-		this.renderer = new WebGLRenderer({ antialias: options.antialias ?? false, alpha: true });
+		if (options.depthOfField !== undefined) this.depthOfField = resolveDepthOfFieldOptions(options.depthOfField);
+		this.antialias = options.antialias ?? false;
+		this.renderer = new WebGLRenderer({ antialias: this.antialias, alpha: true });
 		this.applyBackground();
 		const context = this.renderer.getContext();
 		if (typeof WebGL2RenderingContext !== "undefined" && context instanceof WebGL2RenderingContext) {
@@ -737,6 +761,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		);
 		if (changedNodeIds.size === 0) return;
 		this.setNodeStateIds(state, nextSelection);
+		if (state === "selected" && this.depthOfField.enabled) this.depthOfFieldFocus.retarget();
 		this.applySelectionColors(changedNodeIds);
 		this.requestRender();
 		if (state === "selected" || state === "hovered") this.notifyFocusChange();
@@ -809,6 +834,22 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.controls.autoRotateSpeed = autoRotateSpeedFor(speed);
 		if (this.autoOrbit && this.autoOrbit.status !== "off") this.autoOrbit.setResumeAfterMs(resumeAfterMs);
 		else this.autoOrbit = new AutoOrbitLoop(this.renderer.domElement, this.controls, resumeAfterMs, this.stepAutoOrbit);
+	}
+
+	/**
+	 * Updates 3D depth of field; omitted fields keep their current values. With `focus: "selection"`
+	 * the focal plane follows the mean position of the selected nodes and animates over
+	 * `transitionMs` when the selection changes (it jumps with `prefers-reduced-motion: reduce`);
+	 * with nothing selected the blur fades out. Camera moves never blur the focused nodes. While it
+	 * blurs, each frame adds three draw calls; disabled, or with nothing to blur, it costs nothing.
+	 * A no-op in 2D. Picking and DOM overlays are unaffected. Throws for invalid values.
+	 */
+	setDepthOfField(options: GraphraumDepthOfFieldOptions) {
+		const previous = this.depthOfField;
+		this.depthOfField = resolveDepthOfFieldOptions(options, previous);
+		if (this.depthOfField.enabled && !previous.enabled) this.depthOfFieldFocus.retarget();
+		if (!this.depthOfField.enabled) this.disposeDepthOfFieldPass();
+		this.requestRender();
 	}
 
 	getNodePresentation(nodeId: string): CompiledGraphraumPresentation | null {
@@ -914,6 +955,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			aggregatedNodeClusters: this.densityLodActive ? this.visibleNodeCount : 0,
 			autoOrbit: this.autoOrbit?.status ?? "off",
 			cpuFrameMilliseconds: this.cpuFrameMilliseconds,
+			depthOfField: this.depthOfFieldStatus,
 			gpuFrameMilliseconds: this.gpuFrameMilliseconds,
 			gpuDrawCalls: this.renderer.info.render.calls,
 			gpuGeometries: this.renderer.info.memory.geometries,
@@ -1218,6 +1260,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			for (const query of this.gpuTimer.pending) this.gpuTimer.context.deleteQuery(query);
 		}
 		this.disposeBackgroundTexture();
+		this.disposeDepthOfFieldPass();
 		this.disposeGraphObjects();
 		this.renderer.dispose();
 		this.renderer.domElement.remove();
@@ -1246,13 +1289,90 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const query = timer?.context.createQuery() ?? null;
 		if (timer && query) timer.context.beginQuery(timer.extension.TIME_ELAPSED_EXT, query);
 		const startedAt = performance.now();
-		this.renderer.render(this.scene, this.camera);
+		const depthOfField = this.prepareDepthOfField(startedAt);
+		if (depthOfField && this.depthOfFieldPass && this.camera instanceof PerspectiveCamera) {
+			// Several render calls make one frame; count them together so gpuDrawCalls stays per frame.
+			this.renderer.info.autoReset = false;
+			this.renderer.info.reset();
+			try {
+				this.depthOfFieldPass.render(this.renderer, this.scene, this.camera, this.edgeMesh, depthOfField);
+			} finally {
+				this.renderer.info.autoReset = true;
+			}
+		} else {
+			this.renderer.render(this.scene, this.camera);
+		}
 		this.cpuFrameMilliseconds = performance.now() - startedAt;
 		if (timer && query) {
 			timer.context.endQuery(timer.extension.TIME_ELAPSED_EXT);
 			timer.pending.push(query);
 		}
 		for (const listener of this.viewListeners) listener();
+	}
+
+	/**
+	 * Decides whether this frame blurs and records why in the diagnostics status. Returns null to
+	 * render directly. Requests another frame while a focus transition runs; it ends on its own.
+	 */
+	private prepareDepthOfField(nowMs: number): DepthOfFieldFrame | null {
+		const options = this.depthOfField;
+		if (!options.enabled) {
+			this.depthOfFieldStatus = "off";
+			return null;
+		}
+		if (!(this.camera instanceof PerspectiveCamera)) {
+			this.depthOfFieldStatus = "inactive";
+			this.disposeDepthOfFieldPass();
+			return null;
+		}
+		if (!DepthOfFieldPass.isSupported(this.renderer)) {
+			this.depthOfFieldStatus = "unsupported";
+			if (!warnedDepthOfFieldUnsupported) {
+				warnedDepthOfFieldUnsupported = true;
+				console.warn(
+					'graphraum: depth of field needs a WebGL 2 context and is turned off for this canvas. getDiagnostics().depthOfField reports "unsupported".',
+				);
+			}
+			return null;
+		}
+		this.camera.updateMatrixWorld();
+		let focusPoint: FocusPoint | null = null;
+		let amount = 1;
+		if (options.focus === "selection") {
+			const jump = options.transitionMs === 0 || prefersReducedMotion();
+			const focus = this.depthOfFieldFocus.evaluate(nowMs, this.selectionFocusPoint(), options.transitionMs, jump);
+			if (!focus.settled) this.requestRender();
+			focusPoint = focus.point;
+			amount = focus.amount;
+		}
+		const maxBlurPixels = depthOfFieldMaxBlurPixels(options.strength * amount, this.renderer.getPixelRatio());
+		const focusDistance =
+			typeof options.focus === "number"
+				? options.focus
+				: focusPoint && viewDistance(focusPoint, this.camera.matrixWorldInverse.elements);
+		if (!focusDistance || maxBlurPixels < DEPTH_OF_FIELD_MIN_BLUR_PIXELS) {
+			this.depthOfFieldStatus = "inactive";
+			return null;
+		}
+		this.depthOfFieldPass ??= new DepthOfFieldPass(this.antialias);
+		this.depthOfFieldStatus = "active";
+		return { focusDistance: Math.max(focusDistance, this.camera.near), maxBlurPixels };
+	}
+
+	/** Mean world position of the selected nodes, read every frame so a running layout keeps them in focus. */
+	private selectionFocusPoint(): FocusPoint | null {
+		return meanPoint(
+			[...this.selectedNodeIds].flatMap((id) => {
+				const index = this.nodeIndices.get(id);
+				const node = index === undefined ? undefined : this.data.nodes[index];
+				return node ? [{ x: node.position.x, y: node.position.y, z: node.position.z ?? 0 }] : [];
+			}),
+		);
+	}
+
+	private disposeDepthOfFieldPass() {
+		this.depthOfFieldPass?.dispose();
+		this.depthOfFieldPass = null;
 	}
 
 	private stopAutoOrbit() {

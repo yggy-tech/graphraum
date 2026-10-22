@@ -265,8 +265,35 @@ export interface GraphraumTheme {
 /** Discriminated pick result. Nodes win over edges when both intersect the pointer. */
 export type GraphraumPickHit = { kind: "edge"; id: string } | { kind: "node"; id: string };
 
+/**
+ * Opt-in 3D depth of field. The focal plane follows the selection, so selected nodes stay sharp and
+ * the rest of the graph blurs with its distance from them. A no-op in 2D. See `Graphraum.setDepthOfField`.
+ */
+export interface GraphraumDepthOfFieldOptions {
+	/** Default `false`. While disabled no extra passes or render targets exist. */
+	enabled?: boolean;
+	/**
+	 * `"selection"` (default) focuses the mean position of the selected nodes and fades the blur out
+	 * when nothing is selected. A number fixes the focal plane at that camera distance in world units.
+	 */
+	focus?: "selection" | number;
+	/** 0..1, default 0.5. Scales the largest blur radius; 1 is 12 CSS pixels. */
+	strength?: number;
+	/** Focus and fade animation in milliseconds after a selection change. Default 400; 0 jumps. */
+	transitionMs?: number;
+}
+
+/**
+ * `off`: disabled. `inactive`: enabled with nothing to blur (2D mode, or no selection with
+ * `focus: "selection"`), so frames render directly. `active`: the last frame ran the blur passes.
+ * `unsupported`: enabled, but the WebGL context cannot run it, so frames render directly.
+ */
+export type GraphraumDepthOfFieldStatus = "active" | "inactive" | "off" | "unsupported";
+
 export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	antialias?: boolean;
+	/** Opt-in 3D depth of field; off by default. Change it later with `setDepthOfField`. */
+	depthOfField?: GraphraumDepthOfFieldOptions;
 	maxVisibleEdges?: number;
 	maxVisibleNodes?: number;
 	maxPixelRatio?: number;
@@ -303,6 +330,7 @@ export interface GraphraumDiagnostics {
 	aggregatedNodeClusters: number;
 	autoOrbit: GraphraumAutoOrbitStatus;
 	cpuFrameMilliseconds: number;
+	depthOfField: GraphraumDepthOfFieldStatus;
 	gpuFrameMilliseconds: number | null;
 	gpuDrawCalls: number;
 	gpuGeometries: number;

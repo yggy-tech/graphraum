@@ -68,6 +68,29 @@ graph.setAutoOrbit(false);
 
 While the orbit is active graphraum runs a frame loop instead of rendering only on change. Each active frame rotates the camera, renders once, and calls `onViewChange` listeners so overlays can follow. It does not repack node or edge instances: in 3D they do not depend on the camera angle, so there is no per-frame CPU repacking or buffer re-upload that grows with graph size. The GPU draw still scales with what is drawn. Paused and disabled orbits run no loop. graphraum does not read `prefers-reduced-motion`; check it before enabling the orbit, as above. `getDiagnostics().autoOrbit` reports `"off"`, `"active"` or `"paused"`.
 
+## Depth of field
+
+In 3D, depth of field keeps the selected nodes sharp and blurs the rest of the graph with its distance from them, so a selection stands out without dimming anything:
+
+```ts
+const graph = new Graphraum(container, {
+  mode: "3d",
+  depthOfField: { enabled: true, strength: 0.5 },
+});
+
+graph.setSelection(["ada"]); // the focus moves to Ada
+graph.setDepthOfField({ strength: 0.8 }); // omitted fields keep their values
+graph.setDepthOfField({ enabled: false });
+```
+
+It is off by default. `strength` (0 to 1, default `0.5`) scales the largest blur; at 1 a node far from the focus blurs by 12 CSS pixels. The blur grows with distance from the focal plane relative to the focal distance, so it looks the same whatever units your layout uses: a node half the focal distance nearer or further takes the full blur. Nodes level with the focus stay sharp, including the selected node's neighbors when they sit at the same depth. A flat graph seen head-on is all at one depth, so it only blurs once you rotate it.
+
+With `focus: "selection"` (the default) the focal plane goes through the mean position of the selected nodes. When the selection changes the focus moves to the new nodes over `transitionMs` (default `400`), and when nothing is selected the blur fades out and the whole graph is sharp. Moving the camera never blurs the selection: the focus stays on the selected nodes, not at a fixed distance. With `prefers-reduced-motion: reduce` or `transitionMs: 0` the focus jumps. Pass a number as `focus` to fix the focal plane at that camera distance in world units instead; it then blurs whether or not anything is selected.
+
+Depth of field is a post-process: while it blurs, each frame draws the scene into an offscreen target, draws the edges again to record their depth, blurs at half resolution and composites onto the canvas, which adds 3 draw calls. It has no cost while disabled, in 2D, or with nothing selected: frames then render directly and no render targets exist. Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and focus cards are unaffected, so labels stay sharp. Glow halos take the depth of what is behind them, so they blur like that.
+
+In 2D there is no depth to focus on, so depth of field does nothing there; `setMode("3d")` brings it back. If the WebGL context cannot run it, frames render without it and graphraum logs one console warning. `getDiagnostics().depthOfField` reports `"off"`, `"inactive"`, `"active"` or `"unsupported"`.
+
 ## Edge endpoints in 3D
 
 `theme.endpointAttach` (`"boundary"` by default) stops each edge at its node's outline, stroke included, with a small clearance; `"center"` joins node centers. The same trim is exported for hosts that draw their own edge geometry, such as overlays or exported paths:

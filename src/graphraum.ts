@@ -44,7 +44,12 @@ import {
 	viewDistance,
 } from "./depth-of-field";
 import { type DepthOfFieldFrame, DepthOfFieldPass } from "./depth-of-field-pass";
-import { edgeTierFromDiagnosticsLod, packEdgeInstances } from "./edge-materialize";
+import {
+	type EdgeMarkerInstance,
+	type EdgeSegmentInstance,
+	edgeTierFromDiagnosticsLod,
+	packEdgeInstances,
+} from "./edge-materialize";
 import { DETAIL_MAX_SEGMENTS, type EdgeLodTier } from "./edge-paths";
 import { type PickableEdgeSegment, pickClosestEdgeIndex } from "./edge-picking";
 import {
@@ -52,11 +57,13 @@ import {
 	createEdgeMaterial,
 	EDGE_INSTANCE_ATTRIBUTES,
 	EDGE_RENDER_ORDER,
+	getInstancedAttribute,
 	writeEdgeMarkerInstance,
 	writeEdgeSegmentInstance,
 } from "./edge-rendering";
 import { changedIds, type EdgeStateStyling } from "./edge-state";
 import {
+	appendVisibleEdgeLayouts,
 	buildVisibleEdgeLayouts,
 	patchVisibleEdgeInstances,
 	patchVisibleEdgePaint,
@@ -96,11 +103,13 @@ import type {
 	GraphraumDepthOfFieldStatus,
 	GraphraumDepthOfFieldUpdate,
 	GraphraumDiagnostics,
+	GraphraumEdge,
 	GraphraumEdgeState,
 	GraphraumFlyToOptions,
 	GraphraumLabelCandidate,
 	GraphraumLayoutPositions,
 	GraphraumMode,
+	GraphraumNode,
 	GraphraumNodeDragEvent,
 	GraphraumNodeDragOptions,
 	GraphraumNodeState,
@@ -164,6 +173,14 @@ interface MaterializedNode {
 	x: number;
 	y: number;
 	z: number;
+}
+
+/** The instanced attributes one node's slot is written into. */
+interface NodeInstanceTargets {
+	matrix: Matrix4;
+	shape: InstancedBufferAttribute;
+	strokeColor: InstancedBufferAttribute;
+	strokeWidth: InstancedBufferAttribute;
 }
 
 interface GpuTimer {
@@ -397,74 +414,189 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const addedNodes = patch.addedNodes ?? [];
 		const addedEdges = patch.addedEdges ?? [];
 		if (addedNodes.length === 0 && addedEdges.length === 0) return;
-		const nodeById = new Map(this.data.nodes.map((node) => [node.id, node]));
-		for (const node of addedNodes) nodeById.set(node.id, node);
-		const edgeEndpointNodes = addedEdges.flatMap((edge) => {
-			const source = nodeById.get(edge.source);
-			const target = nodeById.get(edge.target);
-			return source && target ? [source, target] : [];
-		});
-		const patchNodes = [...addedNodes, ...edgeEndpointNodes].filter(
-			(node, index, all) => all.findIndex((candidate) => candidate.id === node.id) === index,
-		);
-		const compiled = compileGraph({ nodes: patchNodes, edges: addedEdges }, this.visuals);
-		const nodeVisuals = new Map(patchNodes.map((node, index) => [node.id, compiled.nodeVisuals[index]]));
-		const nextNodes = [...this.data.nodes, ...addedNodes.map((node) => ({ ...node, ...nodeVisuals.get(node.id) }))];
-		const nextNodeIndices = new Map(this.nodeIndices);
-		for (const [index, node] of nextNodes.entries()) nextNodeIndices.set(node.id, index);
-		const nextEdges = [
-			...this.data.edges,
-			...addedEdges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
-		];
-		const nextEdgeIndices = new Uint32Array(nextEdges.length * 2);
-		nextEdgeIndices.set(this.edgeNodeIndices);
-		const nextEdgePositions = new Float32Array(nextEdges.length * 6);
-		nextEdgePositions.set(this.canonicalEdgePositions);
-		const nextIncidentEdges = this.incidentEdgeIndices.map((indices) => [...indices]);
-		for (const [index, edge] of nextEdges.entries()) {
-			const source = nextNodeIndices.get(edge.source);
-			const target = nextNodeIndices.get(edge.target);
-			if (source === undefined || target === undefined) continue;
-			nextEdgeIndices[index * 2] = source;
-			nextEdgeIndices[index * 2 + 1] = target;
-			if (!nextIncidentEdges[source]) nextIncidentEdges[source] = [];
-			if (!nextIncidentEdges[target]) nextIncidentEdges[target] = [];
-			if (index >= this.data.edges.length) {
-				nextIncidentEdges[source]?.push(index);
-				nextIncidentEdges[target]?.push(index);
-				const sourceNode = nextNodes[source];
-				const targetNode = nextNodes[target];
-				if (sourceNode && targetNode) {
-					nextEdgePositions.set(
-						[
-							sourceNode.position.x,
-							sourceNode.position.y,
-							sourceNode.position.z ?? 0,
-							targetNode.position.x,
-							targetNode.position.y,
-							targetNode.position.z ?? 0,
-						],
-						index * 6,
-					);
-				}
+		// The arrays below belong to this instance (replaceData builds them), so they grow in place.
+		const nodes = this.data.nodes as GraphraumNode<NodeAttributes>[];
+		const edges = this.data.edges as GraphraumEdge<EdgeAttributes>[];
+		const previous = { edges: edges.length, nodes: nodes.length };
+
+		const added = new Map(addedNodes.map((node) => [node.id, node]));
+		const nodeById = (id: string) => added.get(id) ?? nodes[this.nodeIndices.get(id) ?? -1];
+		// The patch compiles with the endpoints of its edges, which may be nodes that are already drawn.
+		const patchNodes = new Map<string, GraphraumNode<NodeAttributes>>(added);
+		for (const edge of addedEdges) {
+			for (const id of [edge.source, edge.target]) {
+				const node = nodeById(id);
+				if (node && !patchNodes.has(id)) patchNodes.set(id, node);
 			}
 		}
-		this.data = { nodes: nextNodes, edges: nextEdges };
-		this.nodeIds = nextNodes.map((node) => node.id);
-		this.hasGlowNodes = nextNodes.some(hasNodeGlow);
-		this.nodeIndices = nextNodeIndices;
-		this.edgeNodeIndices = nextEdgeIndices;
-		this.canonicalEdgePositions = nextEdgePositions;
-		this.incidentEdgeIndices = nextIncidentEdges;
+		const compiled = compileGraph({ nodes: [...patchNodes.values()], edges: addedEdges }, this.visuals);
+		const nodeVisuals = new Map([...patchNodes.keys()].map((id, index) => [id, compiled.nodeVisuals[index]]));
+
+		const nodeIds = this.nodeIds as string[];
+		const incidentEdges = this.incidentEdgeIndices as number[][];
 		for (const node of addedNodes) {
-			const index = nextNodeIndices.get(node.id);
-			const nextNode = index === undefined ? undefined : this.data.nodes[index];
-			if (index !== undefined && nextNode) this.spatialGrid2d.set(index, nextNode);
+			const index = nodes.length;
+			this.nodeIndices.set(node.id, index);
+			nodeIds.push(node.id);
+			nodes.push({ ...node, ...nodeVisuals.get(node.id), position: { ...node.position } });
+			incidentEdges.push([]);
+			this.spatialGrid2d.set(index, nodes[index] as GraphraumNode<NodeAttributes>);
 		}
+		this.edgeNodeIndices = grown(this.edgeNodeIndices, (previous.edges + addedEdges.length) * 2);
+		this.canonicalEdgePositions = grown(this.canonicalEdgePositions, (previous.edges + addedEdges.length) * 6);
+		for (const [offset, edge] of addedEdges.entries()) {
+			const index = previous.edges + offset;
+			const source = this.nodeIndices.get(edge.source);
+			const target = this.nodeIndices.get(edge.target);
+			edges.push({ ...edge, ...compiled.edgeVisuals[offset] });
+			if (source === undefined || target === undefined) continue;
+			this.edgeNodeIndices[index * 2] = source;
+			this.edgeNodeIndices[index * 2 + 1] = target;
+			incidentEdges[source]?.push(index);
+			if (target !== source) incidentEdges[target]?.push(index);
+			const sourceNode = nodes[source];
+			const targetNode = nodes[target];
+			if (!sourceNode || !targetNode) continue;
+			this.canonicalEdgePositions.set(
+				[
+					sourceNode.position.x,
+					sourceNode.position.y,
+					sourceNode.position.z ?? 0,
+					targetNode.position.x,
+					targetNode.position.y,
+					targetNode.position.z ?? 0,
+				],
+				index * 6,
+			);
+		}
+		// The id index is keyed by the identity of the edges array, which an in-place append keeps.
+		if (this.edgeIndexCache.edges === edges) {
+			for (const [offset, edge] of addedEdges.entries())
+				this.edgeIndexCache.indices.set(edge.id, previous.edges + offset);
+		}
+		const addedGlow = addedNodes.some(hasNodeGlow);
+		this.hasGlowNodes ||= addedGlow;
 		for (const [id, presentation] of compiled.nodePresentations) this.nodePresentations.set(id, presentation);
 		for (const [id, presentation] of compiled.edgePresentations) this.edgePresentations.set(id, presentation);
-		this.materializeViewport();
+		if (this.materializeAppended(previous)) {
+			if (addedGlow) this.syncGlow();
+		} else {
+			this.materializeViewport();
+		}
 		this.requestRender();
+	}
+
+	/**
+	 * Draws appended nodes and edges without repacking the ones already drawn. It applies only when the
+	 * last pass drew the whole graph in index order, so the appended ones land after the existing ones
+	 * exactly where a full pass would put them: 3D, or 2D without viewport culling, and no density or
+	 * overview tier before or after. Returns false, having written nothing, when it does not apply.
+	 */
+	private materializeAppended(previous: { edges: number; nodes: number }): boolean {
+		const { edgeMesh, nodeMesh, nodePickMesh } = this;
+		if (!nodeMesh || !nodePickMesh || !edgeMesh) return false;
+		const total = { edges: this.data.edges.length, nodes: this.data.nodes.length };
+		const drewEverything =
+			this.visibleNodeCount === previous.nodes && this.visibleEdgeCandidateCount === previous.edges;
+		if (
+			this.getViewportBounds2d() !== null ||
+			this.densityLodActive ||
+			this.lastEdgeLodTier !== "detail" ||
+			!drewEverything ||
+			total.nodes > this.maxVisibleNodes ||
+			total.edges > this.maxVisibleEdges
+		) {
+			return false;
+		}
+
+		const segmentsBefore = this.visibleEdgeSegmentCount;
+		const markersBefore = this.visibleEdgeMarkerCount;
+		const packed = packEdgeInstances({
+			edgeIndices: Array.from({ length: total.edges - previous.edges }, (_, offset) => previous.edges + offset),
+			edgeStates: this.edgeStateStyling(),
+			edgeVisuals: this.data.edges,
+			endpointPositions: this.canonicalEdgePositions,
+			defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity, width: this.theme.edgeWidth },
+			tier: this.lastEdgeLodTier,
+			maxSegments: this.edgeSegmentCapacity - segmentsBefore,
+			endpointAttach: this.theme.endpointAttach,
+			edgeNodeIndices: this.edgeNodeIndices,
+			mode: this.mode,
+			nodeOutlines: this.data.nodes,
+		});
+		const segmentsTotal = segmentsBefore + packed.segments.length;
+		const markersTotal = markersBefore + packed.markers.length;
+		if (packed.truncated || markersTotal > this.markerCapacity) return false;
+
+		// Nodes: one slot each, after the slots already drawn.
+		const firstNodeSlot = this.visibleNodeCount;
+		const targets = this.nodeInstanceTargets();
+		for (let index = previous.nodes; index < total.nodes; index += 1) {
+			const materialized = this.plainMaterializedNode(index);
+			const node = this.data.nodes[index];
+			if (!materialized || !node) continue;
+			const slot = firstNodeSlot + (index - previous.nodes);
+			this.visibleNodeSlots.set(index, slot);
+			(this.visibleNodeIndices as number[]).push(index);
+			this.writeNodeInstance(targets, slot, materialized, node);
+		}
+		const addedNodeCount = total.nodes - previous.nodes;
+		nodeMesh.count = total.nodes;
+		nodePickMesh.count = total.nodes;
+		nodeMesh.instanceMatrix.addUpdateRange(firstNodeSlot * 16, addedNodeCount * 16);
+		nodeMesh.instanceMatrix.needsUpdate = true;
+		nodePickMesh.instanceMatrix.addUpdateRange(firstNodeSlot * 16, addedNodeCount * 16);
+		nodePickMesh.instanceMatrix.needsUpdate = true;
+		if (nodeMesh.instanceColor) {
+			nodeMesh.instanceColor.addUpdateRange(firstNodeSlot * 3, addedNodeCount * 3);
+			nodeMesh.instanceColor.needsUpdate = true;
+		}
+		targets.shape.addUpdateRange(firstNodeSlot, addedNodeCount);
+		targets.shape.needsUpdate = true;
+		targets.strokeWidth.addUpdateRange(firstNodeSlot, addedNodeCount);
+		targets.strokeWidth.needsUpdate = true;
+		targets.strokeColor.addUpdateRange(firstNodeSlot * 3, addedNodeCount * 3);
+		targets.strokeColor.needsUpdate = true;
+
+		// Edges: new segments take the first slots after the old ones, so the markers move up to make room.
+		const edgeGeometry = edgeMesh.geometry;
+		if (packed.segments.length > 0 && markersBefore > 0) {
+			for (const name of EDGE_INSTANCE_ATTRIBUTES) {
+				const attribute = getInstancedAttribute(edgeGeometry, name);
+				attribute.array.copyWithin(
+					(segmentsBefore + packed.segments.length) * attribute.itemSize,
+					segmentsBefore * attribute.itemSize,
+					(segmentsBefore + markersBefore) * attribute.itemSize,
+				);
+			}
+		}
+		appendVisibleEdgeLayouts(this.visibleEdgeLayouts, packed.segments, packed.markers, {
+			markerStart: segmentsTotal + markersBefore,
+			segmentStart: segmentsBefore,
+			segmentTotal: segmentsTotal,
+		});
+		const addedEdgeCount = this.writeEdgeInstances(
+			packed,
+			{ markerStart: segmentsTotal + markersBefore, segmentStart: segmentsBefore },
+			this.worldUnitsPerPixel(),
+		);
+		edgeMesh.count = segmentsTotal + markersTotal;
+		for (const name of EDGE_INSTANCE_ATTRIBUTES) {
+			const attribute = getInstancedAttribute(edgeGeometry, name);
+			attribute.addUpdateRange(
+				segmentsBefore * attribute.itemSize,
+				(segmentsTotal + markersTotal - segmentsBefore) * attribute.itemSize,
+			);
+			attribute.needsUpdate = true;
+		}
+
+		this.visibleNodeCandidateCount = total.nodes;
+		this.visibleNodeCount = total.nodes;
+		this.visibleEdgeCandidateCount = total.edges;
+		this.visibleEdgeSegmentCount = segmentsTotal;
+		this.visibleEdgeCount += addedEdgeCount;
+		this.visibleEdgeMarkerCount = markersTotal;
+		return true;
 	}
 
 	private replaceData(data: GraphraumData<NodeAttributes, EdgeAttributes>, fitView: boolean) {
@@ -671,13 +803,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				layouts: this.visibleEdgeLayouts,
 				minHitSlop,
 				mode: this.mode,
-				nodeOutlines: this.data.nodes.map((node) => ({
-					height: node.height,
-					shape: node.shape,
-					size: node.size,
-					strokeWidth: node.strokeWidth,
-					width: node.width,
-				})),
+				nodeOutlines: this.data.nodes,
+				pickable: this.camera instanceof OrthographicCamera,
 				tier: this.lastEdgeLodTier,
 				worldPerPixel,
 			},
@@ -1672,7 +1799,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private pickEdge(clientX: number, clientY: number): string | null {
-		if (!this.edgeMesh || this.pickableEdgeSegments.length === 0) return null;
+		if (!this.edgeMesh || this.visibleEdgeSegmentCount === 0) return null;
 		const bounds = this.renderer.domElement.getBoundingClientRect();
 		if (bounds.width === 0 || bounds.height === 0) return null;
 		this.pointer.set(
@@ -1876,35 +2003,20 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			? collectIncidentEdges(visibleNodeIndices, this.incidentEdgeIndices)
 			: this.data.edges.map((_, index) => index);
 		const visibleEdgeIndices = applyEdgeBudget(edgeCandidates, this.maxVisibleEdges);
-		const matrix = new Matrix4();
 		this.visibleNodeSlots = new Map();
 		this.visibleNodeIndices = visibleNodeIndices;
 		this.nodeMesh.instanceMatrix.clearUpdateRanges();
 		this.nodePickMesh.instanceMatrix.clearUpdateRanges();
 		this.nodeMesh.instanceColor?.clearUpdateRanges();
-		const nodeShape = this.nodeMesh.geometry.getAttribute("instanceShape") as InstancedBufferAttribute;
-		const nodeStrokeWidth = this.nodeMesh.geometry.getAttribute("instanceStrokeWidth") as InstancedBufferAttribute;
-		const nodeStrokeColor = this.nodeMesh.geometry.getAttribute("instanceStrokeColor") as InstancedBufferAttribute;
-		nodeShape.clearUpdateRanges();
-		nodeStrokeWidth.clearUpdateRanges();
-		nodeStrokeColor.clearUpdateRanges();
+		const targets = this.nodeInstanceTargets();
+		targets.shape.clearUpdateRanges();
+		targets.strokeWidth.clearUpdateRanges();
+		targets.strokeColor.clearUpdateRanges();
 		for (const [slot, materialized] of materializedNodes.entries()) {
-			const nodeIndex = materialized.index;
-			const node = this.data.nodes[nodeIndex];
+			const node = this.data.nodes[materialized.index];
 			if (!node) continue;
-			this.visibleNodeSlots.set(nodeIndex, slot);
-			const { height, width } = materialized;
-			const maxAxis = Math.max(width, height);
-			matrix.makeScale(width, height, maxAxis);
-			matrix.setPosition(materialized.x, materialized.y, materialized.z);
-			this.nodeMesh.setMatrixAt(slot, matrix);
-			const pickScale = maxAxis * Math.SQRT2;
-			matrix.makeScale(pickScale, pickScale, pickScale);
-			matrix.setPosition(materialized.x, materialized.y, materialized.z);
-			this.nodePickMesh.setMatrixAt(slot, matrix);
-			this.nodeMesh.setColorAt(slot, this.getNodeColor(node));
-			setNodeShapeAt(nodeShape, slot, node.shape);
-			setNodeStrokeAt(nodeStrokeWidth, nodeStrokeColor, slot, resolveNodeStroke(node, this.theme));
+			this.visibleNodeSlots.set(materialized.index, slot);
+			this.writeNodeInstance(targets, slot, materialized, node);
 		}
 		this.nodeMesh.count = materializedNodes.length;
 		this.nodePickMesh.count = materializedNodes.length;
@@ -1916,12 +2028,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.nodeMesh.instanceColor.addUpdateRange(0, materializedNodes.length * 3);
 			this.nodeMesh.instanceColor.needsUpdate = true;
 		}
-		nodeShape.addUpdateRange(0, materializedNodes.length);
-		nodeShape.needsUpdate = true;
-		nodeStrokeWidth.addUpdateRange(0, materializedNodes.length);
-		nodeStrokeWidth.needsUpdate = true;
-		nodeStrokeColor.addUpdateRange(0, materializedNodes.length * 3);
-		nodeStrokeColor.needsUpdate = true;
+		targets.shape.addUpdateRange(0, materializedNodes.length);
+		targets.shape.needsUpdate = true;
+		targets.strokeWidth.addUpdateRange(0, materializedNodes.length);
+		targets.strokeWidth.needsUpdate = true;
+		targets.strokeColor.addUpdateRange(0, materializedNodes.length * 3);
+		targets.strokeColor.needsUpdate = true;
 
 		const lodLevel = resolveLodLevel(this.densityLodActive, edgeCandidates.length, visibleEdgeIndices.length);
 		this.lastEdgeLodTier = edgeTierFromDiagnosticsLod(lodLevel);
@@ -1937,44 +2049,20 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			endpointAttach: this.theme.endpointAttach,
 			edgeNodeIndices: this.edgeNodeIndices,
 			mode: this.mode,
-			nodeOutlines: this.data.nodes.map((node) => ({
-				height: node.height,
-				shape: node.shape,
-				size: node.size,
-				strokeWidth: node.strokeWidth,
-				width: node.width,
-			})),
+			nodeOutlines: this.data.nodes,
 		});
 		const edgeGeometry = this.edgeMesh.geometry;
 		this.visibleEdgeSlots = new Map();
 		this.visibleEdgeLayouts = buildVisibleEdgeLayouts(packed.segments, packed.markers, packed.segments.length);
 		this.pickableEdgeSegments = [];
 		this.visibleEdgeSegmentEdgeIndices = [];
-		let edgeSlot = 0;
-		const distinctEdges = new Set<number>();
-		const minHitSlop = Math.max(4 * worldPerPixel, this.theme.edgeWidth * worldPerPixel);
-		for (const segment of packed.segments) {
-			writeEdgeSegmentInstance(edgeGeometry, edgeSlot, segment);
-			if (!this.visibleEdgeSlots.has(segment.edgeIndex)) {
-				this.visibleEdgeSlots.set(segment.edgeIndex, edgeSlot);
-			}
-			distinctEdges.add(segment.edgeIndex);
-			this.visibleEdgeSegmentEdgeIndices.push(segment.edgeIndex);
-			this.pickableEdgeSegments.push({
-				edgeIndex: segment.edgeIndex,
-				hitSlop: Math.max(minHitSlop, (segment.width * worldPerPixel) / 2 + 2 * worldPerPixel),
-				x1: segment.x1,
-				y1: segment.y1,
-				x2: segment.x2,
-				y2: segment.y2,
-			});
-			edgeSlot += 1;
-		}
-		const segmentCount = edgeSlot;
-		for (const marker of packed.markers) {
-			writeEdgeMarkerInstance(edgeGeometry, edgeSlot, marker);
-			edgeSlot += 1;
-		}
+		const distinctEdgeCount = this.writeEdgeInstances(
+			packed,
+			{ markerStart: packed.segments.length, segmentStart: 0 },
+			worldPerPixel,
+		);
+		const segmentCount = packed.segments.length;
+		const edgeSlot = segmentCount + packed.markers.length;
 		this.edgeMesh.count = edgeSlot;
 		for (const name of EDGE_INSTANCE_ATTRIBUTES) {
 			const attribute = edgeGeometry.getAttribute(name) as InstancedBufferAttribute;
@@ -1987,23 +2075,96 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.visibleNodeCount = materializedNodes.length;
 		this.visibleEdgeCandidateCount = edgeCandidates.length;
 		this.visibleEdgeSegmentCount = segmentCount;
-		this.visibleEdgeCount = distinctEdges.size;
+		this.visibleEdgeCount = distinctEdgeCount;
 		this.visibleEdgeMarkerCount = packed.markers.length;
 		this.syncGlow();
+	}
+
+	/** A node drawn at its own position and size, which is every node outside the density tier. */
+	private plainMaterializedNode(index: number): MaterializedNode | null {
+		const node = this.data.nodes[index];
+		if (!node) return null;
+		const { height, width } = resolveNodeAxes({
+			height: node.height,
+			nodeId: node.id,
+			size: node.size,
+			width: node.width,
+		});
+		return { height, index, width, x: node.position.x, y: node.position.y, z: node.position.z ?? 0 };
+	}
+
+	private nodeInstanceTargets(): NodeInstanceTargets {
+		const geometry = (this.nodeMesh as InstancedMesh).geometry;
+		return {
+			matrix: new Matrix4(),
+			shape: geometry.getAttribute("instanceShape") as InstancedBufferAttribute,
+			strokeColor: geometry.getAttribute("instanceStrokeColor") as InstancedBufferAttribute,
+			strokeWidth: geometry.getAttribute("instanceStrokeWidth") as InstancedBufferAttribute,
+		};
+	}
+
+	/** Writes one node's matrix, pick matrix, color, shape and stroke into `slot`. */
+	private writeNodeInstance(
+		{ matrix, shape, strokeColor, strokeWidth }: NodeInstanceTargets,
+		slot: number,
+		materialized: MaterializedNode,
+		node: GraphraumNode<NodeAttributes>,
+	) {
+		const { height, width } = materialized;
+		const maxAxis = Math.max(width, height);
+		matrix.makeScale(width, height, maxAxis);
+		matrix.setPosition(materialized.x, materialized.y, materialized.z);
+		(this.nodeMesh as InstancedMesh).setMatrixAt(slot, matrix);
+		const pickScale = maxAxis * Math.SQRT2;
+		matrix.makeScale(pickScale, pickScale, pickScale);
+		matrix.setPosition(materialized.x, materialized.y, materialized.z);
+		(this.nodePickMesh as InstancedMesh).setMatrixAt(slot, matrix);
+		(this.nodeMesh as InstancedMesh).setColorAt(slot, this.getNodeColor(node));
+		setNodeShapeAt(shape, slot, node.shape);
+		setNodeStrokeAt(strokeWidth, strokeColor, slot, resolveNodeStroke(node, this.theme));
+	}
+
+	/**
+	 * Writes packed edge instances at the given first slots and records what picking needs for them.
+	 * Returns how many distinct edges got a segment.
+	 */
+	private writeEdgeInstances(
+		packed: { markers: readonly EdgeMarkerInstance[]; segments: readonly EdgeSegmentInstance[] },
+		start: { markerStart: number; segmentStart: number },
+		worldPerPixel: number,
+	): number {
+		const edgeGeometry = (this.edgeMesh as InstancedMesh).geometry;
+		const minHitSlop = Math.max(4 * worldPerPixel, this.theme.edgeWidth * worldPerPixel);
+		const distinctEdges = new Set<number>();
+		// 2D picks the closest segment on the CPU; 3D raycasts the instances and needs no copies of them.
+		const keepPickable = this.camera instanceof OrthographicCamera;
+		for (const [offset, segment] of packed.segments.entries()) {
+			const slot = start.segmentStart + offset;
+			writeEdgeSegmentInstance(edgeGeometry, slot, segment);
+			if (!this.visibleEdgeSlots.has(segment.edgeIndex)) this.visibleEdgeSlots.set(segment.edgeIndex, slot);
+			distinctEdges.add(segment.edgeIndex);
+			this.visibleEdgeSegmentEdgeIndices.push(segment.edgeIndex);
+			if (!keepPickable) continue;
+			this.pickableEdgeSegments.push({
+				edgeIndex: segment.edgeIndex,
+				hitSlop: Math.max(minHitSlop, (segment.width * worldPerPixel) / 2 + 2 * worldPerPixel),
+				x1: segment.x1,
+				y1: segment.y1,
+				x2: segment.x2,
+				y2: segment.y2,
+			});
+		}
+		for (const [offset, marker] of packed.markers.entries()) {
+			writeEdgeMarkerInstance(edgeGeometry, start.markerStart + offset, marker);
+		}
+		return distinctEdges.size;
 	}
 
 	private materializeNodes(indices: readonly number[], bounds: Bounds2D | null): readonly MaterializedNode[] {
 		if (!this.densityLodActive || !bounds) {
 			return indices.slice(0, this.maxVisibleNodes).flatMap((index) => {
-				const node = this.data.nodes[index];
-				if (!node) return [];
-				const { height, width } = resolveNodeAxes({
-					height: node.height,
-					nodeId: node.id,
-					size: node.size,
-					width: node.width,
-				});
-				return [{ height, index, width, x: node.position.x, y: node.position.y, z: node.position.z ?? 0 }];
+				const materialized = this.plainMaterializedNode(index);
+				return materialized ? [materialized] : [];
 			});
 		}
 		const aspect = Math.max(this.container.clientWidth, 1) / Math.max(this.container.clientHeight, 1);
@@ -2109,6 +2270,14 @@ function setOrthographicFrustum(camera: OrthographicCamera, aspect: number, visi
 
 function hasNodeGlow(node: { glow?: number }): boolean {
 	return (node.glow ?? 0) > 0;
+}
+
+/** `array`, or a copy with room for at least `length` entries, doubling so repeated appends stay cheap. */
+function grown<T extends Float32Array | Uint32Array>(array: T, length: number): T {
+	if (array.length >= length) return array;
+	const next = new (array.constructor as new (size: number) => T)(nextCapacity(length));
+	next.set(array);
+	return next;
 }
 
 function nextCapacity(length: number): number {

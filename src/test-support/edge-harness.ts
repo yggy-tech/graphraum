@@ -123,15 +123,31 @@ export function pickSubset(random: () => number, ids: readonly string[], probabi
  * uploads whole; a newer version uploads its update ranges (or everything when none), then
  * clears them. Comparing the shadow with the CPU arrays catches dropped or missing ranges.
  */
-export function createShadowGpu() {
+export function createShadowGpu(options: { includeNodes?: boolean } = {}) {
 	const uploaded = new Map<object, { data: Float32Array; version: number }>();
 	const attributes = (graph: Graphraum) => {
 		const mesh = internals(graph).edgeMesh;
 		if (!mesh) throw new Error("edge mesh missing");
-		return EDGE_ATTRIBUTES.map((name) => ({
+		const edges = EDGE_ATTRIBUTES.map((name) => ({
 			attribute: mesh.geometry.getAttribute(name) as BufferAttribute,
 			count: mesh.count,
 		}));
+		if (!options.includeNodes) return edges;
+		// The node instance attributes ride along: matrix, color and the three geometry attributes.
+		const nodes = Reflect.get(graph, "nodeMesh") as InstancedMesh;
+		const nodeAttributes = [
+			nodes.instanceMatrix,
+			nodes.instanceColor,
+			...["instanceShape", "instanceStrokeWidth", "instanceStrokeColor"].map((name) =>
+				nodes.geometry.getAttribute(name),
+			),
+		];
+		return [
+			...edges,
+			...nodeAttributes.flatMap((attribute) =>
+				attribute ? [{ attribute: attribute as BufferAttribute, count: nodes.count }] : [],
+			),
+		];
 	};
 	return {
 		/** Simulates one rendered frame. */

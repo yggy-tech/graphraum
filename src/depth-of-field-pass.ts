@@ -25,11 +25,13 @@ const EDGE_DEPTH_LAYER = 1;
 const BLUR_TAPS = 48;
 
 export interface DepthOfFieldFrame {
-	/** Device pixels of blur per unit of `|d - f| / d`. */
+	/** Device pixels of blur per unit of `|d - f| / d` behind the focus. */
 	aperturePixels: number;
+	/** The same in front of the focus. */
+	nearAperturePixels: number;
 	/** Focal plane distance from the camera in world units. */
 	focusDistance: number;
-	/** Largest blur radius in device pixels; also the gather radius. */
+	/** Largest blur radius in device pixels; also the near-field gather radius. */
 	maxBlurPixels: number;
 	/** Blur radii below this many device pixels render sharp. */
 	minBlurPixels: number;
@@ -58,6 +60,7 @@ uniform float cameraNear;
 uniform float cameraFar;
 uniform float focusDistance;
 uniform float aperture;
+uniform float nearAperture;
 uniform float minBlur;
 uniform float maxBlur;
 
@@ -69,7 +72,8 @@ float surfaceDistance(ivec2 pixel) {
 }
 
 float radiusAt(float surface) {
-	float radius = aperture * abs(surface - focusDistance) / max(surface, 1e-6);
+	float lens = surface < focusDistance ? nearAperture : aperture;
+	float radius = lens * abs(surface - focusDistance) / max(surface, 1e-6);
 	return radius < minBlur ? 0.0 : min(radius, maxBlur);
 }
 
@@ -79,14 +83,20 @@ float blurRadius(ivec2 pixel) {
 `;
 
 // One disk gather from the full-resolution scene into a half-resolution target: taps on a golden-angle
-// spiral that fills a circle of the largest blur radius. Half-resolution texel (i, j) stands for
-// full-resolution pixel (2i, 2j). A tap counts only when its own blur radius reaches the centre, so
-// sharp nodes do not bleed into the blurred surroundings. A separable blur would cost fewer taps, but
+// spiral that fills a circle of `blurReach`, the pixel's own radius but at least the aperture (the
+// most any surface behind the focus can blur), so a soft background stays densely sampled when
+// maxBlur is set high for the foreground. Half-resolution texel (i, j) stands for
+// full-resolution pixel (2i, 2j). A tap counts when its own blur radius reaches the centre, so sharp
+// nodes do not bleed into the blurred surroundings. A tap behind the centre also counts within the
+// centre's own radius: a blurred foreground node then mixes with what lies behind its edge instead
+// of keeping a hard silhouette, while a sharp centre (radius 0) still takes nothing. A separable blur would cost fewer taps, but
 // a tap's weight depends on its own radius, which a second pass cannot recover.
 //
 // The second output is the near field: blurred surfaces in front of the focal plane and of this pixel
 // spread over it, so a blurred foreground node softly covers sharp nodes behind it. Each tap adds its
 // colour spread over its own blur disk (area ratio maxBlur^2 / radius^2), premultiplied by coverage.
+// The near field always gathers over maxBlur. When `blurReach` already equals maxBlur (the default
+// lens) one loop serves both outputs; otherwise a second loop of the same taps gathers it.
 const blurFragmentShader = `
 ${blurRadiusChunk}
 uniform sampler2D colorTexture;
@@ -95,27 +105,57 @@ layout(location = 1) out highp vec4 nearColor;
 
 const float GOLDEN_ANGLE = 2.39996323;
 
+ivec2 base;
+float centreSurface;
+float rotation;
+
+float tapDistance(int index, float reach) {
+	return sqrt((float(index) + 0.5) / ${BLUR_TAPS}.0) * reach;
+}
+
+ivec2 tapPixel(int index, float distanceFromCentre) {
+	float angle = float(index) * GOLDEN_ANGLE + rotation;
+	return clamp(base + ivec2(floor(vec2(cos(angle), sin(angle)) * distanceFromCentre + 0.5)), ivec2(0), depthSize - 1);
+}
+
+vec4 nearTerm(float surface, float radius, float weight, vec4 color) {
+	if (surface >= focusDistance || surface >= centreSurface) return vec4(0.0);
+	return color * weight * (maxBlur * maxBlur / max(radius * radius, 1.0));
+}
+
 void main() {
-	ivec2 base = ivec2(gl_FragCoord.xy) * 2;
-	float centreSurface = surfaceDistance(base);
+	base = ivec2(gl_FragCoord.xy) * 2;
+	centreSurface = surfaceDistance(base);
 	vec4 sum = texelFetch(colorTexture, base, 0);
 	float total = 1.0;
 	vec4 near = vec4(0.0);
 	// Interleaved gradient noise turns the spiral's fixed tap pattern into fine noise that the
 	// composite's bilinear upsample smooths, instead of hatching along blurred edges.
-	float rotation = 6.28318531 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+	rotation = 6.28318531 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+	// Mirrors blurGatherRadius in depth-of-field.ts.
+	float centreRadius = radiusAt(centreSurface);
+	float blurReach = min(maxBlur, max(centreRadius, aperture));
+	bool nearInBlurLoop = blurReach >= maxBlur;
 	for (int index = 0; index < ${BLUR_TAPS}; index++) {
-		float distanceFromCentre = sqrt((float(index) + 0.5) / ${BLUR_TAPS}.0) * maxBlur;
-		float angle = float(index) * GOLDEN_ANGLE + rotation;
-		ivec2 pixel = clamp(base + ivec2(floor(vec2(cos(angle), sin(angle)) * distanceFromCentre + 0.5)), ivec2(0), depthSize - 1);
+		float distanceFromCentre = tapDistance(index, blurReach);
+		ivec2 pixel = tapPixel(index, distanceFromCentre);
 		float surface = surfaceDistance(pixel);
 		float radius = radiusAt(surface);
-		float weight = clamp(radius - distanceFromCentre + 1.0, 0.0, 1.0);
+		float reach = surface > centreSurface ? max(radius, centreRadius) : radius;
+		float weight = clamp(reach - distanceFromCentre + 1.0, 0.0, 1.0);
 		vec4 color = texelFetch(colorTexture, pixel, 0);
 		sum += color * weight;
 		total += weight;
-		if (surface < focusDistance && surface < centreSurface) {
-			near += color * weight * (maxBlur * maxBlur / max(radius * radius, 1.0));
+		if (nearInBlurLoop) near += nearTerm(surface, radius, weight, color);
+	}
+	if (!nearInBlurLoop) {
+		for (int index = 0; index < ${BLUR_TAPS}; index++) {
+			float distanceFromCentre = tapDistance(index, maxBlur);
+			ivec2 pixel = tapPixel(index, distanceFromCentre);
+			float surface = surfaceDistance(pixel);
+			float radius = radiusAt(surface);
+			float weight = clamp(radius - distanceFromCentre + 1.0, 0.0, 1.0);
+			near += nearTerm(surface, radius, weight, texelFetch(colorTexture, pixel, 0));
 		}
 	}
 	blurColor = sum / total;
@@ -152,6 +192,7 @@ function blurUniforms() {
 		focusDistance: { value: 1 },
 		maxBlur: { value: 0 },
 		minBlur: { value: 0 },
+		nearAperture: { value: 0 },
 		nodeDepth: { value: null },
 	};
 }
@@ -248,6 +289,7 @@ export class DepthOfFieldPass {
 			focusDistance: frame.focusDistance,
 			maxBlur: frame.maxBlurPixels,
 			minBlur: frame.minBlurPixels,
+			nearAperture: frame.nearAperturePixels,
 			nodeDepth: this.sceneTarget.depthTexture,
 		};
 		this.quad.material = this.blurMaterial;

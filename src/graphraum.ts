@@ -285,6 +285,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private readonly depthOfFieldFocus = new DepthOfFieldFocus();
 	/** Strength actually applied: fades toward `strength` while enabled and toward 0 when disabled. */
 	private readonly depthOfFieldStrength = new Tween(0);
+	/** The same for `nearStrength`, faded alongside. */
+	private readonly depthOfFieldNearStrength = new Tween(0);
 	private depthOfFieldPass: DepthOfFieldPass | null = null;
 	private depthOfFieldStatus: GraphraumDepthOfFieldStatus = "off";
 
@@ -309,6 +311,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		if (options.depthOfField !== undefined) {
 			this.depthOfField = resolveDepthOfFieldOptions(options.depthOfField);
 			void this.depthOfFieldStrength.retarget(this.depthOfFieldTargetStrength(), 0, resolveEasing("linear"));
+			void this.depthOfFieldNearStrength.retarget(this.depthOfFieldTargetNearStrength(), 0, resolveEasing("linear"));
 		}
 		this.antialias = options.antialias ?? false;
 		this.renderer = new WebGLRenderer({ antialias: this.antialias, alpha: true });
@@ -1014,12 +1017,18 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		if (this.depthOfField.enabled && !previous.enabled) this.depthOfFieldFocus.retarget(0, resolveEasing(easing));
 		const fadeMs = animate && !prefersReducedMotion() ? durationMs : 0;
 		const done = this.depthOfFieldStrength.retarget(this.depthOfFieldTargetStrength(), fadeMs, resolveEasing(easing));
+		void this.depthOfFieldNearStrength.retarget(this.depthOfFieldTargetNearStrength(), fadeMs, resolveEasing(easing));
 		this.requestRender();
 		return done;
 	}
 
 	private depthOfFieldTargetStrength() {
 		return this.depthOfField.enabled ? this.depthOfField.strength : 0;
+	}
+
+	private depthOfFieldTargetNearStrength() {
+		const { enabled, nearStrength, strength } = this.depthOfField;
+		return enabled ? (nearStrength ?? strength) : 0;
 	}
 
 	getNodePresentation(nodeId: string): CompiledGraphraumPresentation | null {
@@ -1541,6 +1550,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		this.disposeBackgroundTexture();
 		this.depthOfFieldStrength.cancel();
+		this.depthOfFieldNearStrength.cancel();
 		this.disposeDepthOfFieldPass();
 		this.disposeGraphObjects();
 		this.renderer.dispose();
@@ -1598,19 +1608,22 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private prepareDepthOfField(nowMs: number): DepthOfFieldFrame | null {
 		const options = this.depthOfField;
 		const strengthTween = this.depthOfFieldStrength;
-		if (!options.enabled && strengthTween.settled) {
+		const nearStrengthTween = this.depthOfFieldNearStrength;
+		if (!options.enabled && strengthTween.settled && nearStrengthTween.settled) {
 			this.depthOfFieldStatus = "off";
 			this.disposeDepthOfFieldPass();
 			return null;
 		}
 		if (!(this.camera instanceof PerspectiveCamera)) {
 			strengthTween.jump();
+			nearStrengthTween.jump();
 			this.depthOfFieldStatus = options.enabled ? "inactive" : "off";
 			this.disposeDepthOfFieldPass();
 			return null;
 		}
 		if (!DepthOfFieldPass.isSupported(this.renderer)) {
 			strengthTween.jump();
+			nearStrengthTween.jump();
 			this.depthOfFieldStatus = options.enabled ? "unsupported" : "off";
 			if (options.enabled && !warnedDepthOfFieldUnsupported) {
 				warnedDepthOfFieldUnsupported = true;
@@ -1621,7 +1634,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			return null;
 		}
 		const strength = strengthTween.sample(nowMs);
-		if (!strengthTween.settled) this.requestRender();
+		const nearStrength = nearStrengthTween.sample(nowMs);
+		if (!strengthTween.settled || !nearStrengthTween.settled) this.requestRender();
 		this.camera.updateMatrixWorld();
 		let focusDistance: number | null = typeof options.focus === "number" ? options.focus : null;
 		let amount = 1;
@@ -1637,20 +1651,30 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		focusDistance = Math.max(focusDistance, this.camera.near);
 		const pixelRatio = this.renderer.getPixelRatio();
-		const aperturePixels =
-			strength *
+		const pixelsPerStrength =
 			amount *
 			distanceFade(focusDistance, options.nearDistance, options.farDistance) *
 			DEPTH_OF_FIELD_APERTURE_CSS_PIXELS *
 			pixelRatio;
+		const aperturePixels = strength * pixelsPerStrength;
+		const nearAperturePixels = nearStrength * pixelsPerStrength;
 		const maxBlurPixels = options.maxBlur * pixelRatio;
-		if (aperturePixels < DEPTH_OF_FIELD_MIN_BLUR_PIXELS || maxBlurPixels < DEPTH_OF_FIELD_MIN_BLUR_PIXELS) {
+		if (
+			Math.max(aperturePixels, nearAperturePixels) < DEPTH_OF_FIELD_MIN_BLUR_PIXELS ||
+			maxBlurPixels < DEPTH_OF_FIELD_MIN_BLUR_PIXELS
+		) {
 			this.depthOfFieldStatus = options.enabled ? "inactive" : "off";
 			return null;
 		}
 		this.depthOfFieldPass ??= new DepthOfFieldPass(this.antialias);
 		this.depthOfFieldStatus = "active";
-		return { aperturePixels, focusDistance, maxBlurPixels, minBlurPixels: options.minBlur * pixelRatio };
+		return {
+			aperturePixels,
+			focusDistance,
+			maxBlurPixels,
+			minBlurPixels: options.minBlur * pixelRatio,
+			nearAperturePixels,
+		};
 	}
 
 	/** Mean world position of the selected nodes, read every frame so a running layout keeps them in focus. */

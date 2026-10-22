@@ -218,6 +218,7 @@ Missing coordinates default to zero so layout does not block the first render. M
 interface GraphraumDepthOfFieldOptions {
   enabled?: boolean;                // default: false
   strength?: number;                // aperture 0..1, default: 0.5; blur = strength × 24 × |d − f| / d CSS px
+  nearStrength?: number;            // aperture 0..1 in front of the focus, default: strength
   maxBlur?: number;                 // default: 12 CSS px
   minBlur?: number;                 // default: 0; smaller radii render sharp
   nearDistance?: number;            // default: 0 world units; full strength up to this camera-to-focus distance

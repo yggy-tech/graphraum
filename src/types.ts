@@ -91,6 +91,33 @@ export interface GraphraumSetDataOptions {
 	fit?: boolean;
 }
 
+export interface GraphraumCameraPoint3d {
+	x: number;
+	y: number;
+	z: number;
+}
+
+/**
+ * A 2D view: where the camera looks and how much of the world it shows from top to bottom. The
+ * visible width follows the canvas aspect, so a state read on one canvas size fits another.
+ */
+export interface GraphraumCameraState2d {
+	center: { x: number; y: number };
+	mode: "2d";
+	/** World units from the top to the bottom edge of the canvas, with the current zoom applied. */
+	visibleHeight: number;
+}
+
+/** A 3D view: the camera position and the point it orbits and looks at. */
+export interface GraphraumCameraState3d {
+	mode: "3d";
+	position: GraphraumCameraPoint3d;
+	target: GraphraumCameraPoint3d;
+}
+
+/** The camera pose as plain JSON, for saving a view and restoring it with `setCameraState()`. */
+export type GraphraumCameraState = GraphraumCameraState2d | GraphraumCameraState3d;
+
 export interface GraphraumDataPatch<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	addedNodes?: readonly GraphraumNode<NodeAttributes>[];
 	addedEdges?: readonly GraphraumEdge<EdgeAttributes>[];
@@ -265,8 +292,65 @@ export interface GraphraumTheme {
 /** Discriminated pick result. Nodes win over edges when both intersect the pointer. */
 export type GraphraumPickHit = { kind: "edge"; id: string } | { kind: "node"; id: string };
 
+/** `linear`, cubic `easeIn` / `easeOut` / `easeInOut`, or a function from progress 0..1 to eased 0..1. */
+export type GraphraumEasing = "easeIn" | "easeInOut" | "easeOut" | "linear" | ((t: number) => number);
+
+/** How depth of field animates focus moves and blur fades. */
+export interface GraphraumDepthOfFieldTransition {
+	/** Default 400; 0 jumps. `prefers-reduced-motion: reduce` always jumps. */
+	durationMs?: number;
+	/** Default `"easeInOut"`. */
+	easing?: GraphraumEasing;
+}
+
+/**
+ * Opt-in 3D depth of field. The focal plane follows the selection, so selected nodes stay sharp and
+ * the rest of the graph blurs with its distance from them, in front and behind, like a thin lens:
+ * the closer the camera is to the focus, the shallower the depth of field. A no-op in 2D. See
+ * `Graphraum.setDepthOfField`.
+ */
+export interface GraphraumDepthOfFieldOptions {
+	/** Default `false`. While disabled no extra passes or render targets exist. Toggling fades the blur. */
+	enabled?: boolean;
+	/**
+	 * `"selection"` (default) focuses the mean position of the selected nodes and fades the blur out
+	 * when nothing is selected. A number fixes the focal plane at that camera distance in world units.
+	 */
+	focus?: "selection" | number;
+	/**
+	 * Aperture, 0..1, default 0.5. A surface blurs by `strength * 24 * |d - f| / d` CSS pixels, where
+	 * `d` is its camera distance and `f` the focal distance, clamped to `maxBlur`.
+	 */
+	strength?: number;
+	/** Largest blur radius in CSS pixels. Default 12. */
+	maxBlur?: number;
+	/** Blur radii below this many CSS pixels render sharp, which widens the in-focus band. Default 0. */
+	minBlur?: number;
+	/** Camera-to-focus distance in world units up to which `strength` applies fully. Default 0. */
+	nearDistance?: number;
+	/** Camera-to-focus distance in world units at which the blur has faded out. Default `Infinity` (no fade). */
+	farDistance?: number;
+	/** Animation for focus moves between selections and for blur fades. */
+	transition?: GraphraumDepthOfFieldTransition;
+}
+
+/** Options for one `Graphraum.setDepthOfField` call. */
+export interface GraphraumDepthOfFieldUpdate {
+	/** Default `true`: fade the blur to the new strength over the transition. `false` jumps. */
+	animate?: boolean;
+}
+
+/**
+ * `off`: disabled. `inactive`: enabled with nothing to blur (2D mode, or no selection with
+ * `focus: "selection"`), so frames render directly. `active`: the last frame ran the blur passes.
+ * `unsupported`: enabled, but the WebGL context cannot run it, so frames render directly.
+ */
+export type GraphraumDepthOfFieldStatus = "active" | "inactive" | "off" | "unsupported";
+
 export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	antialias?: boolean;
+	/** Opt-in 3D depth of field; off by default. Change it later with `setDepthOfField`. */
+	depthOfField?: GraphraumDepthOfFieldOptions;
 	maxVisibleEdges?: number;
 	maxVisibleNodes?: number;
 	maxPixelRatio?: number;
@@ -303,6 +387,7 @@ export interface GraphraumDiagnostics {
 	aggregatedNodeClusters: number;
 	autoOrbit: GraphraumAutoOrbitStatus;
 	cpuFrameMilliseconds: number;
+	depthOfField: GraphraumDepthOfFieldStatus;
 	gpuFrameMilliseconds: number | null;
 	gpuDrawCalls: number;
 	gpuGeometries: number;

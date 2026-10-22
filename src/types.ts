@@ -91,6 +91,33 @@ export interface GraphraumSetDataOptions {
 	fit?: boolean;
 }
 
+export interface GraphraumCameraPoint3d {
+	x: number;
+	y: number;
+	z: number;
+}
+
+/**
+ * A 2D view: where the camera looks and how much of the world it shows from top to bottom. The
+ * visible width follows the canvas aspect, so a state read on one canvas size fits another.
+ */
+export interface GraphraumCameraState2d {
+	center: { x: number; y: number };
+	mode: "2d";
+	/** World units from the top to the bottom edge of the canvas, with the current zoom applied. */
+	visibleHeight: number;
+}
+
+/** A 3D view: the camera position and the point it orbits and looks at. */
+export interface GraphraumCameraState3d {
+	mode: "3d";
+	position: GraphraumCameraPoint3d;
+	target: GraphraumCameraPoint3d;
+}
+
+/** The camera pose as plain JSON, for saving a view and restoring it with `setCameraState()`. */
+export type GraphraumCameraState = GraphraumCameraState2d | GraphraumCameraState3d;
+
 export interface GraphraumDataPatch<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	addedNodes?: readonly GraphraumNode<NodeAttributes>[];
 	addedEdges?: readonly GraphraumEdge<EdgeAttributes>[];

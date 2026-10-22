@@ -5,7 +5,13 @@ import type { GraphraumData, GraphraumOptions } from "./types";
 
 const fakes = vi.hoisted(() => ({
 	directRenders: 0,
-	frames: [] as { aperturePixels: number; focusDistance: number; maxBlurPixels: number; minBlurPixels: number }[],
+	frames: [] as {
+		aperturePixels: number;
+		focusDistance: number;
+		maxBlurPixels: number;
+		minBlurPixels: number;
+		nearAperturePixels: number;
+	}[],
 	passes: 0,
 	disposed: 0,
 	supported: true,
@@ -183,6 +189,24 @@ describe("depth of field", () => {
 		expect(frame).toMatchObject({ aperturePixels: 24, maxBlurPixels: 24, minBlurPixels: 0 });
 	});
 
+	test("nearStrength sets the aperture in front of the focus and follows strength when unset", async () => {
+		const graph = createGraph({ depthOfField: { enabled: true, strength: 0.5, ...instant } });
+		graph.setSelection(["b"]);
+		runFrame();
+		expect(fakes.frames.at(-1)).toMatchObject({ aperturePixels: 24, nearAperturePixels: 24 });
+		await graph.setDepthOfField({ nearStrength: 1 }, { animate: false });
+		runFrame();
+		expect(fakes.frames.at(-1)).toMatchObject({ aperturePixels: 24, nearAperturePixels: 48 });
+	});
+
+	test("nearStrength alone blurs the foreground while strength 0 keeps the background sharp", () => {
+		const graph = createGraph({ depthOfField: { enabled: true, nearStrength: 1, strength: 0, ...instant } });
+		graph.setSelection(["b"]);
+		runFrame();
+		expect(graph.getDiagnostics().depthOfField).toBe("active");
+		expect(fakes.frames.at(-1)).toMatchObject({ aperturePixels: 0, nearAperturePixels: 48 });
+	});
+
 	test("re-measures the focus every frame while the camera moves, without a transition", () => {
 		const graph = createGraph({ depthOfField: { enabled: true, ...instant } });
 		graph.setSelection(["b"]);
@@ -310,6 +334,7 @@ describe("depth of field", () => {
 			focusDistance: 300,
 			maxBlurPixels: 24,
 			minBlurPixels: 0,
+			nearAperturePixels: 48,
 		});
 	});
 

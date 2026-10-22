@@ -2,6 +2,7 @@ import { Matrix4, PerspectiveCamera } from "three";
 import { describe, expect, test } from "vitest";
 
 import {
+	blurGatherRadius,
 	circleOfConfusion,
 	DEPTH_OF_FIELD_DEFAULTS,
 	DepthOfFieldFocus,
@@ -22,6 +23,7 @@ describe("resolveDepthOfFieldOptions", () => {
 			maxBlur: 12,
 			minBlur: 0,
 			nearDistance: 0,
+			nearStrength: null,
 			strength: 0.5,
 			transition: { durationMs: 400, easing: "easeInOut" },
 		});
@@ -45,6 +47,8 @@ describe("resolveDepthOfFieldOptions", () => {
 		[{ strength: -0.1 }, /strength must be a number from 0 to 1/],
 		[{ strength: 1.5 }, /strength must be a number from 0 to 1/],
 		[{ strength: Number.NaN }, /strength/],
+		[{ nearStrength: 1.5 }, /nearStrength must be a number from 0 to 1/],
+		[{ nearStrength: -1 }, /nearStrength/],
 		[{ focus: 0 }, /focus must be "selection" or a camera distance above 0/],
 		[{ focus: "nearest" as never }, /focus/],
 		[{ maxBlur: -1 }, /minBlur and maxBlur/],
@@ -137,7 +141,7 @@ describe("Tween", () => {
 });
 
 describe("blur radius", () => {
-	const lens = { aperturePixels: 24, maxBlurPixels: 1000, minBlurPixels: 0 };
+	const lens = { aperturePixels: 24, maxBlurPixels: 1000, minBlurPixels: 0, nearAperturePixels: 24 };
 
 	test("is zero on the focal plane", () => {
 		expect(circleOfConfusion(100, 100, lens)).toBe(0);
@@ -164,8 +168,33 @@ describe("blur radius", () => {
 		expect(circleOfConfusion(150, 100, { ...lens, minBlurPixels: 3 })).toBeCloseTo(8);
 	});
 
+	test("uses the near aperture only in front of the focus", () => {
+		const nearLens = { ...lens, nearAperturePixels: 72 };
+		expect(circleOfConfusion(50, 100, nearLens)).toBeCloseTo(72);
+		expect(circleOfConfusion(200, 100, nearLens)).toBeCloseTo(circleOfConfusion(200, 100, lens));
+	});
+
 	test("is zero without a focal plane", () => {
 		expect(circleOfConfusion(50, 0, lens)).toBe(0);
+	});
+});
+
+describe("blur gather radius", () => {
+	const lens = { aperturePixels: 8, maxBlurPixels: 40, minBlurPixels: 0, nearAperturePixels: 8 };
+
+	test("keeps a background pixel's taps within the aperture when maxBlur is far larger", () => {
+		const background = circleOfConfusion(10_000, 100, lens);
+		expect(background).toBeLessThan(lens.aperturePixels);
+		expect(blurGatherRadius(background, lens)).toBe(lens.aperturePixels);
+	});
+
+	test("widens to a foreground pixel's own radius, up to maxBlur", () => {
+		expect(blurGatherRadius(circleOfConfusion(20, 100, lens), lens)).toBeCloseTo(32);
+		expect(blurGatherRadius(circleOfConfusion(5, 100, lens), lens)).toBe(lens.maxBlurPixels);
+	});
+
+	test("is maxBlur whenever maxBlur is below the aperture, as with the defaults", () => {
+		expect(blurGatherRadius(0, { ...lens, aperturePixels: 24, maxBlurPixels: 12 })).toBe(12);
 	});
 });
 

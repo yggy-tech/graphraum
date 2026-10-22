@@ -335,6 +335,12 @@ export interface GraphraumDepthOfFieldOptions {
 	 * `d` is its camera distance and `f` the focal distance, clamped to `maxBlur`.
 	 */
 	strength?: number;
+	/**
+	 * Aperture for surfaces between the camera and the focus, 0..1. Defaults to `strength`. Set it
+	 * above `strength` (with a larger `maxBlur`) to melt the foreground while the background behind
+	 * the focus keeps the softer `strength` blur.
+	 */
+	nearStrength?: number;
 	/** Largest blur radius in CSS pixels. Default 12. */
 	maxBlur?: number;
 	/** Blur radii below this many CSS pixels render sharp, which widens the in-focus band. Default 0. */

@@ -130,6 +130,7 @@ It is off by default. It behaves like a camera lens. A surface at distance `d` f
 | Option | Default | Effect |
 | --- | --- | --- |
 | `strength` | `0.5` | Aperture, 0 to 1. |
+| `nearStrength` | `strength` | Aperture for what lies between the camera and the focus, 0 to 1. Set it above `strength`, with a larger `maxBlur`, to melt the foreground while the background keeps the softer blur. |
 | `maxBlur` | `12` | Largest blur radius in CSS pixels. |
 | `minBlur` | `0` | Blur radii below this many CSS pixels render sharp, which widens the in-focus band. |
 | `nearDistance`, `farDistance` | `0`, `Infinity` | Camera-to-focus distances in world units. `strength` applies fully up to `nearDistance` and fades out by `farDistance`, so an overview from far away can stay sharp. |

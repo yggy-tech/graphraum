@@ -10,6 +10,8 @@ export interface ResolvedDepthOfFieldOptions {
 	readonly maxBlur: number;
 	readonly minBlur: number;
 	readonly nearDistance: number;
+	/** `null` follows `strength`. */
+	readonly nearStrength: number | null;
 	readonly strength: number;
 	readonly transition: { readonly durationMs: number; readonly easing: GraphraumEasing };
 }
@@ -21,6 +23,7 @@ export const DEPTH_OF_FIELD_DEFAULTS: ResolvedDepthOfFieldOptions = {
 	maxBlur: 12,
 	minBlur: 0,
 	nearDistance: 0,
+	nearStrength: null,
 	strength: 0.5,
 	transition: { durationMs: 400, easing: "easeInOut" },
 };
@@ -71,18 +74,22 @@ export function resolveDepthOfFieldOptions(
 		maxBlur: options.maxBlur ?? base.maxBlur,
 		minBlur: options.minBlur ?? base.minBlur,
 		nearDistance: options.nearDistance ?? base.nearDistance,
+		nearStrength: options.nearStrength ?? base.nearStrength,
 		strength: options.strength ?? base.strength,
 		transition: {
 			durationMs: options.transition?.durationMs ?? base.transition.durationMs,
 			easing: options.transition?.easing ?? base.transition.easing,
 		},
 	};
-	const { enabled, farDistance, focus, maxBlur, minBlur, nearDistance, strength, transition } = resolved;
+	const { enabled, farDistance, focus, maxBlur, minBlur, nearDistance, nearStrength, strength, transition } = resolved;
 	if (typeof enabled !== "boolean") {
 		throw new Error(`Depth of field enabled must be a boolean; received ${String(enabled)}.`);
 	}
 	if (!isNonNegativeNumber(strength) || strength > 1) {
 		throw new Error(`Depth of field strength must be a number from 0 to 1; received ${String(strength)}.`);
+	}
+	if (nearStrength !== null && (!isNonNegativeNumber(nearStrength) || nearStrength > 1)) {
+		throw new Error(`Depth of field nearStrength must be a number from 0 to 1; received ${String(nearStrength)}.`);
 	}
 	if (focus !== "selection" && (typeof focus !== "number" || !Number.isFinite(focus) || focus <= 0)) {
 		throw new Error(
@@ -131,6 +138,8 @@ export function distanceFade(focusDistance: number, nearDistance: number, farDis
 export interface BlurRadiusParameters {
 	/** Device pixels of blur per unit of `|d - f| / d`: strength, distance fade and pixel ratio applied. */
 	aperturePixels: number;
+	/** The same for surfaces in front of the focus, from `nearStrength`. */
+	nearAperturePixels: number;
 	maxBlurPixels: number;
 	minBlurPixels: number;
 }
@@ -138,13 +147,26 @@ export interface BlurRadiusParameters {
 /**
  * Thin-lens circle of confusion in device pixels for a surface at `distance` from the camera with the
  * focal plane at `focusDistance`: `aperture * |d - f| / d`, so surfaces in front of the focus blur
- * faster than those behind it. Radii below the minimum render sharp; the maximum clamps. Mirrors
+ * faster than those behind it, with the near aperture in front of the focus. Radii below the
+ * minimum render sharp; the maximum clamps. Mirrors
  * `blurRadius` in the depth-of-field shaders.
  */
 export function circleOfConfusion(distance: number, focusDistance: number, parameters: BlurRadiusParameters): number {
 	if (focusDistance <= 0 || distance <= 0) return 0;
-	const radius = (parameters.aperturePixels * Math.abs(distance - focusDistance)) / distance;
+	const aperture = distance < focusDistance ? parameters.nearAperturePixels : parameters.aperturePixels;
+	const radius = (aperture * Math.abs(distance - focusDistance)) / distance;
 	return radius < parameters.minBlurPixels ? 0 : Math.min(radius, parameters.maxBlurPixels);
+}
+
+/**
+ * Radius of the disk a pixel's own blur gathers from, in device pixels. Surfaces behind the focus
+ * never blur past the aperture (`|d - f| / d < 1` there), so a pixel needs the full `maxBlurPixels`
+ * reach only when its own radius is larger than that. Spreading the fixed taps over a disk no wider
+ * than needed keeps a soft background densely sampled when `maxBlur` is set high for the
+ * foreground. Mirrors `blurReach` in the depth-of-field blur shader.
+ */
+export function blurGatherRadius(centreRadius: number, parameters: BlurRadiusParameters): number {
+	return Math.min(parameters.maxBlurPixels, Math.max(centreRadius, parameters.aperturePixels));
 }
 
 export interface FocusPoint {

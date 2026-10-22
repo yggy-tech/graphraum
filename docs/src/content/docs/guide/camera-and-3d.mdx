@@ -70,7 +70,7 @@ While the orbit is active graphraum runs a frame loop instead of rendering only 
 
 ## Depth of field
 
-In 3D, depth of field keeps the selected nodes sharp and blurs the rest of the graph with its distance from them, so a selection stands out without dimming anything:
+In 3D, depth of field keeps the selected nodes sharp and blurs the rest of the graph with its distance from them, in front and behind, so a selection stands out without dimming anything:
 
 ```ts
 const graph = new Graphraum(container, {
@@ -79,15 +79,53 @@ const graph = new Graphraum(container, {
 });
 
 graph.setSelection(["ada"]); // the focus moves to Ada
-graph.setDepthOfField({ strength: 0.8 }); // omitted fields keep their values
-graph.setDepthOfField({ enabled: false });
+await graph.setDepthOfField({ strength: 0.8 }); // fades to the new strength; omitted fields keep their values
+graph.setDepthOfField({ enabled: false }); // fades out
 ```
 
-It is off by default. `strength` (0 to 1, default `0.5`) scales the largest blur; at 1 a node far from the focus blurs by 12 CSS pixels. The blur grows with distance from the focal plane relative to the focal distance, so it looks the same whatever units your layout uses: a node half the focal distance nearer or further takes the full blur. Nodes level with the focus stay sharp, including the selected node's neighbors when they sit at the same depth. A flat graph seen head-on is all at one depth, so it only blurs once you rotate it.
+It is off by default. It behaves like a camera lens. A surface at distance `d` from the camera, with the focus at distance `f`, blurs by `strength × 24 × |d − f| / d` CSS pixels, up to `maxBlur` (default `12`):
 
-With `focus: "selection"` (the default) the focal plane goes through the mean position of the selected nodes. When the selection changes the focus moves to the new nodes over `transitionMs` (default `400`), and when nothing is selected the blur fades out and the whole graph is sharp. Moving the camera never blurs the selection: the focus stays on the selected nodes, not at a fixed distance. With `prefers-reduced-motion: reduce` or `transitionMs: 0` the focus jumps. Pass a number as `focus` to fix the focal plane at that camera distance in world units instead; it then blurs whether or not anything is selected.
+- Surfaces in front of the focus blur faster than those behind it, and a blurred node in front softly covers what is behind it.
+- The closer the camera is to the focus, the shallower the depth of field. Zooming in on a node blurs its surroundings more, and zooming out to an overview sharpens the graph.
+- The blur depends only on ratios of distances, so it looks the same whatever units your layout uses.
+- A flat graph seen head-on is all at one depth, so it only blurs once you rotate it.
 
-Depth of field is a post-process: while it blurs, each frame draws the scene into an offscreen target, draws the edges again to record their depth, blurs at half resolution and composites onto the canvas, which adds 3 draw calls. It has no cost while disabled, in 2D, or with nothing selected: frames then render directly and no render targets exist. Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and focus cards are unaffected, so labels stay sharp. Glow halos take the depth of what is behind them, so they blur like that.
+| Option | Default | Effect |
+| --- | --- | --- |
+| `strength` | `0.5` | Aperture, 0 to 1. |
+| `maxBlur` | `12` | Largest blur radius in CSS pixels. |
+| `minBlur` | `0` | Blur radii below this many CSS pixels render sharp, which widens the in-focus band. |
+| `nearDistance`, `farDistance` | `0`, `Infinity` | Camera-to-focus distances in world units. `strength` applies fully up to `nearDistance` and fades out by `farDistance`, so an overview from far away can stay sharp. |
+| `focus` | `"selection"` | `"selection"`, or a fixed camera distance in world units. |
+| `transition` | `{ durationMs: 400, easing: "easeInOut" }` | How focus moves and blur fades animate. |
+
+With `focus: "selection"` the focal plane goes through the mean position of the selected nodes. graphraum measures its distance from the camera again every frame, so the selected nodes stay sharp while the camera orbits, pans, zooms or flies; only a selection change moves the focus. When nothing is selected the blur fades out and the whole graph is sharp. A number as `focus` fixes the focal plane at that camera distance instead; it then blurs whether or not anything is selected.
+
+### Animate it
+
+Changing the selection, turning depth of field on or off and changing `strength` all animate over `transition`. `easing` is `"linear"`, `"easeIn"`, `"easeOut"`, `"easeInOut"` or your own function from progress 0..1 to 0..1:
+
+```ts
+graph.setDepthOfField({ transition: { durationMs: 800, easing: (t) => 1 - (1 - t) ** 2 } });
+
+const arrived = await graph.setDepthOfField({ enabled: false }); // true once the blur has faded out
+graph.setDepthOfField({ strength: 1 }, { animate: false }); // jump
+```
+
+A change during a fade continues from the blur on screen instead of starting over, and the interrupted call resolves `false`. With `prefers-reduced-motion: reduce`, `durationMs: 0` or `{ animate: false }` it jumps.
+
+### Cost and limits
+
+Depth of field is a post-process. While it blurs, each frame:
+
+1. draws the scene into an offscreen target;
+2. draws the edges again to record their depth;
+3. blurs at half resolution;
+4. composites onto the canvas.
+
+That adds 3 draw calls. A fade or focus move renders frames until it ends; otherwise it renders on demand like the rest of graphraum. It has no cost while disabled, in 2D, or with nothing selected: frames then render directly and no render targets exist.
+
+Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and focus cards are unaffected, so labels stay sharp. Glow halos take the depth of what is behind them, so they blur like that.
 
 In 2D there is no depth to focus on, so depth of field does nothing there; `setMode("3d")` brings it back. If the WebGL context cannot run it, frames render without it and graphraum logs one console warning. `getDiagnostics().depthOfField` reports `"off"`, `"inactive"`, `"active"` or `"unsupported"`.
 

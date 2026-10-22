@@ -194,7 +194,7 @@ Missing coordinates default to zero so layout does not block the first render. M
   <div><code>setMode(mode)</code><p>Switches between orthographic 2D and perspective 3D, replaces controls, and fits the current graph.</p></div>
   <div><code>getMode()</code><p>Returns the active <code>"2d"</code> or <code>"3d"</code> mode.</p></div>
   <div><code>setAutoOrbit(options | false)</code><p>Slowly orbits the 3D camera around the graph. Off by default; pass <code>false</code> to stop. Throws in 2D, and switching to 2D turns it off.</p></div>
-  <div><code>setDepthOfField(options)</code><p>Turns 3D depth of field on or off and changes its strength, focus and transition. Omitted fields keep their values. Off by default; a no-op in 2D. See <a href="../../guide/camera-and-3d/#depth-of-field">Depth of field</a>.</p></div>
+  <div><code>setDepthOfField(options, update?)</code><p>Turns 3D depth of field on or off and changes its lens and transition. Omitted fields keep their values. Fades to the new strength and resolves <code>true</code> when it arrives or <code>false</code> when interrupted; <code>{'{ animate: false }'}</code> jumps. Off by default; a no-op in 2D. See <a href="../../guide/camera-and-3d/#depth-of-field">Depth of field</a>.</p></div>
   <div><code>setTheme(theme)</code><p>Applies a named preset (<code>"dark"</code> / <code>"light"</code>) or merges a partial palette, then rematerializes colors.</p></div>
   <div><code>setBackground(background)</code><p>Sets a solid color, <code>"transparent"</code> / <code>null</code> for host CSS, or a <code>{'{ type: "pattern", source }'}</code> texture.</p></div>
   <div><code>fitView(options?)</code><p>Fits the active camera to the complete graph and rematerializes the viewport. Pass <code>{'{ nodeIds }'}</code> to frame only those nodes, for example a highlighted path; unknown IDs are ignored, and when none match (or the list is empty) it frames every node. In 2D it frames every node and resets any wheel zoom. In 3D it returns to the front view and moves as close as it can while every node, including its glow halo, stays on the canvas, leaving a small margin on the tighter canvas axis for labels beside edge nodes.</p></div>
@@ -213,10 +213,19 @@ Missing coordinates default to zero so layout does not block the first render. M
 ```ts
 interface GraphraumDepthOfFieldOptions {
   enabled?: boolean;                // default: false
-  strength?: number;                // 0..1, default: 0.5 (1 = 12 CSS px largest blur)
+  strength?: number;                // aperture 0..1, default: 0.5; blur = strength × 24 × |d − f| / d CSS px
+  maxBlur?: number;                 // default: 12 CSS px
+  minBlur?: number;                 // default: 0; smaller radii render sharp
+  nearDistance?: number;            // default: 0 world units; full strength up to this camera-to-focus distance
+  farDistance?: number;             // default: Infinity; blur faded out from this distance
   focus?: "selection" | number;     // default: "selection"; a number is a camera distance in world units
-  transitionMs?: number;            // default: 400; 0 jumps
+  transition?: {
+    durationMs?: number;            // default: 400; 0 jumps
+    easing?: "linear" | "easeIn" | "easeOut" | "easeInOut" | ((t: number) => number); // default: "easeInOut"
+  };
 }
+
+setDepthOfField(options: GraphraumDepthOfFieldOptions, update?: { animate?: boolean }): Promise<boolean>;
 ```
 
 Pass it as `depthOfField` to the constructor or to `setDepthOfField`. Invalid values throw. See [Camera and 3D](../../guide/camera-and-3d/#depth-of-field).

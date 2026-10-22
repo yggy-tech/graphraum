@@ -1,4 +1,4 @@
-import type { GraphraumMode } from "@yggy-tech/graphraum";
+import type { GraphraumEasing, GraphraumMode } from "@yggy-tech/graphraum";
 
 import {
 	type DemoSceneId,
@@ -23,7 +23,8 @@ export function startPlayground() {
 	const settingsButtons = [...root.querySelectorAll<HTMLButtonElement>("[data-settings-open]")];
 	const sceneSelect = requireElement<HTMLSelectElement>(root, "#scene-select");
 	const dofToggle = requireElement<HTMLButtonElement>(root, "[data-dof-toggle]");
-	const dofStrength = requireElement<HTMLInputElement>(root, "[data-dof-strength]");
+	const lens = requireElement<HTMLFormElement>(root, "#lens");
+	const lensButtons = [...root.querySelectorAll<HTMLButtonElement>("[data-lens-open]")];
 	const codeDialog = requireElement<HTMLDialogElement>(root, "#code-dialog");
 	const codeBody = requireElement(codeDialog, "[data-code-body]");
 	const prove = requireElement(root, "#prove");
@@ -96,11 +97,31 @@ export function startPlayground() {
 	}
 
 	/** Depth of field is a no-op in 2D, so the same settings apply to every scene and mode. */
-	function applyDepthOfField() {
-		stage.current?.graph.setDepthOfField({
-			enabled: dofToggle.getAttribute("aria-pressed") === "true",
-			strength: Number(dofStrength.value),
-		});
+	function applyDepthOfField(animate = true) {
+		const values = new FormData(lens);
+		const strength = Number(values.get("strength"));
+		const strengthValue = lens.elements.namedItem("strengthValue");
+		if (strengthValue instanceof HTMLOutputElement) strengthValue.value = strength.toFixed(2);
+		void stage.current?.graph.setDepthOfField(
+			{
+				enabled: dofToggle.getAttribute("aria-pressed") === "true",
+				maxBlur: Number(values.get("maxBlur")),
+				strength,
+				transition: {
+					durationMs: Number(values.get("durationMs")),
+					easing: values.get("easing") as GraphraumEasing,
+				},
+			},
+			{ animate },
+		);
+	}
+
+	/** The orbit shows the focus tracking the selection from every angle. It needs 3D and respects reduced motion. */
+	function applyOrbit() {
+		const graph = stage.current?.graph;
+		if (!graph || state.mode !== "3d") return;
+		const wanted = new FormData(lens).get("orbit") === "on" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+		graph.setAutoOrbit(wanted ? { speed: 0.15 } : false);
 	}
 
 	function syncControls() {
@@ -136,7 +157,8 @@ export function startPlayground() {
 			const first = scene.useCase.data.nodes[0];
 			select(first?.id ?? null);
 		}
-		applyDepthOfField();
+		applyDepthOfField(false);
+		applyOrbit();
 		resetProve();
 	}
 
@@ -150,6 +172,7 @@ export function startPlayground() {
 		if (onlyModeChanged && stage.current?.kind === "demo") {
 			syncControls();
 			stage.current.graph.setMode(state.mode);
+			applyOrbit();
 			return;
 		}
 		if (previous.scene === state.scene && previous.size === state.size && previous.mode === state.mode) {
@@ -162,6 +185,13 @@ export function startPlayground() {
 	function toggleSettings(open = settings.hidden) {
 		settings.hidden = !open;
 		for (const button of settingsButtons) button.setAttribute("aria-expanded", String(open));
+		if (open) toggleLens(false);
+	}
+
+	function toggleLens(open = lens.hidden) {
+		lens.hidden = !open;
+		for (const button of lensButtons) button.setAttribute("aria-expanded", String(open));
+		if (open) toggleSettings(false);
 	}
 
 	function resetProve() {
@@ -279,7 +309,10 @@ export function startPlayground() {
 		dofToggle.setAttribute("aria-pressed", String(dofToggle.getAttribute("aria-pressed") !== "true"));
 		applyDepthOfField();
 	});
-	dofStrength.addEventListener("input", applyDepthOfField);
+	for (const button of lensButtons) button.addEventListener("click", () => toggleLens());
+	requireElement(lens, "[data-lens-close]").addEventListener("click", () => toggleLens(false));
+	lens.addEventListener("input", () => applyDepthOfField());
+	lens.addEventListener("change", applyOrbit);
 
 	requireElement(root, "#code-button").addEventListener("click", () => {
 		codeBody.textContent = sceneCode(state.scene);
@@ -295,10 +328,13 @@ export function startPlayground() {
 		if (!scene || proving) return;
 		if (event.target instanceof HTMLElement && event.target.closest("button")) return;
 		toggleSettings(false);
+		toggleLens(false);
 		select(scene.graph.pick(event.clientX, event.clientY));
 	});
 	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape") toggleSettings(false);
+		if (event.key !== "Escape") return;
+		toggleSettings(false);
+		toggleLens(false);
 	});
 
 	window.setInterval(renderStatus, 500);

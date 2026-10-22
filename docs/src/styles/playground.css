@@ -78,19 +78,17 @@ body.playground {
 	display: none;
 }
 
-.dof-strength {
-	align-items: center;
-	display: flex;
-	padding: 0 10px 0 4px;
+.dof .short-label {
+	display: none;
 }
 
-.dof-strength input {
+.lens .span {
+	grid-column: 1 / -1;
+}
+
+.lens input[type="range"] {
 	accent-color: var(--green);
-	width: 96px;
-}
-
-.dof button[aria-pressed="false"] + .dof-strength {
-	opacity: 0.45;
+	width: 100%;
 }
 
 .scene-select {
@@ -606,8 +604,12 @@ article.playground-overlay-rich span {
 		display: block;
 	}
 
-	.dof-strength {
+	.dof .long-label {
 		display: none;
+	}
+
+	.dof .short-label {
+		display: inline;
 	}
 
 	.bar-actions,

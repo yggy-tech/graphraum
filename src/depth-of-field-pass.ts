@@ -2,6 +2,7 @@ import {
 	BufferGeometry,
 	DepthTexture,
 	Float32BufferAttribute,
+	GLSL3,
 	type InstancedMesh,
 	Mesh,
 	NoBlending,
@@ -16,7 +17,6 @@ import {
 	WebGLRenderTarget,
 } from "three";
 
-import { DEPTH_OF_FIELD_FALLOFF } from "./depth-of-field";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
 
 /** Layer the edge mesh joins so the edge depth pass can draw it alone. Picking raycasts layer 0. */
@@ -25,10 +25,14 @@ const EDGE_DEPTH_LAYER = 1;
 const BLUR_TAPS = 48;
 
 export interface DepthOfFieldFrame {
+	/** Device pixels of blur per unit of `|d - f| / d`. */
+	aperturePixels: number;
 	/** Focal plane distance from the camera in world units. */
 	focusDistance: number;
-	/** Largest blur radius in device pixels. */
+	/** Largest blur radius in device pixels; also the gather radius. */
 	maxBlurPixels: number;
+	/** Blur radii below this many device pixels render sharp. */
+	minBlurPixels: number;
 }
 
 const vertexShader = `
@@ -42,8 +46,9 @@ void main() {
 
 // Nodes write depth and edges do not (nodes always cover edges), so edges get their own depth
 // texture. A pixel shows a node where the node depth is set, otherwise the nearest edge, otherwise
-// the background at the far plane, which takes the full blur. Every pass addresses pixels with
-// integer texel fetches, so a tap's colour and blur radius always come from the same pixel.
+// the background at the far plane. Every pass addresses pixels with integer texel fetches, so a
+// tap's colour and blur radius always come from the same pixel. `blurRadius` mirrors
+// `circleOfConfusion` in depth-of-field.ts.
 const blurRadiusChunk = `
 #include <packing>
 uniform sampler2D nodeDepth;
@@ -52,46 +57,70 @@ uniform ivec2 depthSize;
 uniform float cameraNear;
 uniform float cameraFar;
 uniform float focusDistance;
+uniform float aperture;
+uniform float minBlur;
 uniform float maxBlur;
 
-float blurRadius(ivec2 pixel) {
+float surfaceDistance(ivec2 pixel) {
 	pixel = clamp(pixel, ivec2(0), depthSize - 1);
 	float depth = texelFetch(nodeDepth, pixel, 0).x;
 	if (depth >= 1.0) depth = texelFetch(edgeDepth, pixel, 0).x;
-	float surfaceDistance = -perspectiveDepthToViewZ(depth, cameraNear, cameraFar);
-	return maxBlur * clamp(abs(surfaceDistance - focusDistance) / (focusDistance * ${DEPTH_OF_FIELD_FALLOFF.toFixed(4)}), 0.0, 1.0);
+	return -perspectiveDepthToViewZ(depth, cameraNear, cameraFar);
 }
 
-// A tap counts only when its own blur radius reaches the centre, so sharp nodes do not bleed into
-// the blurred surroundings.
-float tapWeight(float radius, float offset) {
-	return clamp(radius - abs(offset) + 1.0, 0.0, 1.0);
+float radiusAt(float surface) {
+	float radius = aperture * abs(surface - focusDistance) / max(surface, 1e-6);
+	return radius < minBlur ? 0.0 : min(radius, maxBlur);
+}
+
+float blurRadius(ivec2 pixel) {
+	return radiusAt(surfaceDistance(pixel));
 }
 `;
 
 // One disk gather from the full-resolution scene into a half-resolution target: taps on a golden-angle
 // spiral that fills a circle of the largest blur radius. Half-resolution texel (i, j) stands for
-// full-resolution pixel (2i, 2j). A separable blur would cost fewer taps, but a tap's weight depends
-// on its own radius, which a second pass cannot recover, and blurred nodes would show crosses.
+// full-resolution pixel (2i, 2j). A tap counts only when its own blur radius reaches the centre, so
+// sharp nodes do not bleed into the blurred surroundings. A separable blur would cost fewer taps, but
+// a tap's weight depends on its own radius, which a second pass cannot recover.
+//
+// The second output is the near field: blurred surfaces in front of the focal plane and of this pixel
+// spread over it, so a blurred foreground node softly covers sharp nodes behind it. Each tap adds its
+// colour spread over its own blur disk (area ratio maxBlur^2 / radius^2), premultiplied by coverage.
 const blurFragmentShader = `
 ${blurRadiusChunk}
 uniform sampler2D colorTexture;
+layout(location = 0) out highp vec4 blurColor;
+layout(location = 1) out highp vec4 nearColor;
 
 const float GOLDEN_ANGLE = 2.39996323;
 
 void main() {
 	ivec2 base = ivec2(gl_FragCoord.xy) * 2;
+	float centreSurface = surfaceDistance(base);
 	vec4 sum = texelFetch(colorTexture, base, 0);
 	float total = 1.0;
+	vec4 near = vec4(0.0);
+	// Interleaved gradient noise turns the spiral's fixed tap pattern into fine noise that the
+	// composite's bilinear upsample smooths, instead of hatching along blurred edges.
+	float rotation = 6.28318531 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 	for (int index = 0; index < ${BLUR_TAPS}; index++) {
 		float distanceFromCentre = sqrt((float(index) + 0.5) / ${BLUR_TAPS}.0) * maxBlur;
-		float angle = float(index) * GOLDEN_ANGLE;
+		float angle = float(index) * GOLDEN_ANGLE + rotation;
 		ivec2 pixel = clamp(base + ivec2(floor(vec2(cos(angle), sin(angle)) * distanceFromCentre + 0.5)), ivec2(0), depthSize - 1);
-		float weight = tapWeight(blurRadius(pixel), distanceFromCentre);
-		sum += texelFetch(colorTexture, pixel, 0) * weight;
+		float surface = surfaceDistance(pixel);
+		float radius = radiusAt(surface);
+		float weight = clamp(radius - distanceFromCentre + 1.0, 0.0, 1.0);
+		vec4 color = texelFetch(colorTexture, pixel, 0);
+		sum += color * weight;
 		total += weight;
+		if (surface < focusDistance && surface < centreSurface) {
+			near += color * weight * (maxBlur * maxBlur / max(radius * radius, 1.0));
+		}
 	}
-	gl_FragColor = sum / total;
+	blurColor = sum / total;
+	near /= ${BLUR_TAPS}.0;
+	nearColor = near.a > 1.0 ? near / near.a : near;
 }
 `;
 
@@ -99,11 +128,14 @@ const compositeFragmentShader = `
 ${blurRadiusChunk}
 uniform sampler2D sharpTexture;
 uniform sampler2D blurTexture;
+uniform sampler2D nearTexture;
 varying vec2 vUv;
 
 void main() {
 	ivec2 pixel = ivec2(gl_FragCoord.xy);
+	vec4 near = texture2D(nearTexture, vUv);
 	vec4 sharp = texelFetch(sharpTexture, pixel, 0);
+	sharp = near + sharp * (1.0 - near.a);
 	vec4 blurred = texture2D(blurTexture, vUv);
 	gl_FragColor = mix(sharp, blurred, smoothstep(0.5, 2.0, blurRadius(pixel)));
 	${OUTPUT_COLOR_SPACE_FRAGMENT}
@@ -113,21 +145,28 @@ void main() {
 function blurUniforms() {
 	return {
 		cameraFar: { value: 1 },
+		aperture: { value: 0 },
 		cameraNear: { value: 0.1 },
 		depthSize: { value: new Vector2() },
 		edgeDepth: { value: null },
 		focusDistance: { value: 1 },
 		maxBlur: { value: 0 },
+		minBlur: { value: 0 },
 		nodeDepth: { value: null },
 	};
 }
 
-function fullscreenMaterial(fragmentShader: string, uniforms: Record<string, { value: unknown }>) {
+function fullscreenMaterial(
+	fragmentShader: string,
+	uniforms: Record<string, { value: unknown }>,
+	glslVersion: typeof GLSL3 | null = null,
+) {
 	return new ShaderMaterial({
 		blending: NoBlending,
 		depthTest: false,
 		depthWrite: false,
 		fragmentShader,
+		glslVersion,
 		uniforms,
 		vertexShader,
 	});
@@ -150,13 +189,15 @@ export class DepthOfFieldPass {
 	private readonly sceneTarget: WebGLRenderTarget;
 	private readonly edgeDepthTarget: WebGLRenderTarget;
 	private readonly blurTarget: WebGLRenderTarget;
-	private readonly blurMaterial = fullscreenMaterial(blurFragmentShader, {
-		...blurUniforms(),
-		colorTexture: { value: null },
-	});
+	private readonly blurMaterial = fullscreenMaterial(
+		blurFragmentShader,
+		{ ...blurUniforms(), colorTexture: { value: null } },
+		GLSL3,
+	);
 	private readonly compositeMaterial = fullscreenMaterial(compositeFragmentShader, {
 		...blurUniforms(),
 		blurTexture: { value: null },
+		nearTexture: { value: null },
 		sharpTexture: { value: null },
 	});
 	private readonly quad = new Mesh(fullscreenTriangle(), this.blurMaterial);
@@ -178,7 +219,8 @@ export class DepthOfFieldPass {
 			samples: antialias ? 4 : 0,
 		});
 		this.edgeDepthTarget = new WebGLRenderTarget(1, 1, { depthTexture: new DepthTexture(1, 1) });
-		this.blurTarget = new WebGLRenderTarget(1, 1, color);
+		// Attachment 0 holds the blur, attachment 1 the near field.
+		this.blurTarget = new WebGLRenderTarget(1, 1, { ...color, count: 2 });
 		this.quad.frustumCulled = false;
 	}
 
@@ -198,12 +240,14 @@ export class DepthOfFieldPass {
 		this.renderEdgeDepth(renderer, scene, camera, edgeMesh);
 
 		const shared = {
+			aperture: frame.aperturePixels,
 			cameraFar: camera.far,
 			cameraNear: camera.near,
 			depthSize: this.size,
 			edgeDepth: this.edgeDepthTarget.depthTexture,
 			focusDistance: frame.focusDistance,
 			maxBlur: frame.maxBlurPixels,
+			minBlur: frame.minBlurPixels,
 			nodeDepth: this.sceneTarget.depthTexture,
 		};
 		this.quad.material = this.blurMaterial;
@@ -213,7 +257,8 @@ export class DepthOfFieldPass {
 		this.quad.material = this.compositeMaterial;
 		this.setUniforms(this.compositeMaterial, {
 			...shared,
-			blurTexture: this.blurTarget.texture,
+			blurTexture: this.blurTarget.textures[0],
+			nearTexture: this.blurTarget.textures[1],
 			sharpTexture: this.sceneTarget.texture,
 		});
 		this.drawQuad(renderer, previousTarget);

@@ -265,22 +265,52 @@ export interface GraphraumTheme {
 /** Discriminated pick result. Nodes win over edges when both intersect the pointer. */
 export type GraphraumPickHit = { kind: "edge"; id: string } | { kind: "node"; id: string };
 
+/** `linear`, cubic `easeIn` / `easeOut` / `easeInOut`, or a function from progress 0..1 to eased 0..1. */
+export type GraphraumEasing = "easeIn" | "easeInOut" | "easeOut" | "linear" | ((t: number) => number);
+
+/** How depth of field animates focus moves and blur fades. */
+export interface GraphraumDepthOfFieldTransition {
+	/** Default 400; 0 jumps. `prefers-reduced-motion: reduce` always jumps. */
+	durationMs?: number;
+	/** Default `"easeInOut"`. */
+	easing?: GraphraumEasing;
+}
+
 /**
  * Opt-in 3D depth of field. The focal plane follows the selection, so selected nodes stay sharp and
- * the rest of the graph blurs with its distance from them. A no-op in 2D. See `Graphraum.setDepthOfField`.
+ * the rest of the graph blurs with its distance from them, in front and behind, like a thin lens:
+ * the closer the camera is to the focus, the shallower the depth of field. A no-op in 2D. See
+ * `Graphraum.setDepthOfField`.
  */
 export interface GraphraumDepthOfFieldOptions {
-	/** Default `false`. While disabled no extra passes or render targets exist. */
+	/** Default `false`. While disabled no extra passes or render targets exist. Toggling fades the blur. */
 	enabled?: boolean;
 	/**
 	 * `"selection"` (default) focuses the mean position of the selected nodes and fades the blur out
 	 * when nothing is selected. A number fixes the focal plane at that camera distance in world units.
 	 */
 	focus?: "selection" | number;
-	/** 0..1, default 0.5. Scales the largest blur radius; 1 is 12 CSS pixels. */
+	/**
+	 * Aperture, 0..1, default 0.5. A surface blurs by `strength * 24 * |d - f| / d` CSS pixels, where
+	 * `d` is its camera distance and `f` the focal distance, clamped to `maxBlur`.
+	 */
 	strength?: number;
-	/** Focus and fade animation in milliseconds after a selection change. Default 400; 0 jumps. */
-	transitionMs?: number;
+	/** Largest blur radius in CSS pixels. Default 12. */
+	maxBlur?: number;
+	/** Blur radii below this many CSS pixels render sharp, which widens the in-focus band. Default 0. */
+	minBlur?: number;
+	/** Camera-to-focus distance in world units up to which `strength` applies fully. Default 0. */
+	nearDistance?: number;
+	/** Camera-to-focus distance in world units at which the blur has faded out. Default `Infinity` (no fade). */
+	farDistance?: number;
+	/** Animation for focus moves between selections and for blur fades. */
+	transition?: GraphraumDepthOfFieldTransition;
+}
+
+/** Options for one `Graphraum.setDepthOfField` call. */
+export interface GraphraumDepthOfFieldUpdate {
+	/** Default `true`: fade the blur to the new strength over the transition. `false` jumps. */
+	animate?: boolean;
 }
 
 /**

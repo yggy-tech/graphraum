@@ -158,10 +158,11 @@ Depth of field is a post-process. While it blurs, each frame:
 
 1. draws the scene into an offscreen target;
 2. draws the edges again to record their depth;
-3. blurs at half resolution;
-4. composites onto the canvas.
+3. finds how far blurred nodes in front of the focus spread, per screen tile;
+4. blurs at half resolution;
+5. composites onto the canvas.
 
-That adds 3 draw calls. A fade or focus move renders frames until it ends; otherwise it renders on demand like the rest of graphraum. It has no cost while disabled, in 2D, or with nothing selected: frames then render directly and no render targets exist.
+That adds 4 draw calls. A fade or focus move renders frames until it ends; otherwise it renders on demand like the rest of graphraum. It has no cost while disabled, in 2D, or with nothing selected: frames then render directly and no render targets exist.
 
 Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and focus cards are unaffected, so labels stay sharp. Glow halos take the depth of what is behind them, so they blur like that.
 

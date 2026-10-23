@@ -1001,7 +1001,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * moves over `transition` when the selection changes; with nothing selected the blur fades out.
 	 * `prefers-reduced-motion: reduce` jumps. Resolves `true` when the blur reaches the new strength
 	 * and `false` when a later call or `destroy()` interrupts the fade. While it blurs each frame adds
-	 * three draw calls; disabled, or with nothing to blur, it costs nothing. A no-op in 2D. Picking
+	 * four draw calls; disabled, or with nothing to blur, it costs nothing. A no-op in 2D. Picking
 	 * and DOM overlays are unaffected. Throws for invalid values.
 	 */
 	setDepthOfField(options: GraphraumDepthOfFieldOptions, update: GraphraumDepthOfFieldUpdate = {}): Promise<boolean> {

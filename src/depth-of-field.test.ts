@@ -2,12 +2,15 @@ import { Matrix4, PerspectiveCamera } from "three";
 import { describe, expect, test } from "vitest";
 
 import {
-	blurGatherRadius,
+	blurTapWeight,
 	circleOfConfusion,
 	DEPTH_OF_FIELD_DEFAULTS,
 	DepthOfFieldFocus,
 	distanceFade,
 	meanPoint,
+	NEAR_TILE_REACH,
+	nearGatherRadius,
+	nearTileSize,
 	resolveDepthOfFieldOptions,
 	resolveEasing,
 	Tween,
@@ -179,22 +182,54 @@ describe("blur radius", () => {
 	});
 });
 
-describe("blur gather radius", () => {
-	const lens = { aperturePixels: 8, maxBlurPixels: 40, minBlurPixels: 0, nearAperturePixels: 8 };
-
-	test("keeps a background pixel's taps within the aperture when maxBlur is far larger", () => {
-		const background = circleOfConfusion(10_000, 100, lens);
-		expect(background).toBeLessThan(lens.aperturePixels);
-		expect(blurGatherRadius(background, lens)).toBe(lens.aperturePixels);
+describe("blur tap weight", () => {
+	test("keeps the background behind a sharp node out of it, however blurred the background is", () => {
+		const background = { distance: 6, radius: 20, surface: 1000 };
+		expect(blurTapWeight(background, 100, 0)).toBe(0);
 	});
 
-	test("widens to a foreground pixel's own radius, up to maxBlur", () => {
-		expect(blurGatherRadius(circleOfConfusion(20, 100, lens), lens)).toBeCloseTo(32);
-		expect(blurGatherRadius(circleOfConfusion(5, 100, lens), lens)).toBe(lens.maxBlurPixels);
+	test("lets the background behind a blurred node in only within the node's own radius", () => {
+		expect(blurTapWeight({ distance: 3, radius: 20, surface: 1000 }, 200, 4)).toBe(1);
+		expect(blurTapWeight({ distance: 8, radius: 20, surface: 1000 }, 200, 4)).toBe(0);
 	});
 
-	test("is maxBlur whenever maxBlur is below the aperture, as with the defaults", () => {
-		expect(blurGatherRadius(0, { ...lens, aperturePixels: 24, maxBlurPixels: 12 })).toBe(12);
+	test("lets a nearer surface in where its own blur reaches the centre", () => {
+		expect(blurTapWeight({ distance: 10, radius: 12, surface: 150 }, 1000, 2)).toBe(1);
+		expect(blurTapWeight({ distance: 14, radius: 12, surface: 150 }, 1000, 2)).toBe(0);
+		expect(blurTapWeight({ distance: 12.5, radius: 12, surface: 150 }, 1000, 2)).toBeCloseTo(0.5);
+	});
+});
+
+describe("near gather radius", () => {
+	// 4 x 3 tiles of 10 pixels with one foreground tile of radius 12 at column 1, row 1.
+	const radii = new Array(12).fill(0);
+	radii[1 * 4 + 1] = 12;
+	const tiles = { columns: 4, rows: 3, radii, size: 10 };
+
+	test("is zero where no foreground blur reaches, instead of always gathering over maxBlur", () => {
+		expect(nearGatherRadius(39, 0, tiles)).toBe(0);
+		// 13 pixels right of the tile's last column, one past its radius.
+		expect(nearGatherRadius(19 + 13, 15, tiles)).toBe(0);
+	});
+
+	test("is the foreground radius inside the tile and up to that radius around it", () => {
+		expect(nearGatherRadius(15, 15, tiles)).toBe(12);
+		expect(nearGatherRadius(19 + 12, 15, tiles)).toBe(12);
+		// Diagonal: the gap to the tile's corner pixel (19, 19) is hypot(8, 8) < 12.
+		expect(nearGatherRadius(27, 27, tiles)).toBe(12);
+		expect(nearGatherRadius(29, 29, tiles)).toBe(0);
+	});
+
+	test("takes the largest radius in reach", () => {
+		const two = [...radii];
+		two[1 * 4 + 2] = 5;
+		expect(nearGatherRadius(22, 15, { ...tiles, radii: two })).toBe(12);
+		expect(nearGatherRadius(34, 15, { ...tiles, radii: two })).toBe(5);
+	});
+
+	test("sizes tiles so the scanned neighbourhood spans maxBlur", () => {
+		expect(nearTileSize(80) * NEAR_TILE_REACH).toBeGreaterThanOrEqual(80);
+		expect(nearTileSize(4)).toBe(8);
 	});
 });
 

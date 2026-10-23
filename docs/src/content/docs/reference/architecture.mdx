@@ -28,7 +28,7 @@ graphraum renders when data, selection, camera controls, mode, or container size
 
 ## Viewport materialization
 
-In 2D, graphraum queries visible nodes from its spatial grid with an overscan margin, derives unique incident edges without scanning the full edge list, and compacts that subset into the existing node and edge GPU buffers. The renderer remains at two draw calls; the opt-in node [glow](../../guide/theme/#glow) adds one bounded halo draw call only while a visible node glows. Opt-in 3D [depth of field](../../guide/camera-and-3d/#depth-of-field) adds three post-process draw calls only on frames that blur.
+In 2D, graphraum queries visible nodes from its spatial grid with an overscan margin, derives unique incident edges without scanning the full edge list, and compacts that subset into the existing node and edge GPU buffers. The renderer remains at two draw calls; the opt-in node [glow](../../guide/theme/#glow) adds one bounded halo draw call only while a visible node glows. Opt-in 3D [depth of field](../../guide/camera-and-3d/#depth-of-field) adds four post-process draw calls only on frames that blur.
 
 When visible nodes exceed `maxVisibleNodes`, graphraum bins them into representative spatial density clusters. Density mode enters above 110% of the budget and exits below 85% so small camera changes do not flicker between tiers. Nodes always draw over edges, in 2D and 3D. In 3D nodes still hide each other by depth, but an edge never covers a node, even where it passes in front of one: a node behind an edge shows on top of it. Edges also no longer depth-sort among themselves in 3D: where they overlap, they draw in batch order. This keeps node faces readable at busy hubs at the cost of these depth cues.
 

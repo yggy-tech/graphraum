@@ -17,6 +17,7 @@ import {
 	WebGLRenderTarget,
 } from "three";
 
+import { NEAR_TILE_REACH, nearTileSize } from "./depth-of-field";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
 
 /** Layer the edge mesh joins so the edge depth pass can draw it alone. Picking raycasts layer 0. */
@@ -82,31 +83,54 @@ float blurRadius(ivec2 pixel) {
 }
 `;
 
-// One disk gather from the full-resolution scene into a half-resolution target: taps on a golden-angle
-// spiral that fills a circle of `blurReach`, the pixel's own radius but at least the aperture (the
-// most any surface behind the focus can blur), so a soft background stays densely sampled when
-// maxBlur is set high for the foreground. Half-resolution texel (i, j) stands for
-// full-resolution pixel (2i, 2j). A tap counts when its own blur radius reaches the centre, so sharp
-// nodes do not bleed into the blurred surroundings. A tap behind the centre also counts within the
-// centre's own radius: a blurred foreground node then mixes with what lies behind its edge instead
-// of keeping a hard silhouette, while a sharp centre (radius 0) still takes nothing. A separable blur would cost fewer taps, but
-// a tap's weight depends on its own radius, which a second pass cannot recover.
+// Largest blur radius in front of the focus over each tile of `tileSize` full-resolution pixels,
+// stored as a fraction of maxBlur rounded up so the 8-bit target never shrinks it.
+const nearTileFragmentShader = `
+${blurRadiusChunk}
+uniform int tileSize;
+
+void main() {
+	ivec2 origin = ivec2(gl_FragCoord.xy) * tileSize;
+	float reach = 0.0;
+	for (int y = 0; y < tileSize; y++) {
+		for (int x = 0; x < tileSize; x++) {
+			float surface = surfaceDistance(origin + ivec2(x, y));
+			if (surface < focusDistance) reach = max(reach, radiusAt(surface));
+		}
+	}
+	gl_FragColor = vec4(ceil(reach / max(maxBlur, 1e-6) * 255.0) / 255.0, 0.0, 0.0, 1.0);
+}
+`;
+
+// One disk gather from the full-resolution scene into a half-resolution target over the pixel's own
+// blur radius, on a golden-angle spiral. Half-resolution texel (i, j) stands for full-resolution pixel
+// (2i, 2j). A tap nearer than the centre counts when its own radius reaches the centre, so sharp nodes
+// do not bleed into the blurred surroundings; a tap behind the centre counts only within the centre's
+// radius, since the centre's surface hides it beyond that. Behind the focus a nearer surface never
+// blurs more than a farther one, so nothing outside the pixel's own radius can reach it and all 48
+// taps land where they count; the foreground's wider blur comes from the near field below. A separable
+// blur would cost fewer taps, but a tap's weight depends on its own radius, which a second pass cannot
+// recover.
 //
-// The second output is the near field: blurred surfaces in front of the focal plane and of this pixel
-// spread over it, so a blurred foreground node softly covers sharp nodes behind it. Each tap adds its
-// colour spread over its own blur disk (area ratio maxBlur^2 / radius^2), premultiplied by coverage.
-// The near field always gathers over maxBlur. When `blurReach` already equals maxBlur (the default
-// lens) one loop serves both outputs; otherwise a second loop of the same taps gathers it.
+// The second output is the near field: blurred surfaces in front of the focal plane spread over this
+// pixel, so a blurred foreground node softly covers what lies behind it and its own interior alike.
+// Its taps fill `nearReach`, the widest foreground radius that reaches this pixel (from the tile pass),
+// and pixels with no foreground in reach skip them. Each tap adds its colour spread over its own blur
+// disk (area ratio reach^2 / radius^2), premultiplied by coverage; with the reach matched to the
+// local foreground that ratio stays near 1, so the coverage is smooth rather than speckled. Taps fade
+// in over the same radii at which the composite switches from sharp to blurred, so a surface just in
+// front of the focus stays sharp.
 const blurFragmentShader = `
 ${blurRadiusChunk}
 uniform sampler2D colorTexture;
+uniform sampler2D nearTiles;
+uniform int nearTileSize;
 layout(location = 0) out highp vec4 blurColor;
 layout(location = 1) out highp vec4 nearColor;
 
 const float GOLDEN_ANGLE = 2.39996323;
 
 ivec2 base;
-float centreSurface;
 float rotation;
 
 float tapDistance(int index, float reach) {
@@ -118,48 +142,60 @@ ivec2 tapPixel(int index, float distanceFromCentre) {
 	return clamp(base + ivec2(floor(vec2(cos(angle), sin(angle)) * distanceFromCentre + 0.5)), ivec2(0), depthSize - 1);
 }
 
-vec4 nearTerm(float surface, float radius, float weight, vec4 color) {
-	if (surface >= focusDistance || surface >= centreSurface) return vec4(0.0);
-	return color * weight * (maxBlur * maxBlur / max(radius * radius, 1.0));
+// Mirrors nearGatherRadius in depth-of-field.ts.
+float nearReach() {
+	ivec2 tile = base / nearTileSize;
+	ivec2 tileCount = textureSize(nearTiles, 0);
+	float reach = 0.0;
+	for (int y = -${NEAR_TILE_REACH}; y <= ${NEAR_TILE_REACH}; y++) {
+		for (int x = -${NEAR_TILE_REACH}; x <= ${NEAR_TILE_REACH}; x++) {
+			ivec2 neighbour = tile + ivec2(x, y);
+			if (any(lessThan(neighbour, ivec2(0))) || any(greaterThanEqual(neighbour, tileCount))) continue;
+			float radius = texelFetch(nearTiles, neighbour, 0).r * maxBlur;
+			vec2 low = vec2(neighbour * nearTileSize);
+			vec2 gap = max(max(low - vec2(base), vec2(base) - low - float(nearTileSize - 1)), 0.0);
+			if (length(gap) <= radius) reach = max(reach, radius);
+		}
+	}
+	return reach;
 }
 
 void main() {
 	base = ivec2(gl_FragCoord.xy) * 2;
-	centreSurface = surfaceDistance(base);
+	float centreSurface = surfaceDistance(base);
 	vec4 sum = texelFetch(colorTexture, base, 0);
 	float total = 1.0;
-	vec4 near = vec4(0.0);
 	// Interleaved gradient noise turns the spiral's fixed tap pattern into fine noise that the
 	// composite's bilinear upsample smooths, instead of hatching along blurred edges.
 	rotation = 6.28318531 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-	// Mirrors blurGatherRadius in depth-of-field.ts.
 	float centreRadius = radiusAt(centreSurface);
-	float blurReach = min(maxBlur, max(centreRadius, aperture));
-	bool nearInBlurLoop = blurReach >= maxBlur;
+	// Mirrors blurTapWeight in depth-of-field.ts.
 	for (int index = 0; index < ${BLUR_TAPS}; index++) {
-		float distanceFromCentre = tapDistance(index, blurReach);
+		float distanceFromCentre = tapDistance(index, centreRadius);
 		ivec2 pixel = tapPixel(index, distanceFromCentre);
 		float surface = surfaceDistance(pixel);
 		float radius = radiusAt(surface);
-		float reach = surface > centreSurface ? max(radius, centreRadius) : radius;
+		float reach = surface > centreSurface ? min(radius, centreRadius) : radius;
 		float weight = clamp(reach - distanceFromCentre + 1.0, 0.0, 1.0);
-		vec4 color = texelFetch(colorTexture, pixel, 0);
-		sum += color * weight;
+		sum += texelFetch(colorTexture, pixel, 0) * weight;
 		total += weight;
-		if (nearInBlurLoop) near += nearTerm(surface, radius, weight, color);
-	}
-	if (!nearInBlurLoop) {
-		for (int index = 0; index < ${BLUR_TAPS}; index++) {
-			float distanceFromCentre = tapDistance(index, maxBlur);
-			ivec2 pixel = tapPixel(index, distanceFromCentre);
-			float surface = surfaceDistance(pixel);
-			float radius = radiusAt(surface);
-			float weight = clamp(radius - distanceFromCentre + 1.0, 0.0, 1.0);
-			near += nearTerm(surface, radius, weight, texelFetch(colorTexture, pixel, 0));
-		}
 	}
 	blurColor = sum / total;
-	near /= ${BLUR_TAPS}.0;
+
+	vec4 near = vec4(0.0);
+	float nearGather = nearReach();
+	if (nearGather > 0.0) {
+		for (int index = 0; index < ${BLUR_TAPS}; index++) {
+			float distanceFromCentre = tapDistance(index, nearGather);
+			ivec2 pixel = tapPixel(index, distanceFromCentre);
+			float surface = surfaceDistance(pixel);
+			if (surface >= focusDistance) continue;
+			float radius = radiusAt(surface);
+			float weight = clamp(radius - distanceFromCentre + 1.0, 0.0, 1.0) * smoothstep(0.5, 2.0, radius);
+			near += texelFetch(colorTexture, pixel, 0) * weight * (nearGather * nearGather / max(radius * radius, 1.0));
+		}
+		near /= ${BLUR_TAPS}.0;
+	}
 	nearColor = near.a > 1.0 ? near / near.a : near;
 }
 `;
@@ -171,13 +207,21 @@ uniform sampler2D blurTexture;
 uniform sampler2D nearTexture;
 varying vec2 vUv;
 
+// The near field lies over the sharp-or-blurred image, including over the blurred interior of the
+// foreground nodes it comes from. Four bilinear taps half a texel apart give it a 3 x 3 tent at half
+// resolution, which smooths the remaining tap noise in its coverage.
 void main() {
 	ivec2 pixel = ivec2(gl_FragCoord.xy);
-	vec4 near = texture2D(nearTexture, vUv);
+	vec2 nearTexel = 0.5 / vec2(textureSize(nearTexture, 0));
+	vec4 near = 0.25 * (
+		texture2D(nearTexture, vUv + vec2(-nearTexel.x, -nearTexel.y)) +
+		texture2D(nearTexture, vUv + vec2(nearTexel.x, -nearTexel.y)) +
+		texture2D(nearTexture, vUv + vec2(-nearTexel.x, nearTexel.y)) +
+		texture2D(nearTexture, vUv + vec2(nearTexel.x, nearTexel.y))
+	);
 	vec4 sharp = texelFetch(sharpTexture, pixel, 0);
-	sharp = near + sharp * (1.0 - near.a);
 	vec4 blurred = texture2D(blurTexture, vUv);
-	gl_FragColor = mix(sharp, blurred, smoothstep(0.5, 2.0, blurRadius(pixel)));
+	gl_FragColor = near + mix(sharp, blurred, smoothstep(0.5, 2.0, blurRadius(pixel))) * (1.0 - near.a);
 	${OUTPUT_COLOR_SPACE_FRAGMENT}
 }
 `;
@@ -222,17 +266,23 @@ function fullscreenTriangle() {
 }
 
 /**
- * Renders the scene into a target, the edges into a depth-only target, blurs at half resolution and
- * composites onto the canvas: three extra draw calls per frame while it runs.
+ * Renders the scene into a target, the edges into a depth-only target, finds the foreground blur per
+ * tile, blurs at half resolution and composites onto the canvas: four extra draw calls per frame
+ * while it runs.
  * Created only while depth of field has something to blur; `dispose` releases every GPU resource.
  */
 export class DepthOfFieldPass {
 	private readonly sceneTarget: WebGLRenderTarget;
 	private readonly edgeDepthTarget: WebGLRenderTarget;
 	private readonly blurTarget: WebGLRenderTarget;
+	private readonly nearTileTarget: WebGLRenderTarget;
+	private readonly nearTileMaterial = fullscreenMaterial(nearTileFragmentShader, {
+		...blurUniforms(),
+		tileSize: { value: 1 },
+	});
 	private readonly blurMaterial = fullscreenMaterial(
 		blurFragmentShader,
-		{ ...blurUniforms(), colorTexture: { value: null } },
+		{ ...blurUniforms(), colorTexture: { value: null }, nearTileSize: { value: 1 }, nearTiles: { value: null } },
 		GLSL3,
 	);
 	private readonly compositeMaterial = fullscreenMaterial(compositeFragmentShader, {
@@ -262,6 +312,7 @@ export class DepthOfFieldPass {
 		this.edgeDepthTarget = new WebGLRenderTarget(1, 1, { depthTexture: new DepthTexture(1, 1) });
 		// Attachment 0 holds the blur, attachment 1 the near field.
 		this.blurTarget = new WebGLRenderTarget(1, 1, { ...color, count: 2 });
+		this.nearTileTarget = new WebGLRenderTarget(1, 1, { type: UnsignedByteType });
 		this.quad.frustumCulled = false;
 	}
 
@@ -273,7 +324,8 @@ export class DepthOfFieldPass {
 		frame: DepthOfFieldFrame,
 	) {
 		const { x: width, y: height } = renderer.getDrawingBufferSize(this.size);
-		this.setSize(width, height);
+		const tileSize = nearTileSize(frame.maxBlurPixels);
+		this.setSize(width, height, tileSize);
 		const previousTarget = renderer.getRenderTarget();
 
 		renderer.setRenderTarget(this.sceneTarget);
@@ -292,8 +344,17 @@ export class DepthOfFieldPass {
 			nearAperture: frame.nearAperturePixels,
 			nodeDepth: this.sceneTarget.depthTexture,
 		};
+		this.quad.material = this.nearTileMaterial;
+		this.setUniforms(this.nearTileMaterial, { ...shared, tileSize });
+		this.drawQuad(renderer, this.nearTileTarget);
+
 		this.quad.material = this.blurMaterial;
-		this.setUniforms(this.blurMaterial, { ...shared, colorTexture: this.sceneTarget.texture });
+		this.setUniforms(this.blurMaterial, {
+			...shared,
+			colorTexture: this.sceneTarget.texture,
+			nearTileSize: tileSize,
+			nearTiles: this.nearTileTarget.texture,
+		});
 		this.drawQuad(renderer, this.blurTarget);
 
 		this.quad.material = this.compositeMaterial;
@@ -312,6 +373,8 @@ export class DepthOfFieldPass {
 		this.edgeDepthTarget.depthTexture?.dispose();
 		this.edgeDepthTarget.dispose();
 		this.blurTarget.dispose();
+		this.nearTileTarget.dispose();
+		this.nearTileMaterial.dispose();
 		this.blurMaterial.dispose();
 		this.compositeMaterial.dispose();
 		this.quad.geometry.dispose();
@@ -362,7 +425,8 @@ export class DepthOfFieldPass {
 		}
 	}
 
-	private setSize(width: number, height: number) {
+	private setSize(width: number, height: number, tileSize: number) {
+		this.nearTileTarget.setSize(Math.max(1, Math.ceil(width / tileSize)), Math.max(1, Math.ceil(height / tileSize)));
 		if (this.sceneTarget.width === width && this.sceneTarget.height === height) return;
 		this.sceneTarget.setSize(width, height);
 		this.edgeDepthTarget.setSize(width, height);

@@ -158,15 +158,70 @@ export function circleOfConfusion(distance: number, focusDistance: number, param
 	return radius < parameters.minBlurPixels ? 0 : Math.min(radius, parameters.maxBlurPixels);
 }
 
+export interface BlurTap {
+	/** Distance of the tap's surface from the camera. */
+	readonly surface: number;
+	/** The tap's own blur radius in device pixels. */
+	readonly radius: number;
+	/** Distance of the tap from the centre pixel in device pixels. */
+	readonly distance: number;
+}
+
 /**
- * Radius of the disk a pixel's own blur gathers from, in device pixels. Surfaces behind the focus
- * never blur past the aperture (`|d - f| / d < 1` there), so a pixel needs the full `maxBlurPixels`
- * reach only when its own radius is larger than that. Spreading the fixed taps over a disk no wider
- * than needed keeps a soft background densely sampled when `maxBlur` is set high for the
- * foreground. Mirrors `blurReach` in the depth-of-field blur shader.
+ * Weight of a tap in a pixel's own blur. A tap nearer than the centre counts where its own blur reaches
+ * the centre. A tap behind the centre counts only within the centre's radius, since the centre's
+ * surface hides it beyond that: an empty background must not bleed into a sharp or less blurred node
+ * by its own, larger radius. Mirrors the blur loop in the depth-of-field blur shader.
  */
-export function blurGatherRadius(centreRadius: number, parameters: BlurRadiusParameters): number {
-	return Math.min(parameters.maxBlurPixels, Math.max(centreRadius, parameters.aperturePixels));
+export function blurTapWeight(tap: BlurTap, centreSurface: number, centreRadius: number): number {
+	const reach = tap.surface > centreSurface ? Math.min(tap.radius, centreRadius) : tap.radius;
+	return Math.min(1, Math.max(0, reach - tap.distance + 1));
+}
+
+/** Tiles on each side of a pixel's own tile that its near-field reach scans. */
+export const NEAR_TILE_REACH = 3;
+const MIN_NEAR_TILE_PIXELS = 8;
+
+/** Edge of a near-field tile in device pixels, large enough that `NEAR_TILE_REACH` tiles span `maxBlurPixels`. */
+export function nearTileSize(maxBlurPixels: number): number {
+	return Math.max(MIN_NEAR_TILE_PIXELS, Math.ceil(maxBlurPixels / NEAR_TILE_REACH));
+}
+
+export interface NearTiles {
+	readonly columns: number;
+	readonly rows: number;
+	/** Edge of a tile in device pixels. */
+	readonly size: number;
+	/** Largest blur radius in front of the focus per tile, row by row, 0 where nothing is in front. */
+	readonly radii: ArrayLike<number>;
+}
+
+/**
+ * Radius the near field gathers from at pixel (x, y): the largest foreground blur radius of any tile
+ * whose nearest pixel lies within that radius. A foreground pixel with radius r spreads over a disk of
+ * r, so a gather this wide sees every foreground pixel that covers (x, y), and a pixel with no
+ * foreground in reach gathers nothing. Gathering over the local reach rather than maxBlur keeps the
+ * foreground's taps dense and evenly weighted, which keeps its edges smooth. Mirrors `nearReach` in
+ * the depth-of-field blur shader.
+ */
+export function nearGatherRadius(x: number, y: number, tiles: NearTiles): number {
+	const column = Math.floor(x / tiles.size);
+	const row = Math.floor(y / tiles.size);
+	let reach = 0;
+	for (let dy = -NEAR_TILE_REACH; dy <= NEAR_TILE_REACH; dy++) {
+		for (let dx = -NEAR_TILE_REACH; dx <= NEAR_TILE_REACH; dx++) {
+			const tileColumn = column + dx;
+			const tileRow = row + dy;
+			if (tileColumn < 0 || tileRow < 0 || tileColumn >= tiles.columns || tileRow >= tiles.rows) continue;
+			const radius = tiles.radii[tileRow * tiles.columns + tileColumn] ?? 0;
+			const left = tileColumn * tiles.size;
+			const bottom = tileRow * tiles.size;
+			const gapX = Math.max(left - x, x - (left + tiles.size - 1), 0);
+			const gapY = Math.max(bottom - y, y - (bottom + tiles.size - 1), 0);
+			if (Math.hypot(gapX, gapY) <= radius) reach = Math.max(reach, radius);
+		}
+	}
+	return reach;
 }
 
 export interface FocusPoint {

@@ -23,7 +23,9 @@ updates:
       # vitest and its browser provider must share a major; apart, the browser tests fail to start (#181, #183).
       vitest:
         patterns: ["vitest", "@vitest/*"]
-      minor-and-patch:
+      # Short name: Dependabot titles this group "build: bump the deps group across N directories with M updates",
+      # which has to fit commitlint's 72-character header.
+      deps:
         update-types: [minor, patch]
     # TypeScript 7 (native compiler) hangs `tsc --noEmit` here and `astro check` refuses it (#182, #184).
     # Revisit when astro check supports it.

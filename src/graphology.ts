@@ -1,4 +1,6 @@
-import type Graph from "graphology";
+// Named import from graphology-types: graphology ships one CommonJS-typed .d.ts, so its default
+// export resolves to a namespace under `moduleResolution: "nodenext"` and breaks consumers.
+import type { AbstractGraph } from "graphology-types";
 
 import type { GraphraumColor, GraphraumData, GraphraumNodeShape } from "./types";
 
@@ -22,7 +24,7 @@ export interface GraphologyRenderer<NodeAttributes, EdgeAttributes> {
 function projectGraphology<
 	NodeAttributes extends GraphologyNodeAttributes,
 	EdgeAttributes extends GraphologyEdgeAttributes,
->(graph: Graph<NodeAttributes, EdgeAttributes>): GraphraumData<NodeAttributes, EdgeAttributes> {
+>(graph: AbstractGraph<NodeAttributes, EdgeAttributes>): GraphraumData<NodeAttributes, EdgeAttributes> {
 	const nodes = graph.mapNodes((id, attributes) => ({
 		attributes,
 		color: attributes.color,
@@ -47,7 +49,7 @@ export function bindGraphology<
 	EdgeAttributes extends GraphologyEdgeAttributes,
 >(
 	renderer: GraphologyRenderer<NodeAttributes, EdgeAttributes>,
-	graph: Graph<NodeAttributes, EdgeAttributes>,
+	graph: AbstractGraph<NodeAttributes, EdgeAttributes>,
 ): () => void {
 	renderer.setData(projectGraphology(graph));
 	let flushPending = false;

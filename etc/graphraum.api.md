@@ -4,13 +4,13 @@
 
 ```ts
 
-import Graph from 'graphology';
+import { AbstractGraph } from 'graphology-types';
 
 // @public
 export function attachPointOnOutline(center: GraphraumPosition, far: GraphraumPosition, outline: EndpointOutline, clearance?: number, mode?: GraphraumMode): GraphraumPosition;
 
 // @public
-export function bindGraphology<NodeAttributes extends GraphologyNodeAttributes, EdgeAttributes extends GraphologyEdgeAttributes>(renderer: GraphologyRenderer<NodeAttributes, EdgeAttributes>, graph: Graph<NodeAttributes, EdgeAttributes>): () => void;
+export function bindGraphology<NodeAttributes extends GraphologyNodeAttributes, EdgeAttributes extends GraphologyEdgeAttributes>(renderer: GraphologyRenderer<NodeAttributes, EdgeAttributes>, graph: AbstractGraph<NodeAttributes, EdgeAttributes>): () => void;
 
 // @public (undocumented)
 export function boundOverlayIds(ids: Iterable<string>, max: number, kind: string): string[];
@@ -151,6 +151,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     // (undocumented)
     getNodePresentation(nodeId: string): CompiledGraphraumPresentation | null;
     getNodeScreenPosition(nodeId: string): GraphraumScreenPosition | null;
+    getScene(): ResolvedGraphraumSceneOptions;
     // (undocumented)
     getSelectedNodeIds(): readonly string[];
     onFocusChange(listener: () => void): () => boolean;
@@ -178,6 +179,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     setMode(mode: GraphraumMode): void;
     setNodeDrag(options: GraphraumNodeDragOptions): void;
     setNodeState(state: GraphraumNodeState, nodeIds: Iterable<string>): void;
+    setScene(options: GraphraumSceneOptions): void;
     // (undocumented)
     setSelection(nodeIds: Iterable<string>): void;
     // (undocumented)
@@ -295,6 +297,7 @@ export interface GraphraumDiagnostics {
     depthOfField: GraphraumDepthOfFieldStatus;
     // (undocumented)
     dimmedEdges: number;
+    edgeDepth: GraphraumEdgeDepth;
     // (undocumented)
     gpuDrawCalls: number;
     // (undocumented)
@@ -350,6 +353,9 @@ export type GraphraumEdge<EdgeAttributes = undefined> = {
     source: string;
     target: string;
 } & GraphraumAttributes<EdgeAttributes>;
+
+// @public
+export type GraphraumEdgeDepth = "behind-nodes" | "scene";
 
 // @public (undocumented)
 export interface GraphraumEdgeEncoding {
@@ -545,6 +551,7 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
     maxVisibleNodes?: number;
     // (undocumented)
     mode?: GraphraumMode;
+    scene?: GraphraumSceneOptions;
     theme?: Partial<GraphraumTheme> | GraphraumThemeName;
     // (undocumented)
     viewportCulling?: boolean;
@@ -659,6 +666,11 @@ export interface GraphraumPresentationProperty {
 
 // @public (undocumented)
 export type GraphraumPropertyValue = boolean | null | number | string;
+
+// @public
+export interface GraphraumSceneOptions {
+    edgeDepth?: GraphraumEdgeDepth;
+}
 
 // @public (undocumented)
 export interface GraphraumScreenPosition {
@@ -827,6 +839,12 @@ export function orderFocusNodeIds(input: {
     hoveredIds: readonly string[];
     neighborIds: readonly string[];
 }): string[];
+
+// @public
+export interface ResolvedGraphraumSceneOptions {
+    // (undocumented)
+    readonly edgeDepth: GraphraumEdgeDepth;
+}
 
 // @public (undocumented)
 export function resolveGraphraumTheme(input?: Partial<GraphraumTheme> | GraphraumThemeName, base?: GraphraumTheme): GraphraumTheme;

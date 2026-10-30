@@ -13,7 +13,7 @@ import { GLOW_RENDER_ORDER } from "./node-glow-rendering";
 import { NODE_RENDER_ORDER } from "./node-rendering";
 import { createGraph, destroyGraphs, edgeBuffers, internals } from "./test-support/edge-harness";
 import { installFakeBrowserGlobals } from "./test-support/fake-webgl";
-import type { GraphraumMode } from "./types";
+import type { GraphraumMode, GraphraumOptions } from "./types";
 
 beforeAll(() => installFakeBrowserGlobals((name, value) => vi.stubGlobal(name, value)));
 afterEach(() => destroyGraphs());
@@ -30,8 +30,8 @@ function meshes(graph: Graphraum) {
 	return { edges: shaderMesh(internals(graph).edgeMesh), nodes: shaderMesh(graphInternals.nodeMesh) };
 }
 
-function hub(mode: GraphraumMode) {
-	const graph = createGraph({ mode });
+function hub(mode: GraphraumMode, options: GraphraumOptions = {}) {
+	const graph = createGraph({ ...options, mode });
 	graph.setData({
 		edges: [{ id: "e", source: "a", target: "b" }],
 		nodes: [
@@ -67,6 +67,53 @@ describe("edge and node draw order", () => {
 		const graph = hub(from);
 		graph.setMode(to);
 		expectEdgesUnderNodes(graph, to);
+	});
+});
+
+function expectSharedDepth(graph: Graphraum) {
+	const { edges, nodes } = meshes(graph);
+	// Nodes write sphere depth first; edges then test against it without writing.
+	expect(edges.renderOrder).toBeGreaterThan(nodes.renderOrder);
+	expect(edges.material).toMatchObject({ depthTest: true, depthWrite: false, transparent: true });
+	expect(nodes.material).toMatchObject({ depthTest: true, depthWrite: true });
+	expect(nodes.material.defines).toHaveProperty("GRAPHRAUM_SPHERE_IMPOSTOR");
+}
+
+describe("edges that share depth with nodes", () => {
+	test("tests edges against sphere impostors in 3D", () => {
+		const graph = hub("3d", { scene: { edgeDepth: "scene" } });
+		expectSharedDepth(graph);
+		expect(graph.getScene()).toEqual({ edgeDepth: "scene" });
+		expect(graph.getDiagnostics().edgeDepth).toBe("scene");
+	});
+
+	test("falls back to today's layering in 2D and restores scene depth in 3D", () => {
+		const graph = hub("3d", { scene: { edgeDepth: "scene" } });
+		graph.setMode("2d");
+		expectEdgesUnderNodes(graph, "2d");
+		expect(meshes(graph).nodes.material.defines).not.toHaveProperty("GRAPHRAUM_SPHERE_IMPOSTOR");
+		expect(graph.getDiagnostics().edgeDepth).toBe("behind-nodes");
+		graph.setMode("3d");
+		expectSharedDepth(graph);
+	});
+
+	test("switches at runtime with setScene and keeps the option across setData", () => {
+		const graph = hub("3d");
+		expectEdgesUnderNodes(graph, "3d");
+		graph.setScene({ edgeDepth: "scene" });
+		expectSharedDepth(graph);
+		graph.setData({ edges: [], nodes: [{ id: "a", position: { x: 0, y: 0, z: 0 } }] });
+		expectSharedDepth(graph);
+		graph.setScene({ edgeDepth: "behind-nodes" });
+		expectEdgesUnderNodes(graph, "3d");
+	});
+
+	test("rejects invalid scene options before changing anything", () => {
+		const graph = hub("3d");
+		expect(() => graph.setScene({ edgeDepth: "x" } as unknown as GraphraumOptions["scene"] & object)).toThrow(
+			/scene\.edgeDepth/,
+		);
+		expect(graph.getScene()).toEqual({ edgeDepth: "behind-nodes" });
 	});
 });
 

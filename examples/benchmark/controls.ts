@@ -61,6 +61,10 @@ export function renderControls(form: HTMLFormElement) {
 				{ label: "2D", value: "2d" },
 				{ label: "3D", value: "3d" },
 			]),
+			SelectField("Edge depth (3D)", "edgeDepth", "behind-nodes", [
+				{ label: "Behind nodes", value: "behind-nodes" },
+				{ label: "Scene", value: "scene" },
+			]),
 			Checkbox("Antialias", "antialias"),
 			NumberField("Pixel ratio", "maxPixelRatio", 1, 0.5, 4, 0.5),
 		),

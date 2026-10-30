@@ -9,17 +9,17 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@astrojs/check": "^0.9.9",
-		"@astrojs/starlight": "^0.39.2",
+		"@astrojs/check": "^0.9.12",
+		"@astrojs/starlight": "^0.42.7",
 		"@fontsource-variable/lexend": "^5.3.0",
 		"astro": "^6.3.7",
 		"mermaid": "^11.15.0",
-		"three": "^0.185.1",
+		"three": "^0.186.1",
 		"unist-util-visit": "^5.1.0"
 	},
 	"devDependencies": {
 		"@types/mdast": "^4.0.4",
-		"@types/three": "^0.185.1",
+		"@types/three": "^0.186.0",
 		"typescript": "^6.0.3",
 		"vitest": "^5.0.5"
 	}

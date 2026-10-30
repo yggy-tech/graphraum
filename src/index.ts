@@ -55,6 +55,7 @@ export type {
 	GraphraumDiagnostics,
 	GraphraumEasing,
 	GraphraumEdge,
+	GraphraumEdgeDepth,
 	GraphraumEdgeEncoding,
 	GraphraumEdgeMarker,
 	GraphraumEdgeMarkerEnd,
@@ -86,10 +87,12 @@ export type {
 	GraphraumPresentationAction,
 	GraphraumPresentationProperty,
 	GraphraumPropertyValue,
+	GraphraumSceneOptions,
 	GraphraumScreenPosition,
 	GraphraumSetDataOptions,
 	GraphraumTheme,
 	GraphraumThemeName,
 	GraphraumVisualMapper,
+	ResolvedGraphraumSceneOptions,
 } from "./types";
 export { defineVisuals } from "./visuals";

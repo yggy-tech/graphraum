@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import remarkMermaid from "./src/plugins/remark-mermaid.ts";
@@ -51,8 +52,9 @@ export default defineConfig({
 			],
 		}),
 	],
-	// GFM (tables, strikethrough, autolinks) is not on by default in this Astro/Starlight setup.
-	markdown: { gfm: true, remarkPlugins: [remarkMermaid] },
+	// Astro 7's default Markdown processor cannot run remark plugins, so the Mermaid plugin needs the
+	// remark-based one. GFM stays explicit: tables, strikethrough and autolinks are used across the docs.
+	markdown: { processor: unified({ gfm: true, remarkPlugins: [remarkMermaid] }) },
 	vite: {
 		resolve: {
 			alias: {

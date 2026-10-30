@@ -2,6 +2,26 @@ export type GraphraumColor = number | string;
 
 export type GraphraumMode = "2d" | "3d";
 
+/**
+ * How edges and nodes share depth in 3D.
+ * - `behind-nodes` (default): edges draw under every node, wherever they run.
+ * - `scene`: circle nodes render as sphere impostors that write their surface depth, and edges and
+ *   arrowheads depth-test against them, so an edge passes in front of or behind a node by its real
+ *   position. No extra draw calls. A no-op in 2D.
+ */
+export type GraphraumEdgeDepth = "behind-nodes" | "scene";
+
+/** Scene options for `Graphraum.setScene`. Every field is optional; omitted fields keep their value. */
+export interface GraphraumSceneOptions {
+	/** Default `"behind-nodes"`. */
+	edgeDepth?: GraphraumEdgeDepth;
+}
+
+/** The scene options in effect, as returned by `Graphraum.getScene`. */
+export interface ResolvedGraphraumSceneOptions {
+	readonly edgeDepth: GraphraumEdgeDepth;
+}
+
 export type GraphraumNodeState = "dimmed" | "focused" | "hovered" | "selected";
 
 /** Application-owned edge state applied with `setEdgeState`. Edge selection uses `setEdgeSelection`. */
@@ -370,6 +390,8 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
 	antialias?: boolean;
 	/** Opt-in 3D depth of field; off by default. Change it later with `setDepthOfField`. */
 	depthOfField?: GraphraumDepthOfFieldOptions;
+	/** Scene options; see `Graphraum.setScene`. */
+	scene?: GraphraumSceneOptions;
 	maxVisibleEdges?: number;
 	maxVisibleNodes?: number;
 	maxPixelRatio?: number;
@@ -407,6 +429,8 @@ export interface GraphraumDiagnostics {
 	autoOrbit: GraphraumAutoOrbitStatus;
 	cpuFrameMilliseconds: number;
 	depthOfField: GraphraumDepthOfFieldStatus;
+	/** Edge depth in effect for the last frame: `scene` only in 3D with `scene.edgeDepth: "scene"`. */
+	edgeDepth: GraphraumEdgeDepth;
 	gpuFrameMilliseconds: number | null;
 	gpuDrawCalls: number;
 	gpuGeometries: number;

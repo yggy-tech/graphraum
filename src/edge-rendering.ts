@@ -169,6 +169,12 @@ export function createEdgeGeometry(capacity: number): BufferGeometry {
  */
 export const EDGE_RENDER_ORDER = -1;
 
+/**
+ * With `scene.edgeDepth: "scene"` in 3D, edges draw after the node impostors and depth-test against
+ * the sphere depth they wrote (still without writing depth), so nodes only cover edges behind them.
+ */
+export const EDGE_SCENE_RENDER_ORDER = 2;
+
 export function createEdgeMaterial(): ShaderMaterial {
 	return new ShaderMaterial({
 		depthTest: false,

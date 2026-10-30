@@ -13,6 +13,7 @@ import {
 	Raycaster,
 	RepeatWrapping,
 	Scene,
+	ShaderMaterial,
 	SphereGeometry,
 	SRGBColorSpace,
 	Texture,
@@ -79,6 +80,7 @@ import { glowBlendModeFor, glowHaloRadius } from "./node-glow";
 import { type GlowNodeTarget, NodeGlowLayer } from "./node-glow-rendering";
 import {
 	allocateNodeInstanceColors,
+	configureNodeMaterial,
 	createNodeGeometry,
 	createNodeMaterial,
 	NODE_RENDER_ORDER,
@@ -90,6 +92,7 @@ import { resolveNodeStroke } from "./node-stroke";
 import { type PreparedNodeUpdate, prepareNodeUpdates } from "./node-updates";
 import { configureControlsForMode } from "./orbit-controls-mode";
 import { GraphraumOverlay } from "./overlay";
+import { resolveSceneDrawSetup, resolveSceneOptions, SCENE_DEFAULTS } from "./scene";
 import { type Bounds2D, SpatialGrid2D } from "./spatial-grid-2d";
 import { normalizeGraphraumBackground, resolveGraphraumTheme } from "./theme";
 import type {
@@ -118,11 +121,13 @@ import type {
 	GraphraumOverlayOptions,
 	GraphraumPickHit,
 	GraphraumPosition,
+	GraphraumSceneOptions,
 	GraphraumScreenPosition,
 	GraphraumSetDataOptions,
 	GraphraumTheme,
 	GraphraumThemeName,
 	GraphraumVisualMapper,
+	ResolvedGraphraumSceneOptions,
 } from "./types";
 import { applyEdgeBudget, collectIncidentEdges, resolveLodLevel, shouldUseDensityLod } from "./viewport-lod";
 
@@ -282,6 +287,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private lastHoveredNodeId: string | null = null;
 	private readonly antialias: boolean;
 	private depthOfField: ResolvedDepthOfFieldOptions = DEPTH_OF_FIELD_DEFAULTS;
+	private scene3d: ResolvedGraphraumSceneOptions = SCENE_DEFAULTS;
 	private readonly depthOfFieldFocus = new DepthOfFieldFocus();
 	/** Strength actually applied: fades toward `strength` while enabled and toward 0 when disabled. */
 	private readonly depthOfFieldStrength = new Tween(0);
@@ -308,6 +314,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			throw new Error("Viewport overscan must be a non-negative finite number.");
 		}
 		this.theme = resolveGraphraumTheme(options.theme);
+		if (options.scene !== undefined) this.scene3d = resolveSceneOptions(options.scene);
 		if (options.depthOfField !== undefined) {
 			this.depthOfField = resolveDepthOfFieldOptions(options.depthOfField);
 			void this.depthOfFieldStrength.retarget(this.depthOfFieldTargetStrength(), 0, resolveEasing("linear"));
@@ -651,6 +658,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		edgeMesh.renderOrder = EDGE_RENDER_ORDER;
 		this.edgeMesh = edgeMesh;
 		this.scene.add(edgeMesh);
+		this.applySceneDrawSetup();
 
 		if (fitView) this.fitView();
 		else {
@@ -960,12 +968,34 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.controls.dispose();
 		this.camera = this.createCamera();
 		this.controls = this.createControls();
-		if (this.nodeMesh && !Array.isArray(this.nodeMesh.material)) {
-			this.nodeMesh.material.depthTest = mode === "3d";
-			this.nodeMesh.material.depthWrite = mode === "3d";
-			this.nodeMesh.material.needsUpdate = true;
-		}
+		this.applySceneDrawSetup();
 		this.fitView();
+	}
+
+	/**
+	 * Updates the 3D scene. Omitted fields keep their value, so `setScene({ edgeDepth: "scene" })`
+	 * changes only the edge depth. Invalid options throw before anything changes.
+	 */
+	setScene(options: GraphraumSceneOptions) {
+		this.scene3d = resolveSceneOptions(options, this.scene3d);
+		this.applySceneDrawSetup();
+		this.requestRender();
+	}
+
+	/** The scene options in effect, including defaults. */
+	getScene(): ResolvedGraphraumSceneOptions {
+		return this.scene3d;
+	}
+
+	private applySceneDrawSetup() {
+		const setup = resolveSceneDrawSetup(this.mode, this.scene3d);
+		if (this.nodeMesh && this.nodeMesh.material instanceof ShaderMaterial) {
+			configureNodeMaterial(this.nodeMesh.material, setup.nodeDepth, setup.sphereImpostors);
+		}
+		if (this.edgeMesh && this.edgeMesh.material instanceof ShaderMaterial) {
+			this.edgeMesh.material.depthTest = setup.edgeDepthTest;
+			this.edgeMesh.renderOrder = setup.edgeRenderOrder;
+		}
 	}
 
 	getMode() {
@@ -1182,6 +1212,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			autoOrbit: this.autoOrbit?.status ?? "off",
 			cpuFrameMilliseconds: this.cpuFrameMilliseconds,
 			depthOfField: this.depthOfFieldStatus,
+			edgeDepth: resolveSceneDrawSetup(this.mode, this.scene3d).sphereImpostors ? "scene" : "behind-nodes",
 			gpuFrameMilliseconds: this.gpuFrameMilliseconds,
 			gpuDrawCalls: this.renderer.info.render.calls,
 			gpuGeometries: this.renderer.info.memory.geometries,

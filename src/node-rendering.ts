@@ -16,6 +16,10 @@ varying vec2 nodePoint;
 varying float nodeShape;
 varying float nodeStrokeWidth;
 varying vec3 nodeStrokeColor;
+#ifdef GRAPHRAUM_SPHERE_IMPOSTOR
+varying vec3 nodeViewCenter;
+varying float nodeRadius;
+#endif
 
 void main() {
 	nodeColor = instanceColor;
@@ -27,12 +31,21 @@ void main() {
 	vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
 	float scaleX = length(instanceMatrix[0].xyz);
 	float scaleY = length(instanceMatrix[1].xyz);
+#ifdef GRAPHRAUM_SPHERE_IMPOSTOR
+	nodeViewCenter = center.xyz;
+	nodeRadius = max(scaleX, scaleY);
+#endif
 	center.xy += position.xy * vec2(scaleX, scaleY);
 	gl_Position = projectionMatrix * center;
 }
 `;
 
 const fragmentShader = `
+#ifdef GRAPHRAUM_SPHERE_IMPOSTOR
+uniform mat4 projectionMatrix;
+varying vec3 nodeViewCenter;
+varying float nodeRadius;
+#endif
 varying vec3 nodeColor;
 varying vec2 nodePoint;
 varying float nodeShape;
@@ -110,6 +123,14 @@ void main() {
 	float outerAlpha = smoothstep(0.0, fwidth(distanceToEdge), distanceToEdge);
 	if (outerAlpha <= 0.0) discard;
 
+#ifdef GRAPHRAUM_SPHERE_IMPOSTOR
+	// Circles bulge towards the camera like a sphere; other shapes keep their billboard plane.
+	// Clip depth depends only on view z for perspective and orthographic projections.
+	float bulge = nodeShape < 0.5 ? sqrt(max(0.0, 1.0 - dot(nodePoint, nodePoint))) : 0.0;
+	vec4 surface = projectionMatrix * vec4(0.0, 0.0, nodeViewCenter.z + bulge * nodeRadius, 1.0);
+	gl_FragDepth = clamp(surface.z / surface.w * 0.5 + 0.5, 0.0, 1.0);
+#endif
+
 	vec3 fillColor = nodeColor;
 	if (nodeStrokeWidth > 0.0) {
 		// Stroke band occupies [outer edge, outer edge - nodeStrokeWidth]; below that, the fill takes over.
@@ -146,6 +167,21 @@ export function createNodeMaterial(depthTest: boolean) {
 		transparent: true,
 		vertexShader,
 	});
+}
+
+/** Shader define that turns circle billboards into depth-writing sphere impostors. */
+export const SPHERE_IMPOSTOR_DEFINE = "GRAPHRAUM_SPHERE_IMPOSTOR";
+
+/** Applies depth and the sphere impostor define; recompiles only when the define changes. */
+export function configureNodeMaterial(material: ShaderMaterial, depth: boolean, sphereImpostors: boolean) {
+	material.depthTest = depth;
+	material.depthWrite = depth;
+	const defines = material.defines ?? {};
+	if (Object.hasOwn(defines, SPHERE_IMPOSTOR_DEFINE) === sphereImpostors) return;
+	if (sphereImpostors) defines[SPHERE_IMPOSTOR_DEFINE] = "";
+	else delete defines[SPHERE_IMPOSTOR_DEFINE];
+	material.defines = defines;
+	material.needsUpdate = true;
 }
 
 export function setNodeShapeAt(

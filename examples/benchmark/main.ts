@@ -2,6 +2,7 @@ import type { ForceSettings } from "../../src";
 import {
 	defineVisuals,
 	Graphraum,
+	type GraphraumEdgeDepth,
 	type GraphraumEdgeMarker,
 	type GraphraumEdgeMarkerEnd,
 	type GraphraumEdgePath,
@@ -44,6 +45,7 @@ interface LabState extends FixtureOptions {
 	maxVisibleEdges: number;
 	maxVisibleNodes: number;
 	mode: GraphraumMode;
+	edgeDepth: GraphraumEdgeDepth;
 	scaleMode: ScaleMode;
 }
 
@@ -123,6 +125,7 @@ function readState(): LabState {
 		maxVisibleEdges: 100_000,
 		maxVisibleNodes: scaleMode === "million-density" ? 50_000 : scaleMode === "million-literal" ? 1_000_000 : 100_000,
 		mode: formValue(values, "mode") as GraphraumMode,
+		edgeDepth: formValue(values, "edgeDepth") as GraphraumEdgeDepth,
 		nodeAspect: formNumber(values, "nodeAspect"),
 		nodeColors: {
 			concept: formValue(values, "conceptColor"),
@@ -282,6 +285,7 @@ function graphOptions(): GraphraumOptions<NodeAttributes, EdgeAttributes> {
 		maxVisibleEdges: state.maxVisibleEdges,
 		maxVisibleNodes: state.maxVisibleNodes,
 		mode: state.mode,
+		scene: { edgeDepth: state.edgeDepth },
 		visuals,
 	};
 }

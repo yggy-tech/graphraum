@@ -19,6 +19,7 @@ Use Bun for repository work.
 bun install
 bun run check
 bun run test
+bun run test:browser
 bun run build
 bun run docs:check
 bun run docs:test
@@ -53,7 +54,7 @@ Prefer simple data flow, explicit arguments, immutable public inputs, early guar
 
 - Bug fixes require a regression test that fails for the observed cause before the fix.
 - Pure helpers and graph compilation logic require focused unit tests.
-- Renderer changes require tests for deterministic logic plus a proportionate browser or benchmark check.
+- Renderer changes require tests for deterministic logic plus a proportionate browser or benchmark check. Shader, draw-order and draw-call changes get a `*.browser.test.ts` that runs in real WebGL2 (`bun run test:browser`, headless Chromium with SwiftShader); assert pixels and diagnostics there, never image snapshots.
 - Visual styling is verified manually at desktop and mobile widths; do not add snapshot tests.
 - Keep generated output and unrelated working-tree changes out of commits.
 

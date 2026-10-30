@@ -21,6 +21,6 @@
 		"@types/mdast": "^4.0.4",
 		"@types/three": "^0.185.1",
 		"typescript": "^6.0.3",
-		"vitest": "^4.1.10"
+		"vitest": "^5.0.5"
 	}
 }

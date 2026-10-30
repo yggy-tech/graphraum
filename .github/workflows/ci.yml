@@ -71,3 +71,13 @@ jobs:
       - run: bun run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pages:
+    name: Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

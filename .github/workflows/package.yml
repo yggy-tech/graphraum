@@ -1,0 +1,42 @@
+name: Package
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package, API and consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Lint the package, check types resolve, check bundle size
+        run: bun run check:package
+      - name: Public API report is up to date
+        run: |
+          if ! bun run api:check; then
+            echo "::error::The public API changed. Run 'bun run build && bun run api:update' and commit etc/graphraum.api.md. A removed or changed export is a breaking change: mark the PR title with '!'."
+            exit 1
+          fi
+      - name: Install the tarball like a user and type-check a consumer
+        run: ./scripts/consumer-smoke.sh

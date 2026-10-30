@@ -1,76 +1,132 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/src/assets/logo-dark.svg">
-    <img src="./docs/src/assets/logo-light.svg" alt="graphraum" width="128" height="128">
+    <img src="./docs/src/assets/logo-light.svg" alt="graphraum" width="96" height="96">
   </picture>
-  <br>
-  <strong>graphraum</strong>
-  <br>
-  <sub>Nodes. Edges. Space.</sub>
 </p>
 
-# graphraum
+<h1 align="center">graphraum</h1>
 
-yggy's WebGL engine for interactive node-edge graphs in 2D and 3D.
+<p align="center">
+  <strong>Nodes. Edges. Space.</strong><br>
+  A WebGL engine for interactive graphs in 2D and 3D, from ten nodes to a hundred thousand.
+</p>
 
-graphraum renders graphs, accepts positions from any layout engine, and keeps the hot path outside a component framework. Nodes use one instanced mesh, edges use one batched geometry, and rendering happens on demand.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@yggy-tech/graphraum"><img alt="npm" src="https://img.shields.io/npm/v/@yggy-tech/graphraum?color=8b7bff&label=npm"></a>
+  <a href="https://github.com/yggy-tech/graphraum/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/yggy-tech/graphraum/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-3fd0b8"></a>
+  <a href="https://yggy-tech.github.io/graphraum/"><img alt="Docs" src="https://img.shields.io/badge/docs-graphraum-ffb347"></a>
+</p>
 
-> Pre-1.0 development. The API will continue to evolve while the rendering and visual contracts are proven.
+<p align="center">
+  <a href="https://yggy-tech.github.io/graphraum/playground/"><b>Playground</b></a> ·
+  <a href="https://yggy-tech.github.io/graphraum/">Documentation</a> ·
+  <a href="https://yggy-tech.github.io/graphraum/reference/api/">API reference</a> ·
+  <a href="./changelogs/">Changelog</a>
+</p>
 
-## Principles
+<p align="center">
+  <img src="./docs/public/readme/hero.png" alt="Eight clusters of a 2,000-node graph floating in 3D, coloured by cluster, with glowing hubs">
+</p>
 
-- Graph-native data: nodes, edges, stable identities, positions, and selection.
-- Native 2D first, with 3D available over the same graph state.
-- One node draw call and one edge draw call for the baseline scene.
-- Layout is an input, not hidden renderer work.
-- Framework adapters belong outside the rendering core.
+graphraum draws graphs fast and stays out of your way. You bring the data and, if you like, the layout; graphraum renders it with one draw call for all nodes and one for all edges, picks what the pointer touches, and only renders when something changed. It has no framework inside, so it fits React, Svelte, Vue or plain TypeScript the same way.
 
-## Development
+> **Pre-1.0.** The API still moves while the rendering contracts are proven. Breaking changes are called out in the [changelog](./changelogs/).
+
+## Quick start
+
+```sh
+npm install @yggy-tech/graphraum
+```
+
+```ts
+import { computeForcePositions, Graphraum } from "@yggy-tech/graphraum";
+
+const graph = new Graphraum(document.querySelector<HTMLElement>("#graph")!, { mode: "3d" });
+
+graph.setData({
+  nodes: [
+    { id: "ada", position: { x: 0, y: 0, z: 0 }, color: "#8b7bff", size: 8 },
+    { id: "engine", position: { x: 40, y: 10, z: -20 }, color: "#3fd0b8", shape: "hexagon" },
+    { id: "notes", position: { x: -30, y: 25, z: 15 }, color: "#ffb347", shape: "square" },
+  ],
+  edges: [
+    { id: "wrote", source: "ada", target: "notes", marker: "triangle" },
+    { id: "about", source: "notes", target: "engine", path: "quadratic" },
+  ],
+});
+
+// Click to select; the selection colours the node and its edges.
+graph.onFocusChange(() => console.log(graph.getSelectedNodeIds()));
+document.querySelector<HTMLElement>("#graph")!.addEventListener("click", (event) => {
+  const id = graph.pick(event.clientX, event.clientY);
+  graph.setSelection(id ? [id] : []);
+});
+```
+
+No positions yet? Run the built-in force layout and hand the result over:
+
+```ts
+const positions = computeForcePositions({ dimensions: 3, nodeCount: 3, edges: new Uint32Array([0, 2, 2, 1]) });
+graph.applyLayout({ nodeIds: ["ada", "engine", "notes"], positions });
+```
+
+## What it looks like
+
+<table>
+  <tr>
+    <td width="50%"><img src="./docs/public/readme/scale.png" alt="A spiral galaxy of 100,000 nodes in five coloured arms"></td>
+    <td width="50%"><img src="./docs/public/readme/focus.png" alt="A 3D graph with the selected cluster sharp and the rest blurred by depth of field"></td>
+  </tr>
+  <tr>
+    <td><b>100,000 nodes, 100,000 edges.</b> Instanced nodes and batched edges keep large graphs interactive in a browser tab. Layout is an input: this galaxy is twenty lines of your own code.</td>
+    <td><b>Depth of field.</b> In 3D the selection stays sharp and the rest of the graph blurs with its distance, in front and behind, like a camera lens. Off by default, free while off.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./docs/public/readme/labels.png" alt="A 2D knowledge graph with labelled nodes in seven shapes, curved edges and arrowheads"></td>
+    <td width="50%"><img src="./docs/public/readme/flat.png" alt="The same clustered graph in 2D, coloured by cluster"></td>
+  </tr>
+  <tr>
+    <td><b>Shapes, arrows, curves, labels.</b> Seven node shapes with strokes, solid, dashed and dotted edges, straight or curved, with arrowheads. Labels and cards are your own HTML on a bounded overlay.</td>
+    <td><b>2D and 3D on one graph.</b> Switch with <code>setMode()</code> and keep the data, selection and styles. Orbit, auto-orbit, fly-to, glowing hubs and saved camera views come with it.</td>
+  </tr>
+</table>
+
+## Features
+
+- **Fast by construction.** One node draw, one edge draw, on-demand rendering, viewport culling and a density level of detail for million-node scenes. `getDiagnostics()` reports draw calls, frame time and what is visible.
+- **Interaction built in.** Picking for nodes and edges, hover, selection, focus and dimming states, node dragging, `fitView()`, `flyTo()`, saved camera views.
+- **Your layout or ours.** Pass any positions, stream them with `applyLayout()`, or use the force layout helpers with clusters and per-edge springs.
+- **Typed visual mapping.** Map your own node and edge attributes to colour, size, shape, stroke, glow, dash, markers and curves with `defineVisuals()`.
+- **HTML where it matters.** Labels, a toolbar and rich cards for a small focused set, budgeted so the dense graph stays on the GPU.
+- **Themes.** Light and dark presets, partial overrides, solid, transparent or patterned backgrounds.
+- **graphology ready.** `bindGraphology()` keeps a graphology graph and the renderer in sync.
+
+## Why graphraum
+
+- **Graph-native.** Nodes, edges, stable ids, positions and selection are the API, not meshes and materials.
+- **2D first, 3D on the same state.** One graph, two cameras.
+- **Layout is an input.** The renderer never runs hidden simulations.
+- **No framework in the core.** Adapters live outside, so the hot path stays plain TypeScript.
+
+## Contributing
 
 Requires [Bun](https://bun.sh/).
 
 ```sh
 bun install
-bun run dev
-```
-
-The local graph laboratory exposes every renderer option, theme and visual mapping control, presentation
-metadata, diagnostics, and fixture tiers from 100 to 100,000 nodes.
-
-```sh
+bun run dev            # graph laboratory: every option, 100 to 100,000 nodes
+bun run dev:showcase   # the scenes behind the images above (?scene=hero|focus|labels|scale)
+bun run check          # Biome + TypeScript
 bun run test
-bun run check
 bun run build
 ```
 
-Repository decisions and agent instructions live in [`AGENTS.md`](./AGENTS.md). Changes use [Conventional Commits](https://www.conventionalcommits.org/) and require a matching PR title because squash merges become release commits.
+Read [`AGENTS.md`](./AGENTS.md) for the engineering rules. Work starts from a [GitHub issue](https://github.com/yggy-tech/graphraum/issues); commits and PR titles follow [Conventional Commits](https://www.conventionalcommits.org/), because squash merges become release commits. semantic-release publishes to npm after CI passes on `main`.
 
-## Install
-
-```sh
-npm install @yggy-tech/graphraum
-yarn add @yggy-tech/graphraum
-pnpm add @yggy-tech/graphraum
-bun add @yggy-tech/graphraum
-```
-
-Use the line for your package manager.
-
-Publishing is automated with semantic-release after CI succeeds on `main`. Commit types determine the next version, semantic-release creates the `v<version>` tag and GitHub Release, and the package is published to npm. Do not manually edit the package version or create routine release tags.
-
-## Documentation
-
-The [documentation](https://yggy-tech.github.io/graphraum/), [API reference](https://yggy-tech.github.io/graphraum/reference/api/), and the live [playground](https://yggy-tech.github.io/graphraum/playground/) with the Prove benchmark are published on GitHub Pages. Run them locally with:
-
-```sh
-bun install --cwd docs
-bun run docs:dev
-```
-
-## Status
-
-The initial engine includes batched edges, instanced nodes, explicit render scheduling, 2D and 3D cameras, selection colors, picking, fitting, resize handling, and resource disposal. Smooth 2D–3D camera transitions, semantic label LOD, incremental buffer updates, and accessibility adapters remain ahead.
+The documentation site runs locally with `bun install --cwd docs && bun run docs:dev`.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](./LICENSE)

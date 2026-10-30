@@ -10,3 +10,4 @@ test-results/
 .superpowers/
 __screenshots__/
 .vitest-attachments/
+.api-extractor/

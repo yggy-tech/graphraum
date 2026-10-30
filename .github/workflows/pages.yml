@@ -26,7 +26,7 @@ jobs:
         with:
           bun-version: 1.3.1
       - name: Restore release docs cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/release-docs
           # Release builds are immutable per tag; a new tag only adds a directory.

@@ -46,7 +46,7 @@
 	"dependencies": {
 		"graphology": "^0.26.0",
 		"graphology-types": "^0.24.8",
-		"three": "^0.185.1"
+		"three": "^0.186.1"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
@@ -54,12 +54,12 @@
 		"@commitlint/cli": "^21.2.1",
 		"@commitlint/config-conventional": "^21.2.0",
 		"@microsoft/api-extractor": "7.60.0",
-		"@types/three": "^0.185.1",
+		"@types/three": "^0.186.0",
 		"@vitest/browser-playwright": "5.0.5",
 		"playwright": "1.64.1",
 		"publint": "0.3.25",
 		"semantic-release": "^25.0.8",
-		"tsdown": "^0.22.13",
+		"tsdown": "^0.23.2",
 		"typescript": "^6.0.3",
 		"vite": "^8.1.5",
 		"vitest": "^5.0.5"

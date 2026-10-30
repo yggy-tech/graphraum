@@ -23,8 +23,11 @@
 		}
 	},
 	"scripts": {
+		"api:check": "api-extractor run",
+		"api:update": "api-extractor run --local",
 		"build": "tsdown",
 		"check": "biome check . && tsc --noEmit",
+		"check:package": "publint && attw --pack . --profile esm-only && bun scripts/check-bundle-size.ts",
 		"dev": "vite examples/benchmark",
 		"dev:showcase": "vite examples/showcase",
 		"docs:build": "bun run --cwd docs build",
@@ -46,12 +49,15 @@
 		"three": "^0.185.1"
 	},
 	"devDependencies": {
+		"@arethetypeswrong/cli": "0.18.5",
 		"@biomejs/biome": "^2.5.5",
 		"@commitlint/cli": "^21.2.1",
 		"@commitlint/config-conventional": "^21.2.0",
+		"@microsoft/api-extractor": "7.60.0",
 		"@types/three": "^0.185.1",
 		"@vitest/browser-playwright": "4.1.10",
 		"playwright": "1.64.1",
+		"publint": "0.3.25",
 		"semantic-release": "^25.0.8",
 		"tsdown": "^0.22.13",
 		"typescript": "^6.0.3",

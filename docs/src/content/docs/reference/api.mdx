@@ -197,6 +197,7 @@ Missing coordinates default to zero so layout does not block the first render. M
   <div><code>setNodeDrag({'{ enabled }'})</code><p>Turns node dragging on or off (off by default). A drag moves one node and its edges follow; the camera controls are paused for it. Throws unless <code>enabled</code> is a boolean. See <a href="../../guide/camera-and-3d/#drag-nodes">Drag nodes</a>.</p></div>
   <div><code>onNodeDrag(listener)</code><p>Subscribes to drag steps: <code>{'{ phase, nodeId, position }'}</code> with <code>phase</code> <code>"start"</code>, <code>"move"</code>, <code>"end"</code> or <code>"cancel"</code>. Returns an unsubscribe function.</p></div>
   <div><code>setDepthOfField(options, update?)</code><p>Turns 3D depth of field on or off and changes its lens and transition. Omitted fields keep their values. Fades to the new strength and resolves <code>true</code> when it arrives or <code>false</code> when interrupted; <code>{'{ animate: false }'}</code> jumps. Off by default; a no-op in 2D. See <a href="../../guide/camera-and-3d/#depth-of-field">Depth of field</a>.</p></div>
+  <div><code>setScene(options)</code><p>Changes the 3D scene: <code>edgeDepth</code>, <code>shading</code> (<code>"flat"</code>, <code>"lit"</code>, <code>"toon"</code>), <code>sun</code> and <code>ambient</code>. Omitted fields keep their values; <code>graphraumScenes.lit</code> sets a whole look. A no-op in 2D and no extra draw calls. <code>getScene()</code> returns the options in effect. See <a href="../../guide/camera-and-3d/#lit-and-toon-shading">Lit and toon shading</a>.</p></div>
   <div><code>setTheme(theme)</code><p>Applies a named preset (<code>"dark"</code> / <code>"light"</code>) or merges a partial palette, then rematerializes colors.</p></div>
   <div><code>setBackground(background)</code><p>Sets a solid color, <code>"transparent"</code> / <code>null</code> for host CSS, or a <code>{'{ type: "pattern", source }'}</code> texture.</p></div>
   <div><code>fitView(options?)</code><p>Fits the active camera to the complete graph and rematerializes the viewport. Pass <code>{'{ nodeIds }'}</code> to frame only those nodes, for example a highlighted path; unknown IDs are ignored, and when none match (or the list is empty) it frames every node. In 2D it frames every node and resets any wheel zoom. In 3D it returns to the front view and moves as close as it can while every node, including its glow halo, stays on the canvas, leaving a small margin on the tighter canvas axis for labels beside edge nodes.</p></div>
@@ -234,6 +235,32 @@ setDepthOfField(options: GraphraumDepthOfFieldOptions, update?: { animate?: bool
 ```
 
 Pass it as `depthOfField` to the constructor or to `setDepthOfField`. Invalid values throw. See [Camera and 3D](../../guide/camera-and-3d/#depth-of-field).
+
+### Scene
+
+```ts
+interface GraphraumSceneOptions {
+  edgeDepth?: "behind-nodes" | "scene"; // default: "behind-nodes"; "scene" lets edges pass in front of nodes in 3D
+  shading?: "flat" | "lit" | "toon";    // default: "flat"; 3D only
+  sun?: {
+    azimuth?: number;                    // degrees around the vertical axis, default: 220
+    elevation?: number;                  // degrees above the horizon, 10..85, default: 55
+    color?: GraphraumColor;              // default: "#ffffff"
+    intensity?: number;                  // 0..4, default: 0.6
+  };
+  ambient?: {
+    sky?: GraphraumColor;                // light from above, default: "#ffffff"
+    ground?: GraphraumColor;             // light from below, default: "#a3a8b3"
+    intensity?: number;                  // 0..4, default: 0.55
+  };
+}
+
+setScene(options: GraphraumSceneOptions): void;
+getScene(): ResolvedGraphraumSceneOptions;
+graphraumScenes.flat | graphraumScenes.lit | graphraumScenes.toon; // style + edgeDepth "scene"
+```
+
+Pass it as `scene` to the constructor or to `setScene`. `sun` and `ambient` merge field by field. Invalid values throw with the option path, for example `scene.sun.elevation must be 10..85, got 120.`
 
 ## Theme
 

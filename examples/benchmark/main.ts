@@ -11,6 +11,7 @@ import {
 	type GraphraumNodeShape,
 	type GraphraumOptions,
 	type GraphraumOverlay,
+	type GraphraumShading,
 } from "../../src";
 import { renderControls } from "./controls";
 import {
@@ -46,6 +47,7 @@ interface LabState extends FixtureOptions {
 	maxVisibleNodes: number;
 	mode: GraphraumMode;
 	edgeDepth: GraphraumEdgeDepth;
+	shading: GraphraumShading;
 	scaleMode: ScaleMode;
 }
 
@@ -126,6 +128,7 @@ function readState(): LabState {
 		maxVisibleNodes: scaleMode === "million-density" ? 50_000 : scaleMode === "million-literal" ? 1_000_000 : 100_000,
 		mode: formValue(values, "mode") as GraphraumMode,
 		edgeDepth: formValue(values, "edgeDepth") as GraphraumEdgeDepth,
+		shading: formValue(values, "shading") as GraphraumShading,
 		nodeAspect: formNumber(values, "nodeAspect"),
 		nodeColors: {
 			concept: formValue(values, "conceptColor"),
@@ -285,7 +288,7 @@ function graphOptions(): GraphraumOptions<NodeAttributes, EdgeAttributes> {
 		maxVisibleEdges: state.maxVisibleEdges,
 		maxVisibleNodes: state.maxVisibleNodes,
 		mode: state.mode,
-		scene: { edgeDepth: state.edgeDepth },
+		scene: { edgeDepth: state.edgeDepth, shading: state.shading },
 		visuals,
 	};
 }

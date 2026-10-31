@@ -2,7 +2,8 @@
 // that explains the growth; three.js stays a peer and is not counted.
 import { appendFileSync } from "node:fs";
 
-const BUDGETS = [{ file: "dist/index.js", gzipBytes: 62_000 }];
+// 64 000 since lit and toon shading (#165): the light shader and scene option validation.
+const BUDGETS = [{ file: "dist/index.js", gzipBytes: 64_000 }];
 
 const kib = (bytes: number) => `${(bytes / 1024).toFixed(1)} KiB`;
 const rows: string[] = [];

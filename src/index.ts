@@ -27,6 +27,7 @@ export { graphraumNodeShapes } from "./node-shapes";
 export { GraphraumOverlay } from "./overlay";
 export type { RichNodePolicy } from "./overlay-budget";
 export { boundOverlayIds, selectRichNodeIds } from "./overlay-budget";
+export { graphraumScenes } from "./scene";
 export {
 	graphraumTheme,
 	graphraumThemeDark,
@@ -38,6 +39,7 @@ export {
 } from "./theme";
 export type {
 	CompiledGraphraumPresentation,
+	GraphraumAmbientOptions,
 	GraphraumAutoOrbitOptions,
 	GraphraumAutoOrbitStatus,
 	GraphraumBackground,
@@ -90,6 +92,8 @@ export type {
 	GraphraumSceneOptions,
 	GraphraumScreenPosition,
 	GraphraumSetDataOptions,
+	GraphraumShading,
+	GraphraumSunOptions,
 	GraphraumTheme,
 	GraphraumThemeName,
 	GraphraumVisualMapper,

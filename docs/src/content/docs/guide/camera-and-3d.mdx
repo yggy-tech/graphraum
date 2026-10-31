@@ -168,6 +168,31 @@ Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and f
 
 In 2D there is no depth to focus on, so depth of field does nothing there; `setMode("3d")` brings it back. If the WebGL context cannot run it, frames render without it and graphraum logs one console warning. `getDiagnostics().depthOfField` reports `"off"`, `"inactive"`, `"active"` or `"unsupported"`.
 
+## Lit and toon shading
+
+In 3D, nodes can look like objects in a lit space instead of flat discs. One call sets the look:
+
+```ts
+import { graphraumScenes } from "@yggy-tech/graphraum";
+
+graph.setScene(graphraumScenes.lit); // spheres lit by a sun, edges pass in front of and behind them
+graph.setScene(graphraumScenes.toon); // the same light in three hard bands
+graph.setScene(graphraumScenes.flat); // today's flat shapes, edges still share depth
+```
+
+- `lit` turns circles into spheres lit by a directional sun and a sky and ground ambient, with a soft highlight. Other shapes get a bevel.
+- `toon` uses the same light, quantised into three bands with a hard highlight.
+- The node stroke stays unlit, so it reads as a rim around the node. Set `strokeWidth: 0` for no border.
+
+The sun is fixed in the world, so the lit side stays put while the camera orbits. Change it, or the ambient light, without touching the rest:
+
+```ts
+graph.setScene({ sun: { azimuth: 90, elevation: 30 } }); // light from the side
+graph.setScene({ ambient: { intensity: 0.8 } }); // softer shadows on the far side
+```
+
+Shading costs no extra draw calls and changing the sun does not recompile shaders. In 2D everything renders flat; `getDiagnostics().shading` reports what is in effect.
+
 ## Edge endpoints in 3D
 
 `theme.endpointAttach` (`"boundary"` by default) stops each edge at its node's outline, stroke included, with a small clearance; `"center"` joins node centers. The same trim is exported for hosts that draw their own edge geometry, such as overlays or exported paths:

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-
+import { graphraumScenes } from "./scene";
 import {
 	colorDistance,
 	hexToRgb,
@@ -67,6 +67,13 @@ describe("shaders compile and draw in real WebGL2", () => {
 		expect(diagnostics.visibleEdges).toBe(SHAPES.length - 1);
 	});
 
+	test.each(["lit", "toon"] as const)("draws the catalog with %s shading and shared depth in 3D", (shading) => {
+		const graph = mountGraph({ mode: "3d", scene: graphraumScenes[shading] }, catalog());
+		renderAndRead(graph);
+		expectCleanCompile(graph);
+		expect(graph.getDiagnostics()).toMatchObject({ shading, edgeDepth: "scene" });
+	});
+
 	test("draws 3D depth of field passes for a selection", () => {
 		const graph = mountGraph(
 			{ mode: "3d", depthOfField: { enabled: true, strength: 1, transition: { durationMs: 0 } } },
@@ -90,6 +97,12 @@ describe("draw call budget", () => {
 
 	test.each(["2d", "3d"] as const)("keeps one node and one edge draw in %s", (mode: GraphraumMode) => {
 		const graph = mountGraph({ mode }, plain);
+		renderAndRead(graph);
+		expect(graph.getDiagnostics().gpuDrawCalls).toBe(2);
+	});
+
+	test.each(["lit", "toon"] as const)("keeps one node and one edge draw with %s shading", (shading) => {
+		const graph = mountGraph({ mode: "3d", scene: graphraumScenes[shading] }, plain);
 		renderAndRead(graph);
 		expect(graph.getDiagnostics().gpuDrawCalls).toBe(2);
 	});
@@ -126,5 +139,37 @@ describe("pixels", () => {
 		const between = frame.at((hub.x + left.x) / 2, (hub.y + left.y) / 2);
 		expect(colorDistance(between, hexToRgb(EDGE))).toBeLessThanOrEqual(12);
 		expect(consoleProblems).toEqual([]);
+	});
+
+	test.each(["lit", "toon"] as const)("lights the side of a %s sphere that faces the sun", (shading) => {
+		const lone: GraphraumData = {
+			nodes: [
+				{ id: "hub", position: { x: 0, y: 0, z: 0 }, size: 14 },
+				{ id: "ruler", position: { x: 60, y: 0, z: 0 }, size: 1 },
+			],
+			edges: [],
+		};
+		// Low sun from the right: azimuth 90 points along +x.
+		const scene = { shading, sun: { azimuth: 90, elevation: 10, intensity: 1 }, ambient: { intensity: 0.3 } };
+		const graph = mountGraph({ mode: "3d", theme, scene }, lone);
+		const frame = renderAndRead(graph);
+		const hub = graph.getNodeScreenPosition("hub");
+		const ruler = graph.getNodeScreenPosition("ruler");
+		if (!hub?.visible || !ruler?.visible) throw new Error("expected the hub and the ruler on screen");
+		const offset = ((ruler.x - hub.x) / 60) * 14 * 0.35;
+		const brightness = ({ r, g, b }: { r: number; g: number; b: number }) => r + g + b;
+		const lit = brightness(frame.at(hub.x + offset, hub.y));
+		const away = brightness(frame.at(hub.x - offset, hub.y));
+		expect(lit).toBeGreaterThan(away + 60);
+		expect(colorDistance(frame.at(4, 4), hexToRgb(BACKGROUND))).toBeLessThanOrEqual(3);
+		expect(consoleProblems).toEqual([]);
+	});
+
+	test("flat shading in 3D keeps the node colour across the node", () => {
+		const graph = mountGraph({ mode: "3d", theme, scene: graphraumScenes.flat }, crossing);
+		const frame = renderAndRead(graph);
+		const hub = graph.getNodeScreenPosition("hub");
+		if (!hub?.visible) throw new Error("expected the hub on screen");
+		expect(colorDistance(frame.at(hub.x, hub.y), hexToRgb(NODE))).toBeLessThanOrEqual(6);
 	});
 });

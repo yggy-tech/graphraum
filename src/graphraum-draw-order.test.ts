@@ -11,6 +11,7 @@ import { EDGE_RENDER_ORDER } from "./edge-rendering";
 import type { Graphraum } from "./graphraum";
 import { GLOW_RENDER_ORDER } from "./node-glow-rendering";
 import { NODE_RENDER_ORDER } from "./node-rendering";
+import { graphraumScenes, SCENE_DEFAULTS, sunDirection } from "./scene";
 import { createGraph, destroyGraphs, edgeBuffers, internals } from "./test-support/edge-harness";
 import { installFakeBrowserGlobals } from "./test-support/fake-webgl";
 import type { GraphraumMode, GraphraumOptions } from "./types";
@@ -83,7 +84,7 @@ describe("edges that share depth with nodes", () => {
 	test("tests edges against sphere impostors in 3D", () => {
 		const graph = hub("3d", { scene: { edgeDepth: "scene" } });
 		expectSharedDepth(graph);
-		expect(graph.getScene()).toEqual({ edgeDepth: "scene" });
+		expect(graph.getScene()).toMatchObject({ edgeDepth: "scene", shading: "flat" });
 		expect(graph.getDiagnostics().edgeDepth).toBe("scene");
 	});
 
@@ -113,7 +114,59 @@ describe("edges that share depth with nodes", () => {
 		expect(() => graph.setScene({ edgeDepth: "x" } as unknown as GraphraumOptions["scene"] & object)).toThrow(
 			/scene\.edgeDepth/,
 		);
-		expect(graph.getScene()).toEqual({ edgeDepth: "behind-nodes" });
+		expect(graph.getScene()).toEqual(SCENE_DEFAULTS);
+		expect(() => graph.setScene({ shading: "lit", sun: { elevation: 120 } })).toThrow(
+			"scene.sun.elevation must be 10..85, got 120.",
+		);
+		expect(graph.getScene()).toEqual(SCENE_DEFAULTS);
+	});
+});
+
+describe("lit and toon shading", () => {
+	const lightUniform = (graph: Graphraum, name: string) => meshes(graph).nodes.material.uniforms[name]?.value;
+
+	test("lights the nodes in 3D with the shading define and the sun's uniforms", () => {
+		const graph = hub("3d", { scene: graphraumScenes.lit });
+		const { defines } = meshes(graph).nodes.material;
+		expect(defines).toMatchObject({ GRAPHRAUM_SHADING: "1", GRAPHRAUM_SPHERE_IMPOSTOR: "" });
+		expect(graph.getDiagnostics()).toMatchObject({ shading: "lit", edgeDepth: "scene" });
+		const [x, y, z] = sunDirection(SCENE_DEFAULTS.sun.azimuth, SCENE_DEFAULTS.sun.elevation);
+		expect(lightUniform(graph, "graphraumSunDirection")).toMatchObject({ x, y, z });
+		expect(lightUniform(graph, "graphraumSunColor").r).toBeCloseTo(SCENE_DEFAULTS.sun.intensity);
+	});
+
+	test("switches style and light at runtime and keeps them across setData", () => {
+		const graph = hub("3d");
+		expect(meshes(graph).nodes.material.defines ?? {}).not.toHaveProperty("GRAPHRAUM_SHADING");
+		graph.setScene({ shading: "toon", sun: { azimuth: 90, elevation: 10 } });
+		expect(meshes(graph).nodes.material.defines).toMatchObject({ GRAPHRAUM_SHADING: "2" });
+		expect(lightUniform(graph, "graphraumSunDirection").x).toBeCloseTo(Math.cos(Math.PI / 18));
+		graph.setData({ edges: [], nodes: [{ id: "a", position: { x: 0, y: 0, z: 0 } }] });
+		expect(meshes(graph).nodes.material.defines).toMatchObject({ GRAPHRAUM_SHADING: "2" });
+		expect(lightUniform(graph, "graphraumSunDirection").x).toBeCloseTo(Math.cos(Math.PI / 18));
+		graph.setScene({ shading: "flat" });
+		expect(meshes(graph).nodes.material.defines).not.toHaveProperty("GRAPHRAUM_SHADING");
+		expect(graph.getDiagnostics().shading).toBe("flat");
+	});
+
+	test("renders flat in 2D and lights again back in 3D", () => {
+		const graph = hub("3d", { scene: { shading: "lit" } });
+		graph.setMode("2d");
+		expect(meshes(graph).nodes.material.defines).not.toHaveProperty("GRAPHRAUM_SHADING");
+		expect(graph.getDiagnostics().shading).toBe("flat");
+		expectEdgesUnderNodes(graph, "2d");
+		graph.setMode("3d");
+		expect(meshes(graph).nodes.material.defines).toMatchObject({ GRAPHRAUM_SHADING: "1" });
+	});
+
+	test("recompiles only when a define changes, not for a new sun", () => {
+		const graph = hub("3d", { scene: { shading: "lit" } });
+		const material = meshes(graph).nodes.material;
+		const version = material.version;
+		graph.setScene({ sun: { azimuth: 30 }, ambient: { intensity: 1 } });
+		expect(material.version).toBe(version);
+		graph.setScene({ shading: "toon" });
+		expect(material.version).toBeGreaterThan(version);
 	});
 });
 

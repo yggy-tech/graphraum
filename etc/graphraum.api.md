@@ -189,6 +189,13 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 }
 
 // @public
+export interface GraphraumAmbientOptions {
+    ground?: GraphraumColor;
+    intensity?: number;
+    sky?: GraphraumColor;
+}
+
+// @public
 export interface GraphraumAutoOrbitOptions {
     resumeAfterMs?: number;
     speed?: number;
@@ -314,6 +321,7 @@ export interface GraphraumDiagnostics {
     selectedEdges: number;
     // (undocumented)
     selectedNodes: number;
+    shading: GraphraumShading;
     // (undocumented)
     totalEdges: number;
     // (undocumented)
@@ -669,8 +677,27 @@ export type GraphraumPropertyValue = boolean | null | number | string;
 
 // @public
 export interface GraphraumSceneOptions {
+    ambient?: GraphraumAmbientOptions;
     edgeDepth?: GraphraumEdgeDepth;
+    shading?: GraphraumShading;
+    sun?: GraphraumSunOptions;
 }
+
+// @public
+export const graphraumScenes: {
+    readonly flat: {
+        readonly shading: "flat";
+        readonly edgeDepth: "scene";
+    };
+    readonly lit: {
+        readonly shading: "lit";
+        readonly edgeDepth: "scene";
+    };
+    readonly toon: {
+        readonly shading: "toon";
+        readonly edgeDepth: "scene";
+    };
+};
 
 // @public (undocumented)
 export interface GraphraumScreenPosition {
@@ -685,6 +712,17 @@ export interface GraphraumScreenPosition {
 // @public (undocumented)
 export interface GraphraumSetDataOptions {
     fit?: boolean;
+}
+
+// @public
+export type GraphraumShading = "flat" | "lit" | "toon";
+
+// @public
+export interface GraphraumSunOptions {
+    azimuth?: number;
+    color?: GraphraumColor;
+    elevation?: number;
+    intensity?: number;
 }
 
 // @public (undocumented)
@@ -843,7 +881,13 @@ export function orderFocusNodeIds(input: {
 // @public
 export interface ResolvedGraphraumSceneOptions {
     // (undocumented)
+    readonly ambient: Readonly<Required<GraphraumAmbientOptions>>;
+    // (undocumented)
     readonly edgeDepth: GraphraumEdgeDepth;
+    // (undocumented)
+    readonly shading: GraphraumShading;
+    // (undocumented)
+    readonly sun: Readonly<Required<GraphraumSunOptions>>;
 }
 
 // @public (undocumented)

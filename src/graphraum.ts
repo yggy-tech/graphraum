@@ -84,6 +84,7 @@ import {
 	createNodeGeometry,
 	createNodeMaterial,
 	NODE_RENDER_ORDER,
+	setNodeLighting,
 	setNodeShapeAt,
 	setNodeStrokeAt,
 } from "./node-rendering";
@@ -92,7 +93,7 @@ import { resolveNodeStroke } from "./node-stroke";
 import { type PreparedNodeUpdate, prepareNodeUpdates } from "./node-updates";
 import { configureControlsForMode } from "./orbit-controls-mode";
 import { GraphraumOverlay } from "./overlay";
-import { resolveSceneDrawSetup, resolveSceneOptions, SCENE_DEFAULTS } from "./scene";
+import { resolveSceneDrawSetup, resolveSceneOptions, SCENE_DEFAULTS, sceneLightColours, sunDirection } from "./scene";
 import { type Bounds2D, SpatialGrid2D } from "./spatial-grid-2d";
 import { normalizeGraphraumBackground, resolveGraphraumTheme } from "./theme";
 import type {
@@ -974,7 +975,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	/**
 	 * Updates the 3D scene. Omitted fields keep their value, so `setScene({ edgeDepth: "scene" })`
-	 * changes only the edge depth. Invalid options throw before anything changes.
+	 * changes only the edge depth and `setScene({ sun: { azimuth: 90 } })` only the sun's direction.
+	 * `graphraumScenes.lit` (or `flat`, `toon`) sets a whole look in one call. Shading and light are a
+	 * no-op in 2D and cost no extra draw calls. Invalid options throw before anything changes, with the
+	 * option path and the allowed values in the message.
 	 */
 	setScene(options: GraphraumSceneOptions) {
 		this.scene3d = resolveSceneOptions(options, this.scene3d);
@@ -990,7 +994,18 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private applySceneDrawSetup() {
 		const setup = resolveSceneDrawSetup(this.mode, this.scene3d);
 		if (this.nodeMesh && this.nodeMesh.material instanceof ShaderMaterial) {
-			configureNodeMaterial(this.nodeMesh.material, setup.nodeDepth, setup.sphereImpostors);
+			configureNodeMaterial(this.nodeMesh.material, {
+				depth: setup.nodeDepth,
+				shading: setup.shading,
+				sphereImpostors: setup.sphereImpostors,
+			});
+			const { sun, sky, ground } = sceneLightColours(this.scene3d);
+			setNodeLighting(this.nodeMesh.material, {
+				sunDirection: sunDirection(this.scene3d.sun.azimuth, this.scene3d.sun.elevation),
+				sun,
+				sky,
+				ground,
+			});
 		}
 		if (this.edgeMesh && this.edgeMesh.material instanceof ShaderMaterial) {
 			this.edgeMesh.material.depthTest = setup.edgeDepthTest;
@@ -1212,7 +1227,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			autoOrbit: this.autoOrbit?.status ?? "off",
 			cpuFrameMilliseconds: this.cpuFrameMilliseconds,
 			depthOfField: this.depthOfFieldStatus,
-			edgeDepth: resolveSceneDrawSetup(this.mode, this.scene3d).sphereImpostors ? "scene" : "behind-nodes",
+			edgeDepth: resolveSceneDrawSetup(this.mode, this.scene3d).edgeDepthTest ? "scene" : "behind-nodes",
+			shading: resolveSceneDrawSetup(this.mode, this.scene3d).shading,
 			gpuFrameMilliseconds: this.gpuFrameMilliseconds,
 			gpuDrawCalls: this.renderer.info.render.calls,
 			gpuGeometries: this.renderer.info.memory.geometries,

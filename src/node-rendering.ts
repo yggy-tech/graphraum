@@ -1,8 +1,8 @@
-import { Color, InstancedBufferAttribute, type InstancedMesh, PlaneGeometry, ShaderMaterial } from "three";
+import { Color, InstancedBufferAttribute, type InstancedMesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 
 import { encodeNodeShape } from "./node-shapes";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
-import type { GraphraumColor, GraphraumNodeShape } from "./types";
+import type { GraphraumColor, GraphraumNodeShape, GraphraumShading } from "./types";
 
 // Do not declare `attribute vec3 instanceColor` here. Three.js injects it when
 // InstancedMesh.instanceColor is set (USE_INSTANCING_COLOR). A second declaration
@@ -45,6 +45,13 @@ const fragmentShader = `
 uniform mat4 projectionMatrix;
 varying vec3 nodeViewCenter;
 varying float nodeRadius;
+#endif
+#ifdef GRAPHRAUM_SHADING
+// 1 = lit, 2 = toon. Light colours are linear and already scaled by their intensity.
+uniform vec3 graphraumSunDirection;
+uniform vec3 graphraumSunColor;
+uniform vec3 graphraumSkyColor;
+uniform vec3 graphraumGroundColor;
 #endif
 varying vec3 nodeColor;
 varying vec2 nodePoint;
@@ -95,6 +102,30 @@ float pillDistance(vec2 p) {
 	return PILL_CAP_RADIUS - length(vec2(p.x - clampedX, p.y));
 }
 
+#ifdef GRAPHRAUM_SHADING
+// Circles are spheres; other shapes get a bevel that rises over the outer third of their inset.
+vec3 surfaceNormal(float distanceToEdge, bool circle) {
+	if (circle) return vec3(nodePoint, sqrt(max(0.0, 1.0 - dot(nodePoint, nodePoint))));
+	float rise = smoothstep(0.0, 0.35, distanceToEdge);
+	return normalize(vec3(nodePoint * (1.0 - rise) * 0.8, 0.35 + rise));
+}
+
+vec3 shade(vec3 base, vec3 normal) {
+	// The billboard faces the camera, so the normal is in view space; viewMatrix brings the sun there.
+	vec3 toSun = normalize((viewMatrix * vec4(graphraumSunDirection, 0.0)).xyz);
+	float up = (vec4(normal, 0.0) * viewMatrix).y;
+	vec3 ambient = mix(graphraumGroundColor, graphraumSkyColor, up * 0.5 + 0.5);
+	float diffuse = max(dot(normal, toSun), 0.0);
+	float facing = max(dot(normal, normalize(toSun + vec3(0.0, 0.0, 1.0))), 0.0);
+#if GRAPHRAUM_SHADING == 2
+	float band = diffuse < 0.15 ? 0.0 : (diffuse < 0.6 ? 0.55 : 1.0);
+	return base * (ambient + graphraumSunColor * band) + graphraumSunColor * step(0.96, facing) * 0.45;
+#else
+	return base * (ambient + graphraumSunColor * diffuse) + graphraumSunColor * pow(facing, 32.0) * 0.35;
+#endif
+}
+#endif
+
 float roundedDistance(vec2 p) {
 	vec2 outsideOffset = abs(p) - vec2(1.0 - ROUNDED_CORNER_RADIUS);
 	vec2 outside = max(outsideOffset, 0.0);
@@ -132,11 +163,15 @@ void main() {
 #endif
 
 	vec3 fillColor = nodeColor;
+#ifdef GRAPHRAUM_SHADING
+	// Only the fill takes light; the stroke stays unlit and reads as a rim.
+	fillColor = shade(nodeColor, surfaceNormal(distanceToEdge, nodeShape < 0.5));
+#endif
 	if (nodeStrokeWidth > 0.0) {
 		// Stroke band occupies [outer edge, outer edge - nodeStrokeWidth]; below that, the fill takes over.
 		float innerEdge = distanceToEdge - nodeStrokeWidth;
 		float strokeToFill = smoothstep(0.0, fwidth(innerEdge), innerEdge);
-		fillColor = mix(nodeStrokeColor, nodeColor, strokeToFill);
+		fillColor = mix(nodeStrokeColor, fillColor, strokeToFill);
 	}
 	gl_FragColor = vec4(fillColor, outerAlpha);
 	${OUTPUT_COLOR_SPACE_FRAGMENT}
@@ -165,6 +200,12 @@ export function createNodeMaterial(depthTest: boolean) {
 		depthWrite: depthTest,
 		fragmentShader,
 		transparent: true,
+		uniforms: {
+			graphraumSunDirection: { value: new Vector3(0, 1, 0) },
+			graphraumSunColor: { value: new Color(0, 0, 0) },
+			graphraumSkyColor: { value: new Color(1, 1, 1) },
+			graphraumGroundColor: { value: new Color(1, 1, 1) },
+		},
 		vertexShader,
 	});
 }
@@ -172,16 +213,53 @@ export function createNodeMaterial(depthTest: boolean) {
 /** Shader define that turns circle billboards into depth-writing sphere impostors. */
 export const SPHERE_IMPOSTOR_DEFINE = "GRAPHRAUM_SPHERE_IMPOSTOR";
 
-/** Applies depth and the sphere impostor define; recompiles only when the define changes. */
-export function configureNodeMaterial(material: ShaderMaterial, depth: boolean, sphereImpostors: boolean) {
+/** Shader define that lights the fill: `1` lit, `2` toon; absent for flat. */
+export const SHADING_DEFINE = "GRAPHRAUM_SHADING";
+
+const SHADING_DEFINE_VALUES: Record<GraphraumShading, string | null> = { flat: null, lit: "1", toon: "2" };
+
+export interface NodeMaterialSetup {
+	depth: boolean;
+	shading: GraphraumShading;
+	sphereImpostors: boolean;
+}
+
+/** Applies depth, the sphere impostor and the shading defines; recompiles only when a define changes. */
+export function configureNodeMaterial(
+	material: ShaderMaterial,
+	{ depth, shading, sphereImpostors }: NodeMaterialSetup,
+) {
 	material.depthTest = depth;
 	material.depthWrite = depth;
-	const defines = material.defines ?? {};
-	if (Object.hasOwn(defines, SPHERE_IMPOSTOR_DEFINE) === sphereImpostors) return;
+	const defines: Record<string, unknown> = { ...(material.defines ?? {}) };
 	if (sphereImpostors) defines[SPHERE_IMPOSTOR_DEFINE] = "";
 	else delete defines[SPHERE_IMPOSTOR_DEFINE];
+	const shadingValue = SHADING_DEFINE_VALUES[shading];
+	if (shadingValue === null) delete defines[SHADING_DEFINE];
+	else defines[SHADING_DEFINE] = shadingValue;
+	const previous = material.defines ?? {};
+	const changed =
+		Object.keys(defines).length !== Object.keys(previous).length ||
+		Object.entries(defines).some(([key, value]) => previous[key] !== value);
+	if (!changed) return;
 	material.defines = defines;
 	material.needsUpdate = true;
+}
+
+export interface NodeLighting {
+	sunDirection: readonly [number, number, number];
+	sun: Color;
+	sky: Color;
+	ground: Color;
+}
+
+/** Writes the light uniforms; no recompile. */
+export function setNodeLighting(material: ShaderMaterial, lighting: NodeLighting) {
+	const uniforms = material.uniforms;
+	(uniforms.graphraumSunDirection?.value as Vector3 | undefined)?.set(...lighting.sunDirection);
+	(uniforms.graphraumSunColor?.value as Color | undefined)?.copy(lighting.sun);
+	(uniforms.graphraumSkyColor?.value as Color | undefined)?.copy(lighting.sky);
+	(uniforms.graphraumGroundColor?.value as Color | undefined)?.copy(lighting.ground);
 }
 
 export function setNodeShapeAt(

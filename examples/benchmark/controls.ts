@@ -65,6 +65,11 @@ export function renderControls(form: HTMLFormElement) {
 				{ label: "Behind nodes", value: "behind-nodes" },
 				{ label: "Scene", value: "scene" },
 			]),
+			SelectField("Shading (3D)", "shading", "flat", [
+				{ label: "Flat", value: "flat" },
+				{ label: "Lit", value: "lit" },
+				{ label: "Toon", value: "toon" },
+			]),
 			Checkbox("Antialias", "antialias"),
 			NumberField("Pixel ratio", "maxPixelRatio", 1, 0.5, 4, 0.5),
 		),

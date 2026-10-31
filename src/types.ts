@@ -11,15 +11,55 @@ export type GraphraumMode = "2d" | "3d";
  */
 export type GraphraumEdgeDepth = "behind-nodes" | "scene";
 
+/**
+ * How 3D nodes are shaded. 2D always renders `flat`.
+ * - `flat` (default): today's filled shapes.
+ * - `lit`: circles become spheres lit by the sun and a sky/ground ambient, with a soft highlight.
+ *   Other shapes get a bevel. The stroke stays unlit, so it reads as a rim around the node.
+ * - `toon`: like `lit`, with the light quantised into three bands and a hard highlight.
+ */
+export type GraphraumShading = "flat" | "lit" | "toon";
+
+/** A directional light for `lit` and `toon` shading. It is fixed in the world, not to the camera. */
+export interface GraphraumSunOptions {
+	/** Degrees around the vertical axis, any finite number. Default 220. */
+	azimuth?: number;
+	/** Degrees above the horizon, 10 to 85. Default 55. */
+	elevation?: number;
+	/** Default `"#ffffff"`. */
+	color?: GraphraumColor;
+	/** 0 to 4. Default 0.6. */
+	intensity?: number;
+}
+
+/** Hemisphere ambient light: `sky` lights surfaces that face up, `ground` those that face down. */
+export interface GraphraumAmbientOptions {
+	/** Default `"#ffffff"`. */
+	sky?: GraphraumColor;
+	/** Default `"#a3a8b3"`. */
+	ground?: GraphraumColor;
+	/** 0 to 4. Default 0.55. */
+	intensity?: number;
+}
+
 /** Scene options for `Graphraum.setScene`. Every field is optional; omitted fields keep their value. */
 export interface GraphraumSceneOptions {
 	/** Default `"behind-nodes"`. */
 	edgeDepth?: GraphraumEdgeDepth;
+	/** Default `"flat"`. 3D only. */
+	shading?: GraphraumShading;
+	/** Merged field by field, so `{ sun: { azimuth: 90 } }` keeps the other sun settings. */
+	sun?: GraphraumSunOptions;
+	/** Merged field by field. */
+	ambient?: GraphraumAmbientOptions;
 }
 
 /** The scene options in effect, as returned by `Graphraum.getScene`. */
 export interface ResolvedGraphraumSceneOptions {
 	readonly edgeDepth: GraphraumEdgeDepth;
+	readonly shading: GraphraumShading;
+	readonly sun: Readonly<Required<GraphraumSunOptions>>;
+	readonly ambient: Readonly<Required<GraphraumAmbientOptions>>;
 }
 
 export type GraphraumNodeState = "dimmed" | "focused" | "hovered" | "selected";
@@ -431,6 +471,8 @@ export interface GraphraumDiagnostics {
 	depthOfField: GraphraumDepthOfFieldStatus;
 	/** Edge depth in effect for the last frame: `scene` only in 3D with `scene.edgeDepth: "scene"`. */
 	edgeDepth: GraphraumEdgeDepth;
+	/** Shading in effect: `flat` in 2D whatever `scene.shading` says. */
+	shading: GraphraumShading;
 	gpuFrameMilliseconds: number | null;
 	gpuDrawCalls: number;
 	gpuGeometries: number;

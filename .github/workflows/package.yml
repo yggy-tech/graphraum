@@ -1,16 +1,12 @@
 name: Package
 
 on:
-  pull_request:
+  workflow_call:
   push:
     branches: [main]
 
 permissions:
   contents: read
-
-concurrency:
-  group: package-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   package:

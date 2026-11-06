@@ -46,7 +46,7 @@
 	"dependencies": {
 		"graphology": "^0.26.0",
 		"graphology-types": "^0.24.8",
-		"three": "^0.186.1"
+		"three": "^0.187.0"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",

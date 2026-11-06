@@ -254,3 +254,171 @@ export function measureLayout(graph: QualityGraph, positions: Float32Array): Lay
 		...silhouetteAndSeparation(graph, distances),
 	};
 }
+
+/**
+ * Stochastic block model for the size-bias measurement (#192): one minority cluster of `minorityShare`
+ * of the nodes and `restClusters` equal clusters sharing the rest. Every cluster has the same share
+ * `crossShare` of its edge endpoints leaving it (the same graph separation G_g = 1 - crossShare),
+ * whatever its size. Leaving endpoints are paired across clusters by a largest-remaining-first random
+ * matching, so the share is exact up to rounding and needs `minorityShare <= 0.5`.
+ */
+export function sizeSweepBlockModel(
+	minorityShare: number,
+	seed = 192,
+	{ crossShare = 0.1, meanDegree = 6, nodeCount = 800, restClusters = 2 } = {},
+): QualityGraph {
+	const random = seededRandom(seed);
+	const minorityCount = Math.max(2, Math.round(nodeCount * minorityShare));
+	const restCount = Math.floor((nodeCount - minorityCount) / restClusters);
+	const sizes = [minorityCount, ...Array.from({ length: restClusters }, () => restCount)];
+	sizes[sizes.length - 1] = (sizes.at(-1) ?? 0) + nodeCount - sizes.reduce((sum, size) => sum + size, 0);
+	const groups = new Uint32Array(nodeCount);
+	const pairs: number[][] = [];
+	const leaving: number[][] = sizes.map(() => []);
+	let start = 0;
+	for (const [group, size] of sizes.entries()) {
+		groups.fill(group, start, start + size);
+		const stubs = Math.round(meanDegree * size * crossShare);
+		for (let stub = 0; stub < stubs; stub += 1) leaving[group]?.push(start + Math.floor(random() * size));
+		const inside = Math.round((meanDegree * size - stubs) / 2);
+		for (let edge = 0; edge < inside; edge += 1) {
+			pairs.push([start + Math.floor(random() * size), start + Math.floor(random() * size)]);
+		}
+		start += size;
+	}
+	for (;;) {
+		const open = leaving.map((stubs, group) => ({ group, stubs })).filter(({ stubs }) => stubs.length > 0);
+		const largest = open.reduce((best, entry) => (entry.stubs.length > best.stubs.length ? entry : best), open[0]);
+		const others = open.filter(({ group }) => group !== largest?.group);
+		if (!largest || others.length === 0) break;
+		const total = others.reduce((sum, { stubs }) => sum + stubs.length, 0);
+		const pick = Math.floor(random() * total);
+		let before = 0;
+		const partner = others.find(({ stubs }) => {
+			before += stubs.length;
+			return pick < before;
+		});
+		const source = largest.stubs.splice(Math.floor(random() * largest.stubs.length), 1)[0];
+		const target = partner?.stubs.splice(Math.floor(random() * partner.stubs.length), 1)[0];
+		if (source !== undefined && target !== undefined) pairs.push([source, target]);
+	}
+	const unique = pairs.filter(([source, target]) => source !== target);
+	return { edges: packEdges(unique), groups, name: `size sweep ${Math.round(minorityShare * 100)}%`, nodeCount };
+}
+
+export interface ClusterSeparation {
+	/** Distance from the nearest member to the nearest non-member over the median edge length: the empty gap around the cluster. */
+	gap: number;
+	/** Share of the cluster's edge endpoints that stay inside it: the graph separation G_g of #192. */
+	graphSeparation: number;
+	nodeCount: number;
+	/** Mean share of the members' `k` nearest layout neighbours that are members too: size-neutral, compare with `graphSeparation`. */
+	purity: number;
+	/** Mean distance from members to non-members over mean distance between members: V_g of #192. */
+	visualSeparation: number;
+}
+
+/** G_g and V_g for every group of `graph`, indexed by group id. */
+export function clusterSeparations(graph: QualityGraph, positions: Float32Array, k = 5): ClusterSeparation[] {
+	const distances = distanceMatrix(positions, graph.nodeCount);
+	const groupCount = Math.max(...graph.groups) + 1;
+	const count = new Array<number>(groupCount).fill(0);
+	const insidePairs = new Array<number>(groupCount).fill(0);
+	const insideSum = new Array<number>(groupCount).fill(0);
+	const outsideSum = new Array<number>(groupCount).fill(0);
+	for (const group of graph.groups) count[group] = (count[group] ?? 0) + 1;
+	for (let left = 0; left < graph.nodeCount; left += 1) {
+		const leftGroup = graph.groups[left] ?? 0;
+		for (let right = 0; right < graph.nodeCount; right += 1) {
+			if (right === left) continue;
+			const distance = distances[left * graph.nodeCount + right] ?? 0;
+			if ((graph.groups[right] ?? 0) === leftGroup) {
+				insideSum[leftGroup] = (insideSum[leftGroup] ?? 0) + distance;
+				insidePairs[leftGroup] = (insidePairs[leftGroup] ?? 0) + 1;
+			} else outsideSum[leftGroup] = (outsideSum[leftGroup] ?? 0) + distance;
+		}
+	}
+	const endpoints = new Array<number>(groupCount).fill(0);
+	const crossing = new Array<number>(groupCount).fill(0);
+	for (let index = 0; index < graph.edges.length; index += 2) {
+		const left = graph.groups[graph.edges[index] ?? 0] ?? 0;
+		const right = graph.groups[graph.edges[index + 1] ?? 0] ?? 0;
+		endpoints[left] = (endpoints[left] ?? 0) + 1;
+		endpoints[right] = (endpoints[right] ?? 0) + 1;
+		if (left !== right) {
+			crossing[left] = (crossing[left] ?? 0) + 1;
+			crossing[right] = (crossing[right] ?? 0) + 1;
+		}
+	}
+	const purity = new Array<number>(groupCount).fill(0);
+	const nearestOutside = new Array<number>(groupCount).fill(Number.POSITIVE_INFINITY);
+	const nearest = new Float64Array(k);
+	const nearestGroup = new Uint32Array(k);
+	for (let node = 0; node < graph.nodeCount; node += 1) {
+		const group = graph.groups[node] ?? 0;
+		nearest.fill(Number.POSITIVE_INFINITY);
+		for (let other = 0; other < graph.nodeCount; other += 1) {
+			if (other === node) continue;
+			const distance = distances[node * graph.nodeCount + other] ?? 0;
+			if ((graph.groups[other] ?? 0) !== group) nearestOutside[group] = Math.min(nearestOutside[group] ?? 0, distance);
+			if (distance >= (nearest[k - 1] ?? 0)) continue;
+			let slot = k - 1;
+			while (slot > 0 && distance < (nearest[slot - 1] ?? 0)) {
+				nearest[slot] = nearest[slot - 1] ?? 0;
+				nearestGroup[slot] = nearestGroup[slot - 1] ?? 0;
+				slot -= 1;
+			}
+			nearest[slot] = distance;
+			nearestGroup[slot] = graph.groups[other] ?? 0;
+		}
+		purity[group] = (purity[group] ?? 0) + nearestGroup.filter((neighbour) => neighbour === group).length / k;
+	}
+	const edgeLengths = [];
+	for (let index = 0; index < graph.edges.length; index += 2) {
+		edgeLengths.push(distances[(graph.edges[index] ?? 0) * graph.nodeCount + (graph.edges[index + 1] ?? 0)] ?? 0);
+	}
+	const medianEdge = edgeLengths.sort((left, right) => left - right)[Math.floor(edgeLengths.length / 2)] ?? 1;
+	return count.map((nodeCount, group) => {
+		const members = nodeCount;
+		const outsidePairs = members * (graph.nodeCount - members);
+		return {
+			gap: (nearestOutside[group] ?? 0) / Math.max(medianEdge, 1e-9),
+			graphSeparation: 1 - (crossing[group] ?? 0) / Math.max(1, endpoints[group] ?? 0),
+			nodeCount,
+			purity: (purity[group] ?? 0) / Math.max(1, members),
+			visualSeparation:
+				(outsideSum[group] ?? 0) /
+				Math.max(1, outsidePairs) /
+				Math.max((insideSum[group] ?? 0) / Math.max(1, insidePairs[group] ?? 0), 1e-9),
+		};
+	});
+}
+
+/**
+ * Geometric reference for the size sweep: each group is a uniform disc of equal density (radius
+ * proportional to the square root of its size), the discs sit in a row, group 0 first, with equal
+ * gaps of `gapFactor` times the radius of a disc that holds a third of the nodes. A perfect layout
+ * of equal-density groups would look like this, so its V_g shows what size does to V_g by geometry alone.
+ */
+export function discReference(graph: QualityGraph, seed = 1, gapFactor = 0.2): Float32Array {
+	const random = seededRandom(seed);
+	const groupCount = Math.max(...graph.groups) + 1;
+	const sizes = new Array<number>(groupCount).fill(0);
+	for (const group of graph.groups) sizes[group] = (sizes[group] ?? 0) + 1;
+	const radius = sizes.map((size) => Math.sqrt(size));
+	const gap = gapFactor * Math.sqrt(graph.nodeCount / 3);
+	const centres: number[] = [];
+	let cursor = 0;
+	for (const r of radius) {
+		centres.push(cursor + r);
+		cursor += 2 * r + gap;
+	}
+	const positions = new Float32Array(graph.nodeCount * 3);
+	for (let node = 0; node < graph.nodeCount; node += 1) {
+		const group = graph.groups[node] ?? 0;
+		const distance = (radius[group] ?? 0) * Math.sqrt(random());
+		const angle = random() * 2 * Math.PI;
+		positions.set([(centres[group] ?? 0) + distance * Math.cos(angle), distance * Math.sin(angle), 0], node * 3);
+	}
+	return positions;
+}

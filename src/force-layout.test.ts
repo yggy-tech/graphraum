@@ -635,3 +635,223 @@ describe("layoutStyle", () => {
 		expect(simulation.positions.every(Number.isFinite)).toBe(true);
 	});
 });
+
+describe("anchors", () => {
+	const twoGroups = (dimensions: 2 | 3, scale = 1) => {
+		const nodeCount = 20;
+		const positions = new Float32Array(nodeCount * dimensions);
+		for (let node = 0; node < nodeCount; node += 1) {
+			positions[node * dimensions] = (node < 10 ? -1 : 1) * scale;
+			if (dimensions === 3) positions[node * dimensions + 2] = ((node % 3) - 1) * 0.1 * scale;
+		}
+		return { nodeCount, positions };
+	};
+	const run = (request: Parameters<typeof computeForcePositions>[0]) => computeForcePositions(request);
+	/** Mean x of nodes `from` to `to`. */
+	const meanX = (positions: Float32Array, from: number, to: number) => {
+		let sum = 0;
+		for (let node = from; node < to; node += 1) sum += positions[node * 3] ?? 0;
+		return sum / (to - from);
+	};
+	const gap = (positions: Float32Array) => meanX(positions, 10, 20) - meanX(positions, 0, 10);
+
+	test("rejects anchor positions of the wrong length", () => {
+		expect(() =>
+			createForceSimulation({
+				anchors: { positions: new Float32Array(5) },
+				dimensions: 3,
+				edges: new Uint32Array(),
+				nodeCount: 2,
+			}),
+		).toThrow(/Anchor positions length \(5\) must equal node count \(2\) times dimensions \(3\) = 6/);
+	});
+
+	test("rejects a per-node strength array of the wrong length", () => {
+		expect(() =>
+			createForceSimulation({
+				anchors: { positions: new Float32Array(4), strength: new Float32Array(3) },
+				dimensions: 2,
+				edges: new Uint32Array(),
+				nodeCount: 2,
+			}),
+		).toThrow(/Anchor strength length \(3\) must equal node count \(2\)/);
+	});
+
+	test.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects anchor strength %s", (strength) => {
+		const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount: 2 };
+		const positions = new Float32Array(4);
+		expect(() => createForceSimulation({ ...request, anchors: { positions, strength } })).toThrow(
+			/Anchor strength must be a finite number of at least 0/,
+		);
+		expect(() =>
+			createForceSimulation({ ...request, anchors: { positions, strength: new Float32Array([1, strength]) } }),
+		).toThrow(/Anchor strength at index 1 must be a finite number of at least 0/);
+	});
+
+	test("rejects infinite anchor positions but lets NaN skip a node", () => {
+		const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount: 2 };
+		const infinite = new Float32Array([0, 0, Number.POSITIVE_INFINITY, 1]);
+		expect(() => createForceSimulation({ ...request, anchors: { positions: infinite } })).toThrow(/finite or NaN/);
+		const skipped = new Float32Array([0, 0, Number.NaN, 1]);
+		expect(() => createForceSimulation({ ...request, anchors: { positions: skipped } })).not.toThrow();
+	});
+
+	test("clamps anchorStrength to 0..0.1", () => {
+		const resolved = (anchorStrength: number) =>
+			createForceSimulation({
+				dimensions: 2,
+				edges: new Uint32Array(),
+				nodeCount: 1,
+				settings: { ...DEFAULT_FORCE_SETTINGS, anchorStrength },
+			}).settings.anchorStrength;
+		expect(resolved(5)).toBe(0.1);
+		expect(resolved(-1)).toBe(0);
+		expect(resolved(Number.NaN)).toBe(DEFAULT_FORCE_SETTINGS.anchorStrength);
+	});
+
+	test("a request without usable anchors lays out exactly as before", () => {
+		const request = { dimensions: 3 as const, edges: new Uint32Array([0, 1, 1, 2, 2, 3]), nodeCount: 6 };
+		const baseline = run(request);
+		// Values recorded before anchors existed: the no-anchor path must not drift.
+		const recorded = [
+			28.638078689575195, -8.999749183654785, -51.357933044433594, 18.782024383544922, -22.212722778320312,
+			46.13385009765625,
+		];
+		recorded.forEach((value, index) => {
+			expect(baseline[index]).toBeCloseTo(value, 3);
+		});
+		expect(Array.from(run({ ...request, anchors: undefined }))).toEqual(Array.from(baseline));
+		const allSkipped = { positions: new Float32Array(18).fill(Number.NaN) };
+		expect(Array.from(run({ ...request, anchors: allSkipped }))).toEqual(Array.from(baseline));
+	});
+
+	test("anchor strength 0 equals no anchors", () => {
+		const request = { dimensions: 2 as const, edges: new Uint32Array([0, 1, 1, 2]), nodeCount: 20 };
+		const { positions } = twoGroups(2);
+		const baseline = Array.from(run(request));
+		expect(Array.from(run({ ...request, anchors: { positions, strength: 0 } }))).toEqual(baseline);
+		const off = { ...DEFAULT_FORCE_SETTINGS, anchorStrength: 0 };
+		expect(Array.from(run({ ...request, anchors: { positions }, settings: off }))).toEqual(baseline);
+	});
+
+	test("anchors separate isolated nodes into the groups they are anchored to", () => {
+		const { nodeCount, positions } = twoGroups(3);
+		const request = { dimensions: 3 as const, edges: new Uint32Array(), nodeCount };
+		const anchored = run({ ...request, anchors: { positions } });
+		expect(gap(anchored)).toBeGreaterThan(20);
+		for (let node = 0; node < 10; node += 1) expect(anchored[node * 3]).toBeLessThan(anchored[(node + 10) * 3] ?? 0);
+		expect(Math.abs(gap(run(request)))).toBeLessThan(gap(anchored));
+	});
+
+	test("a node without an anchor keeps the default start", () => {
+		const { nodeCount, positions } = twoGroups(2);
+		positions.fill(Number.NaN, 0, 2);
+		const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount };
+		const anchored = createForceSimulation({ ...request, anchors: { positions } });
+		const plain = createForceSimulation(request);
+		expect(Array.from(anchored.positions.slice(0, 3))).toEqual(Array.from(plain.positions.slice(0, 3)));
+		expect(Array.from(anchored.positions.slice(3, 6))).not.toEqual(Array.from(plain.positions.slice(3, 6)));
+	});
+
+	test("anchors are rescaled, so a range of 10 gives the same layout as a range of 1", () => {
+		const edges = new Uint32Array([0, 1, 10, 11]);
+		const small = twoGroups(3, 1);
+		const large = twoGroups(3, 10);
+		const a = run({ anchors: { positions: small.positions }, dimensions: 3, edges, nodeCount: small.nodeCount });
+		const b = run({ anchors: { positions: large.positions }, dimensions: 3, edges, nodeCount: large.nodeCount });
+		for (let index = 0; index < a.length; index += 1) expect(b[index]).toBeCloseTo(a[index] ?? 0, 3);
+	});
+
+	test("per-node strength weights the pull", () => {
+		const { nodeCount, positions } = twoGroups(2);
+		const strength = new Float32Array(nodeCount).fill(1);
+		strength.fill(0, 10);
+		const settings = { ...DEFAULT_FORCE_SETTINGS, anchorStrength: 0.1, repulsion: 0 };
+		const layout = run({
+			anchors: { positions, strength },
+			dimensions: 2,
+			edges: new Uint32Array(),
+			nodeCount,
+			settings,
+		});
+		// Targets sit at x = +-13.4 (half of the default extent); only the first group is pulled to its side.
+		const miss = (from: number, to: number) => {
+			let sum = 0;
+			for (let node = from; node < to; node += 1) sum += Math.abs(Math.abs(layout[node * 3] ?? 0) - 13.4);
+			return sum / (to - from);
+		};
+		expect(miss(0, 10)).toBeLessThan(miss(10, 20));
+	});
+
+	test("anchor targets scale with linkDistance", () => {
+		const { nodeCount, positions } = twoGroups(3);
+		const request = { dimensions: 3 as const, edges: new Uint32Array(), nodeCount };
+		const at = (linkDistance: number) =>
+			createForceSimulation({
+				...request,
+				anchors: { positions },
+				settings: { ...DEFAULT_FORCE_SETTINGS, linkDistance },
+			});
+		const base = gap(at(24).positions);
+		const doubled = gap(at(48).positions);
+		expect(doubled / base).toBeGreaterThan(1.6);
+		expect(doubled / base).toBeLessThan(2.4);
+		const settled = (linkDistance: number) =>
+			gap(
+				run({
+					...request,
+					anchors: { positions },
+					settings: { ...DEFAULT_FORCE_SETTINGS, anchorStrength: 0.1, linkDistance, repulsion: 0 },
+				}),
+			);
+		expect(settled(48) / settled(24)).toBeGreaterThan(1.6);
+		expect(settled(48) / settled(24)).toBeLessThan(2.4);
+	});
+
+	test("setSettings re-derives targets like creating with that linkDistance", () => {
+		const { nodeCount, positions } = twoGroups(3);
+		const request = { dimensions: 3 as const, edges: new Uint32Array(), nodeCount };
+		const created = createForceSimulation({
+			...request,
+			anchors: { positions },
+			settings: { ...DEFAULT_FORCE_SETTINGS, linkDistance: 100 },
+		});
+		const changed = createForceSimulation({ ...request, anchors: { positions } });
+		changed.setSettings({ linkDistance: 100 });
+		for (const simulation of [created, changed]) simulation.step(0);
+		// A zero-alpha step has no force, so only the targets can differ: compare through a pulled run.
+		const pulled = (simulation: ReturnType<typeof createForceSimulation>) => {
+			simulation.setSettings({ anchorStrength: 0.1, repulsion: 0, centerAttraction: 0 });
+			for (let step = 0; step < 200; step += 1) simulation.step(1);
+			return Array.from(simulation.positions);
+		};
+		const a = pulled(created);
+		const b = pulled(changed);
+		for (let index = 0; index < a.length; index += 1) expect(b[index]).toBeCloseTo(a[index] ?? 0, 0);
+		// Added anchors use the current scale: node 0 and a new node at the same raw spot agree.
+		const start = changed.addNodes(1, undefined, undefined, { positions: new Float32Array([-1, 0, 0]) });
+		expect(changed.positions[start * 3] ?? 0).toBeCloseTo(changed.positions[0] ?? 0, -1);
+	});
+
+	test("addNodes takes anchors for added nodes; others stay unanchored", () => {
+		const { nodeCount, positions } = twoGroups(2);
+		const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount };
+		const simulation = createForceSimulation({ ...request, anchors: { positions } });
+		const start = simulation.addNodes(2, undefined, undefined, { positions: new Float32Array([1, 0, Number.NaN, 0]) });
+		expect(simulation.nodeCount).toBe(22);
+		expect(simulation.positions[start * 3] ?? 0).toBeGreaterThan(5);
+		const wrong = { positions: new Float32Array(1) };
+		expect(() => simulation.addNodes(1, undefined, undefined, wrong)).toThrow(/Anchor positions length/);
+		expect(simulation.nodeCount).toBe(22);
+		simulation.addNodes(1);
+		for (let step = 0; step < 5; step += 1) simulation.step(1);
+		expect(simulation.positions.every(Number.isFinite)).toBe(true);
+	});
+
+	test("addNodes rejects anchors on a simulation created without them", () => {
+		const simulation = createForceSimulation({ dimensions: 2, edges: new Uint32Array(), nodeCount: 2 });
+		expect(() => simulation.addNodes(1, undefined, undefined, { positions: new Float32Array(2) })).toThrow(
+			/created without anchors/,
+		);
+	});
+});

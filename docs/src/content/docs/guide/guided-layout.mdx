@@ -1,0 +1,52 @@
+---
+title: Guided layout
+description: Use embeddings you already have to place nodes, group them, and add weak layout edges.
+---
+
+If your nodes come with embeddings, you can steer the force layout with them. graphraum takes plain arrays; computing the projection, clusters, and neighbours stays in your application.
+
+| You compute | You pass to `createForceSimulation()` |
+| --- | --- |
+| PCA or UMAP of the embeddings to 2D or 3D | `anchors.positions` |
+| HDBSCAN (or DBSCAN) clusters | `clusters` |
+| k nearest neighbours | extra entries in `edges` with weak `springStrengths` |
+
+```ts
+import { createForceSimulation, DEFAULT_FORCE_SETTINGS } from "graphraum";
+
+// Your own code: 3D projection, cluster ids, and neighbour pairs from the embeddings.
+const { projection, clusterIds, neighbourPairs } = analyse(embeddings);
+
+const documentEdges = new Uint32Array(/* real relations: source, target, ... */);
+const edges = new Uint32Array([...documentEdges, ...neighbourPairs]);
+
+// Real relations keep the default spring; neighbour edges are weak.
+const springStrengths = new Float32Array(edges.length / 2).fill(0.0005);
+springStrengths.fill(DEFAULT_FORCE_SETTINGS.springStrength, 0, documentEdges.length / 2);
+
+const simulation = createForceSimulation({
+  anchors: { positions: projection }, // nodeCount * 3 values, any range
+  clusters: clusterIds, // one id per node
+  dimensions: 3,
+  edges,
+  nodeCount,
+  settings: { ...DEFAULT_FORCE_SETTINGS, anchorStrength: 0.02 },
+  springStrengths,
+});
+```
+
+## Anchors
+
+`anchors.positions` holds `nodeCount * dimensions` values in node order. The range does not matter: graphraum centres the anchors and scales them to the size of the graph (which grows with `settings.linkDistance`, and follows it if you change it with `setSettings()`), so a PCA result in [-1, 1] and a UMAP result in [-10, 10] behave the same. A node with a `NaN` value has no anchor and is laid out freely.
+
+Anchored nodes start at their anchor, and each step pulls them back towards it. `settings.anchorStrength` sets the pull (default `0.01`, range `0` to `0.1`). `anchors.strength` multiplies it, either one number for all nodes or one value per node, for example to anchor confident nodes harder. Without `anchors` nothing changes.
+
+Anchors are weak by design: links and repulsion still shape the result, so related nodes that the projection placed apart can pull together. `0.01` is gentle. On a 300-node test graph with five groups and random links, the correlation between layout distances and anchor distances was 0.88 at `0.01`, 0.95 at `0.03`, and 0.98 at `0.05` (about 0 without anchors), so `0.03` to `0.05` gives a layout that follows the projection more closely. Your graph will differ; change it one step at a time.
+
+Nodes added later with `addNodes(count, initial, clusters, anchors)` take their own anchors in the same coordinate system as the original ones. Added nodes without anchors are not pulled.
+
+## Tips
+
+- Give neighbour edges a much smaller spring than real relations, so they nudge similar nodes together without drawing a graph you did not mean to show. Layout edges do not have to be rendered.
+- Use clusters for communities you want kept together, and anchors for where they sit relative to each other.
+- Start with the defaults and change one value at a time.

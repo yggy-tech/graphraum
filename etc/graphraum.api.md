@@ -66,11 +66,18 @@ export interface EndpointOutline {
 // @public
 export const FORCE_LAYOUT_STYLES: readonly ["classic", "edge-t"];
 
+// @public
+export interface ForceAnchors {
+    positions: Float32Array;
+    strength?: number | Float32Array;
+}
+
 // @public (undocumented)
 export function forceIterationCount(nodeCount: number): number;
 
 // @public
 export interface ForceLayoutRequest {
+    anchors?: ForceAnchors;
     clusters?: Uint32Array;
     // (undocumented)
     dimensions: 2 | 3;
@@ -90,6 +97,7 @@ export type ForceLayoutStyle = (typeof FORCE_LAYOUT_STYLES)[number];
 
 // @public (undocumented)
 export interface ForceSettings {
+    anchorStrength?: number;
     // (undocumented)
     centerAttraction: number;
     clusterStrength?: number;
@@ -109,7 +117,7 @@ export interface ForceSettings {
 // @public
 export interface ForceSimulation {
     addEdges(edges: Uint32Array): void;
-    addNodes(count: number, initial?: Float32Array, clusters?: Uint32Array): number;
+    addNodes(count: number, initial?: Float32Array, clusters?: Uint32Array, anchors?: ForceAnchors): number;
     readonly edges: Uint32Array<ArrayBuffer>;
     readonly nodeCount: number;
     readonly positions: Float32Array<ArrayBuffer>;

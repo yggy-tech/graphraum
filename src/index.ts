@@ -7,6 +7,7 @@ export {
 } from "./edge-endpoint-attach";
 export { graphraumEdgePaths } from "./edge-styles";
 export type {
+	ForceAnchors,
 	ForceLayoutRequest,
 	ForceLayoutStyle,
 	ForceSettings,

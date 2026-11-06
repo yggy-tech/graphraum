@@ -1,3 +1,17 @@
+/** Per-node target positions that guide a force layout, for example a PCA or UMAP projection of embeddings. */
+export interface ForceAnchors {
+	/**
+	 * `nodeCount * dimensions` values in node order (x, y[, z] per node), in any range: graphraum centres
+	 * them and rescales them to the layout's own scale, which grows with `settings.linkDistance`. A node with a NaN value has no anchor.
+	 */
+	positions: Float32Array;
+	/**
+	 * Multiplies `settings.anchorStrength`: one finite, non-negative number for all nodes or one per
+	 * node. Omitted → 1.
+	 */
+	strength?: number | Float32Array;
+}
+
 /** Input for graphraum's dimension-aware force layout helpers. */
 export interface ForceLayoutRequest {
 	dimensions: 2 | 3;
@@ -19,6 +33,11 @@ export interface ForceLayoutRequest {
 	 * (`settings.clusterStrength`). A copy is stored; the array is never mutated.
 	 */
 	clusters?: Uint32Array;
+	/**
+	 * Optional anchor positions that pull each node towards a target (`settings.anchorStrength`), scaled
+	 * by the step alpha. Anchored nodes start at their anchor. Copies are stored.
+	 */
+	anchors?: ForceAnchors;
 	settings?: ForceSettings;
 	/**
 	 * Optional spring strength per edge (`edges.length / 2` values).
@@ -46,6 +65,12 @@ export const FORCE_LAYOUT_STYLES = ["classic", "edge-t"] as const;
 export type ForceLayoutStyle = (typeof FORCE_LAYOUT_STYLES)[number];
 
 export interface ForceSettings {
+	/**
+	 * Pull of every anchored node towards its anchor, scaled by the step alpha and the per-node anchor
+	 * strength, from `0` to `0.1`. `0.01` is gentle; `0.03` to `0.05` follows the anchors more closely. `0` disables the pull. Ignored without `anchors`.
+	 * Omitted → `DEFAULT_FORCE_SETTINGS.anchorStrength`.
+	 */
+	anchorStrength?: number;
 	centerAttraction: number;
 	/**
 	 * Pull of every node towards its cluster centroid, scaled by the step alpha and the style's
@@ -78,6 +103,7 @@ export interface ForceSettings {
 }
 
 export const DEFAULT_FORCE_SETTINGS: Required<ForceSettings> = {
+	anchorStrength: 0.01,
 	centerAttraction: 0.002,
 	clusterStrength: 0.02,
 	damping: 0.82,
@@ -111,6 +137,7 @@ function normalizeForceSettings(
 	base: Required<ForceSettings> = DEFAULT_FORCE_SETTINGS,
 ): Required<ForceSettings> {
 	return {
+		anchorStrength: clamp(settings.anchorStrength, base.anchorStrength, 0, 0.1),
 		centerAttraction: clamp(settings.centerAttraction, base.centerAttraction, 0, 0.05),
 		clusterStrength: clamp(settings.clusterStrength, base.clusterStrength, 0, 0.1),
 		damping: clamp(settings.damping, base.damping, 0.1, 0.99),
@@ -211,9 +238,14 @@ function resolveForceIterations(nodeCount: number, layoutStyle: ForceLayoutStyle
 	return Math.min(style.maxIterations, iterations);
 }
 
+/** Diameter of the default random start at the default link distance; anchors fill half of it. */
+function expectedGraphExtent(nodeCount: number) {
+	return Math.max(Math.sqrt(nodeCount) * 6, 24);
+}
+
 function initialPositions({ dimensions, nodeCount }: Pick<ForceLayoutRequest, "dimensions" | "nodeCount">) {
 	const positions = new Float32Array(nodeCount * 3);
-	const extent = Math.max(Math.sqrt(nodeCount) * 6, 24);
+	const extent = expectedGraphExtent(nodeCount);
 	for (let index = 0; index < nodeCount; index += 1) {
 		const offset = index * 3;
 		const angle = random(index * 4 + 1) * Math.PI * 2;
@@ -320,6 +352,140 @@ function degreesOf(edges: Uint32Array, nodeCount: number) {
 	return degrees;
 }
 
+/** Node strengths are stored per node; `defaultStrength` covers nodes added without one. */
+interface AnchorState {
+	/** Mean of the anchored nodes' raw positions, per axis. */
+	center: [number, number, number];
+	defaultStrength: number;
+	/** The host's anchor positions (`dimensions` per node, NaN = none), kept to re-derive `targets`. */
+	raw: Float32Array;
+	/** Raw units to layout units at the default link distance: base graph radius / largest distance from `center`. */
+	rawScale: number;
+	strengths: Float32Array;
+	/** XYZ per node in layout units at the current link distance; NaN X means no anchor. */
+	targets: Float32Array;
+}
+
+function isAnchored(positions: Float32Array, node: number, dimensions: number) {
+	for (let axis = 0; axis < dimensions; axis += 1) {
+		if (Number.isNaN(positions[node * dimensions + axis])) return false;
+	}
+	return true;
+}
+
+function assertAnchorPositions(positions: Float32Array, nodeCount: number, dimensions: number, subject: string) {
+	if (positions.length !== nodeCount * dimensions) {
+		throw new Error(
+			`Anchor positions length (${positions.length}) must equal ${subject} (${nodeCount}) times dimensions (${dimensions}) = ${nodeCount * dimensions}.`,
+		);
+	}
+	for (let index = 0; index < positions.length; index += 1) {
+		const value = positions[index] ?? 0;
+		if (!Number.isNaN(value) && !Number.isFinite(value)) {
+			throw new Error(`Anchor positions must be finite or NaN (to skip a node); found ${value} at index ${index}.`);
+		}
+	}
+}
+
+/** One strength per node: a number applies to all, an array must have one value per node. */
+function resolveAnchorStrengths(strength: number | Float32Array | undefined, nodeCount: number) {
+	const strengths = new Float32Array(nodeCount);
+	if (strength === undefined || typeof strength === "number") {
+		const value = strength ?? 1;
+		assertAnchorStrength(value, "Anchor strength");
+		strengths.fill(value);
+		return strengths;
+	}
+	if (strength.length !== nodeCount) {
+		throw new Error(`Anchor strength length (${strength.length}) must equal node count (${nodeCount}).`);
+	}
+	for (let index = 0; index < nodeCount; index += 1) {
+		assertAnchorStrength(strength[index] ?? 0, `Anchor strength at index ${index}`);
+	}
+	strengths.set(strength);
+	return strengths;
+}
+
+function assertAnchorStrength(value: number, subject: string) {
+	if (!Number.isFinite(value) || value < 0) {
+		throw new Error(`${subject} must be a finite number of at least 0; got ${value}.`);
+	}
+}
+
+/** Graph radius grows with `linkDistance`, like the settled graph, relative to the default. */
+function anchorScale(state: AnchorState, linkDistance: number) {
+	return state.rawScale * (linkDistance / DEFAULT_FORCE_SETTINGS.linkDistance);
+}
+
+/** Maps raw anchors to layout units with the given transform; skipped nodes get NaN. */
+function rescaleAnchors(positions: Float32Array, dimensions: 2 | 3, center: AnchorState["center"], scale: number) {
+	const count = positions.length / dimensions;
+	const targets = new Float32Array(count * 3).fill(Number.NaN);
+	for (let node = 0; node < count; node += 1) {
+		if (!isAnchored(positions, node, dimensions)) continue;
+		for (let axis = 0; axis < 3; axis += 1) {
+			targets[node * 3 + axis] =
+				axis < dimensions ? ((positions[node * dimensions + axis] ?? 0) - (center[axis] ?? 0)) * scale : 0;
+		}
+	}
+	return targets;
+}
+
+/**
+ * Centres the anchored nodes on their mean and scales them so the farthest one sits at the expected
+ * graph radius (`expectedGraphExtent / 2`, times `linkDistance / DEFAULT_FORCE_SETTINGS.linkDistance`),
+ * so any host range (PCA in [-1, 1], UMAP in [-10, 10]) gives the same layout. The centre and raw scale
+ * are computed once; `setSettings()` re-derives the targets when `linkDistance` changes.
+ */
+function createAnchorState(request: ForceLayoutRequest, anchors: ForceAnchors, linkDistance: number): AnchorState {
+	const { dimensions, nodeCount } = request;
+	assertAnchorPositions(anchors.positions, nodeCount, dimensions, "node count");
+	const strengths = resolveAnchorStrengths(anchors.strength, nodeCount);
+	const center: AnchorState["center"] = [0, 0, 0];
+	let anchored = 0;
+	for (let node = 0; node < nodeCount; node += 1) {
+		if (!isAnchored(anchors.positions, node, dimensions)) continue;
+		anchored += 1;
+		for (let axis = 0; axis < dimensions; axis += 1) center[axis] += anchors.positions[node * dimensions + axis] ?? 0;
+	}
+	for (let axis = 0; axis < dimensions; axis += 1) center[axis] /= Math.max(1, anchored);
+	let farthest = 0;
+	for (let node = 0; node < nodeCount; node += 1) {
+		if (!isAnchored(anchors.positions, node, dimensions)) continue;
+		let squared = 0;
+		for (let axis = 0; axis < dimensions; axis += 1) {
+			squared += ((anchors.positions[node * dimensions + axis] ?? 0) - (center[axis] ?? 0)) ** 2;
+		}
+		farthest = Math.max(farthest, Math.sqrt(squared));
+	}
+	const rawScale = farthest > 0 ? expectedGraphExtent(nodeCount) / 2 / farthest : 0;
+	const state: AnchorState = {
+		center,
+		defaultStrength: typeof anchors.strength === "number" ? anchors.strength : 1,
+		raw: new Float32Array(anchors.positions),
+		rawScale,
+		strengths,
+		targets: new Float32Array(0),
+	};
+	state.targets = rescaleAnchors(state.raw, dimensions, center, anchorScale(state, linkDistance));
+	return state;
+}
+
+/**
+ * Start anchored nodes at their anchor (plus 2% of the default start as jitter, so nodes sharing an
+ * anchor can still separate). Nodes whose pull is off, or without an anchor, keep the default start.
+ */
+function seedAtAnchors(positions: Float32Array, state: AnchorState, anchorStrength: number, firstNode = 0) {
+	if (anchorStrength <= 0) return;
+	for (let node = firstNode; node < state.targets.length / 3; node += 1) {
+		const offset = node * 3;
+		if (Number.isNaN(state.targets[offset]) || (state.strengths[node] ?? 0) <= 0) continue;
+		for (let axis = 0; axis < 3; axis += 1) {
+			positions[offset + axis] = (state.targets[offset + axis] ?? 0) + (positions[offset + axis] ?? 0) * 0.02;
+		}
+	}
+}
+
 /** A running force layout; see `createForceSimulation()`. */
 export interface ForceSimulation {
 	/** Edge endpoint pairs, including edges added with `addEdges()`. */
@@ -333,9 +499,12 @@ export interface ForceSimulation {
 	/**
 	 * Add nodes while preserving every existing position and velocity. A simulation created with
 	 * `clusters` requires one cluster index per added node (a new id starts a new cluster); a
-	 * simulation created without clusters rejects them. Returns the index of the first added node.
+	 * simulation created without clusters rejects them. A simulation created with `anchors` accepts
+	 * anchors for the added nodes, in the same raw coordinates as the original anchors (they get the
+	 * current centre and scale); added nodes without anchors are simply not pulled. A simulation
+	 * created without anchors rejects them. Returns the index of the first added node.
 	 */
-	addNodes(count: number, initial?: Float32Array, clusters?: Uint32Array): number;
+	addNodes(count: number, initial?: Float32Array, clusters?: Uint32Array, anchors?: ForceAnchors): number;
 	/** Append endpoint indices for new edges; existing edge indices remain stable. */
 	addEdges(edges: Uint32Array): void;
 	/**
@@ -345,7 +514,8 @@ export interface ForceSimulation {
 	 * relaxes into the new style over the next steps; nothing is re-seeded. Switching style changes the
 	 * effective spring, cluster and repulsion forces at once (the layout guide lists the gains).
 	 * Per-edge `linkDistances` and `springStrengths` given at creation are not re-derived; edges added
-	 * later with `addEdges()` take the new `linkDistance` and `springStrength`. An unknown style
+	 * later with `addEdges()` take the new `linkDistance` and `springStrength`. Anchor targets are
+	 * rescaled to the new `linkDistance`. An unknown style
 	 * throws and leaves the simulation unchanged.
 	 */
 	setSettings(patch: Partial<ForceSettings>): void;
@@ -374,6 +544,10 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		clusters = new Uint32Array(request.clusters);
 	}
 	let positions = clusters ? clusteredInitialPositions({ ...request, clusters }) : initialPositions(request);
+	let anchorState: AnchorState | null = request.anchors
+		? createAnchorState(request, request.anchors, settings.linkDistance)
+		: null;
+	if (anchorState) seedAtAnchors(positions, anchorState, settings.anchorStrength);
 	let velocities = new Float32Array(positions.length);
 	let forces = new Float32Array(positions.length);
 	let iteration = 0;
@@ -471,7 +645,16 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			return settings;
 		},
 		setSettings(patch: Partial<ForceSettings>) {
+			const previousLinkDistance = settings.linkDistance;
 			settings = normalizeForceSettings({ ...settings, ...patch }, settings);
+			if (anchorState && settings.linkDistance !== previousLinkDistance) {
+				anchorState.targets = rescaleAnchors(
+					anchorState.raw,
+					request.dimensions,
+					anchorState.center,
+					anchorScale(anchorState, settings.linkDistance),
+				);
+			}
 		},
 		get nodeCount() {
 			return nodeCount;
@@ -482,7 +665,7 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		get positions() {
 			return positions;
 		},
-		addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array) {
+		addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array, addedAnchors?: ForceAnchors) {
 			if (!Number.isSafeInteger(count) || count < 1) throw new Error("Node count must be a positive integer.");
 			if (initial && initial.length !== count * 3) {
 				throw new Error("Initial positions must contain one XYZ triplet per added node.");
@@ -496,6 +679,34 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			if (addedClusters) {
 				assertClusterCount(addedClusters, count, "added node count");
 				assertDenseClusterIds(addedClusters, nodeCount + count);
+			}
+			if (addedAnchors && !anchorState) {
+				throw new Error("This simulation was created without anchors: addNodes() cannot take anchors.");
+			}
+			let nextAnchorState = anchorState;
+			if (anchorState) {
+				if (addedAnchors) assertAnchorPositions(addedAnchors.positions, count, request.dimensions, "added node count");
+				const addedStrengths = addedAnchors
+					? resolveAnchorStrengths(addedAnchors.strength ?? anchorState.defaultStrength, count)
+					: new Float32Array(count);
+				const addedTargets = addedAnchors
+					? rescaleAnchors(
+							addedAnchors.positions,
+							request.dimensions,
+							anchorState.center,
+							anchorScale(anchorState, settings.linkDistance),
+						)
+					: new Float32Array(count * 3).fill(Number.NaN);
+				const strengths = new Float32Array(nodeCount + count);
+				strengths.set(anchorState.strengths);
+				strengths.set(addedStrengths, nodeCount);
+				const targets = new Float32Array((nodeCount + count) * 3);
+				targets.set(anchorState.targets);
+				targets.set(addedTargets, nodeCount * 3);
+				const raw = new Float32Array((nodeCount + count) * request.dimensions).fill(Number.NaN);
+				raw.set(anchorState.raw);
+				if (addedAnchors) raw.set(addedAnchors.positions, nodeCount * request.dimensions);
+				nextAnchorState = { ...anchorState, raw, strengths, targets };
 			}
 			const start = nodeCount;
 			const nextPositions = new Float32Array((nodeCount + count) * 3);
@@ -524,6 +735,8 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 					nextSizes = new Uint32Array(nextClusterCount);
 				}
 			}
+			if (nextAnchorState && !initial) seedAtAnchors(nextPositions, nextAnchorState, settings.anchorStrength, start);
+			anchorState = nextAnchorState;
 			clusters = nextClusters;
 			clusterCount = nextClusterCount;
 			clusterCentroids = nextCentroids;
@@ -565,6 +778,8 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			const pullClusters = clusters && settings.clusterStrength > 0 ? clusters : null;
 			const preset = FORCE_LAYOUT_STYLE_PRESETS[settings.layoutStyle];
 			const clusterPull = settings.clusterStrength * preset.clusterGain * alpha;
+			const anchors = anchorState && settings.anchorStrength > 0 ? anchorState : null;
+			const anchorPull = settings.anchorStrength * alpha;
 			if (pullClusters) updateClusterCentroids(pullClusters);
 			for (let index = 0; index < nodeCount; index += 1) {
 				const offset = index * 3;
@@ -577,6 +792,16 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 					for (let axis = 0; axis < request.dimensions; axis += 1) {
 						forces[offset + axis] +=
 							((clusterCentroids[centroid + axis] ?? 0) - (positions[offset + axis] ?? 0)) * clusterPull;
+					}
+				}
+			}
+			if (anchors) {
+				for (let index = 0; index < nodeCount; index += 1) {
+					const offset = index * 3;
+					if (Number.isNaN(anchors.targets[offset])) continue;
+					const pull = anchorPull * (anchors.strengths[index] ?? 0);
+					for (let axis = 0; axis < request.dimensions; axis += 1) {
+						forces[offset + axis] += ((anchors.targets[offset + axis] ?? 0) - (positions[offset + axis] ?? 0)) * pull;
 					}
 				}
 			}

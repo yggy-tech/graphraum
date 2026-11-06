@@ -3,7 +3,8 @@
 import { appendFileSync } from "node:fs";
 
 // 64 000 since lit and toon shading (#165): the light shader and scene option validation.
-const BUDGETS = [{ file: "dist/index.js", gzipBytes: 64_000 }];
+// 66 000 since layout styles (#191): edge-t, plus room for the planned styles in #170, #192 and #193.
+const BUDGETS = [{ file: "dist/index.js", gzipBytes: 66_000 }];
 
 const kib = (bytes: number) => `${(bytes / 1024).toFixed(1)} KiB`;
 const rows: string[] = [];

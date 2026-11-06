@@ -1,4 +1,4 @@
-import { DEFAULT_FORCE_SETTINGS, graphraumTheme } from "../../src";
+import { DEFAULT_FORCE_SETTINGS, FORCE_LAYOUT_STYLES, graphraumTheme } from "../../src";
 import { Checkbox, Color, Field, Input, Section, Select, Slider } from "./ui";
 
 const shapes = [
@@ -121,10 +121,12 @@ export function renderControls(form: HTMLFormElement) {
 		),
 		Section(
 			"Force layout",
-			SelectField("Repulsion model", "forceRepulsionModel", DEFAULT_FORCE_SETTINGS.repulsionModel, [
-				{ label: "Classic", value: "classic" },
-				{ label: "Edge-t (degree-aware)", value: "edge-t" },
-			]),
+			SelectField(
+				"Layout style",
+				"forceLayoutStyle",
+				DEFAULT_FORCE_SETTINGS.layoutStyle,
+				FORCE_LAYOUT_STYLES.map((style) => ({ label: style, value: style })),
+			),
 			NumberField("Repulsion", "forceRepulsion", DEFAULT_FORCE_SETTINGS.repulsion, 0, 5000, 25),
 			NumberField("Link distance", "forceLinkDistance", DEFAULT_FORCE_SETTINGS.linkDistance, 1, 500, 1),
 			NumberField(

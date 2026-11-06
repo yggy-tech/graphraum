@@ -32,16 +32,7 @@ export function computeClusteredForcePositions(request: ForceLayoutRequest & {
 export function computeForcePositions(request: ForceLayoutRequest): Float32Array<ArrayBuffer>;
 
 // @public (undocumented)
-export function createForceSimulation(request: ForceLayoutRequest): {
-    readonly settings: Readonly<Required<ForceSettings>>;
-    setSettings(next: ForceSettings): void;
-    readonly nodeCount: number;
-    readonly edges: Uint32Array<ArrayBuffer>;
-    readonly positions: Float32Array<ArrayBuffer>;
-    addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array): number;
-    addEdges(nextEdges: Uint32Array): void;
-    step(alpha: number): void;
-};
+export function createForceSimulation(request: ForceLayoutRequest): ForceSimulation;
 
 // @public (undocumented)
 export const DEFAULT_ENDPOINT_ATTACH: EndpointAttach;
@@ -73,7 +64,7 @@ export interface EndpointOutline {
 }
 
 // @public
-export const FORCE_REPULSION_MODELS: readonly ForceRepulsionModel[];
+export const FORCE_LAYOUT_STYLES: readonly ["classic", "edge-t"];
 
 // @public (undocumented)
 export function forceIterationCount(nodeCount: number): number;
@@ -95,7 +86,7 @@ export interface ForceLayoutRequest {
 }
 
 // @public
-export type ForceRepulsionModel = "classic" | "edge-t";
+export type ForceLayoutStyle = (typeof FORCE_LAYOUT_STYLES)[number];
 
 // @public (undocumented)
 export interface ForceSettings {
@@ -104,15 +95,27 @@ export interface ForceSettings {
     clusterStrength?: number;
     // (undocumented)
     damping: number;
+    layoutStyle?: ForceLayoutStyle;
     // (undocumented)
     linkDistance: number;
     negativeSamples?: number;
     // (undocumented)
     repulsion: number;
-    repulsionModel?: ForceRepulsionModel;
     // (undocumented)
     springStrength: number;
     tDegrees?: number;
+}
+
+// @public
+export interface ForceSimulation {
+    addEdges(edges: Uint32Array): void;
+    addNodes(count: number, initial?: Float32Array, clusters?: Uint32Array): number;
+    readonly edges: Uint32Array<ArrayBuffer>;
+    readonly nodeCount: number;
+    readonly positions: Float32Array<ArrayBuffer>;
+    setSettings(patch: Partial<ForceSettings>): void;
+    readonly settings: Readonly<Required<ForceSettings>>;
+    step(alpha: number): void;
 }
 
 // @public (undocumented)

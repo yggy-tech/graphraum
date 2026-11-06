@@ -95,12 +95,55 @@ export function starForest(sizes = [60, 45, 35, 25, 18, 12, 8, 5]): QualityGraph
 	return { edges: packEdges(pairs), groups, name: "star forest", nodeCount };
 }
 
-/** Sparse random graph (mean degree about 3) for step timing. */
-export function sparseRandomGraph(nodeCount: number, seed = 7): QualityGraph {
+/**
+ * Dense planted communities (held out from tuning): every node links to `meanDegree / 2` partners,
+ * 90% inside its own group, so hubs are rare and groups are dense.
+ */
+export function denseCommunities(seed = 11, groupSizes = [160, 120, 100, 80, 60, 40], meanDegree = 20): QualityGraph {
+	const random = seededRandom(seed);
+	const nodeCount = groupSizes.reduce((sum, size) => sum + size, 0);
+	const groups = new Uint32Array(nodeCount);
+	const starts: number[] = [];
+	let cursor = 0;
+	for (const [group, size] of groupSizes.entries()) {
+		starts.push(cursor);
+		groups.fill(group, cursor, cursor + size);
+		cursor += size;
+	}
+	const pairs: number[][] = [];
+	for (let node = 0; node < nodeCount; node += 1) {
+		const group = groups[node] ?? 0;
+		for (let link = 0; link < meanDegree / 2; link += 1) {
+			if (random() < 0.9) {
+				pairs.push([node, (starts[group] ?? 0) + Math.floor(random() * (groupSizes[group] ?? 1))]);
+			} else pairs.push([node, Math.floor(random() * nodeCount)]);
+		}
+	}
+	const unique = pairs.filter(([source, target]) => source !== target);
+	return { edges: packEdges(unique), groups, name: "dense communities", nodeCount };
+}
+
+/** Complete binary tree (held out from tuning); groups are the four subtrees two levels below the root. */
+export function binaryTree(depth = 8): QualityGraph {
+	const nodeCount = 2 ** depth - 1;
+	const groups = new Uint32Array(nodeCount);
+	const pairs: number[][] = [];
+	for (let node = 1; node < nodeCount; node += 1) {
+		pairs.push([(node - 1) >> 1, node]);
+		let ancestor = node;
+		while (ancestor > 6) ancestor = (ancestor - 1) >> 1;
+		groups[node] = ancestor >= 3 ? ancestor - 3 : 0;
+	}
+	return { edges: packEdges(pairs), groups, name: "binary tree", nodeCount };
+}
+
+/** Random connected graph with about `meanDegree` edge ends per node, for step timing. */
+export function sparseRandomGraph(nodeCount: number, seed = 7, meanDegree = 3): QualityGraph {
 	const random = seededRandom(seed);
 	const pairs: number[][] = [];
 	for (let index = 1; index < nodeCount; index += 1) pairs.push([Math.floor(random() * index), index]);
-	for (let index = 0; index < nodeCount / 2; index += 1) {
+	const extraEdges = Math.max(0, Math.round((nodeCount * meanDegree) / 2) - (nodeCount - 1));
+	for (let index = 0; index < extraEdges; index += 1) {
 		pairs.push([Math.floor(random() * nodeCount), Math.floor(random() * nodeCount)]);
 	}
 	return {

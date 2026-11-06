@@ -37,6 +37,7 @@ export default defineConfig({
 						{ label: "Data and visuals", link: "/guide/data-and-visuals/" },
 						{ label: "Labels and focus", link: "/guide/labels-and-focus/" },
 						{ label: "Layout", link: "/guide/layout/" },
+						{ label: "Guided layout", link: "/guide/guided-layout/" },
 						{ label: "Camera and 3D", link: "/guide/camera-and-3d/" },
 						{ label: "Theme", link: "/guide/theme/" },
 					],

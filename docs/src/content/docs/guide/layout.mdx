@@ -79,6 +79,22 @@ simulation.step(0.35);
 
 **Quality.** On the deterministic fixtures in `src/force-layout.quality.test.ts`, `"edge-t"` raises the group silhouette of a 400-node block model with hub documents from -0.22 to 0.37 (one-shot) and from -0.24 to 0.38 (live). On a held-out block model it was not tuned on it reaches 0.18 (one-shot) and 0.30 (live), where `"classic"` stays below -0.2. Edge-length variation drops from 0.39 to 0.20 on a chain and from 0.35 to 0.10 on a star forest. Edges between groups get longer, so edge lengths on block models vary more (0.39 to 0.49), and a very large hub can sit off the centre of its own star.
 
+### Checking which clusters are stable
+
+A drawing can suggest groups that come from the seed and not from the graph. `measureLayoutStability()` runs the one-shot layout with several seeds and reports, per cluster, how much of each node's neighbourhood survives. It also measures a degree-preserving shuffle of the graph, so you can see what a cluster scores by chance.
+
+```ts
+import { DEFAULT_FORCE_SETTINGS } from "@yggy-tech/graphraum";
+import { measureLayoutStability } from "@yggy-tech/graphraum/diagnostics";
+
+const { clusters, overall, placeboOverall } = measureLayoutStability(
+  { clusters, dimensions: 2, edges, nodeCount, settings: { ...DEFAULT_FORCE_SETTINGS, layoutStyle: "edge-t" } },
+  { seeds: 5, neighbours: 10 },
+);
+```
+
+A node's stability is the average overlap (shared over union) of its 10 nearest nodes between every two runs, from 0 to 1. A cluster's stability is the average over its nodes. Treat a cluster as real only when its `stability` is clearly above its `placeboStability`. `clusters` only labels nodes for scoring and does not pull them together. It lives in the separate `@yggy-tech/graphraum/diagnostics` entry, so it adds nothing to the main bundle. The check is deterministic, takes 2 to 32 seeds and up to 5,000 nodes, and its cost grows with the square of the node count. The `"classic"` one-shot layout scores close to its placebo on most graphs, so measure `"edge-t"`. The Prove run reports the same score for its fixture as `layoutStability`.
+
 ### Clusters in a live simulation
 
 Pass `clusters` (one `Uint32Array` entry per node) to `createForceSimulation()` to keep data-defined communities together while the layout runs. The simulation seeds nodes around cluster centres exactly like `computeClusteredForcePositions()`, then adds a weak pull of every node towards its cluster centroid on each step. `settings.clusterStrength` scales the pull (default `0.02`, range `0` to `0.1`); `0` disables it, and it is ignored without `clusters`. The array length must equal `nodeCount`, and the simulation keeps its own copy. Cluster ids must be dense: every id has to be smaller than the node count (`addNodes()` checks against the new total), otherwise the call throws before changing anything. `createForceSimulation()` honours `clusters`, and so does `computeForcePositions()`, which runs a simulation; `computeClusteredForcePositions()` keeps its one-shot seeding and accepts sparse ids.

@@ -1,7 +1,7 @@
 import { Graphraum, type GraphraumMode } from "@yggy-tech/graphraum";
 
 import { createFixture, effectivePixelRatio, summarize } from "../lib/benchmark";
-import { measureProgressiveForceLayout } from "../lib/layout-benchmark";
+import { measureFixtureLayoutStability, measureProgressiveForceLayout } from "../lib/layout-benchmark";
 import type { ProveMeasures } from "../lib/prove-reference";
 
 type MemoryPerformance = Performance & { memory?: { usedJSHeapSize: number } };
@@ -99,6 +99,10 @@ export async function runProve({ container, mode, nodeCount, onPhase }: ProveOpt
 		nodeCount,
 	});
 
+	onPhase("Measuring layout stability", 0.8);
+	await nextFrame();
+	const layoutStability = measureFixtureLayoutStability(nodeCount, data.edges);
+
 	onPhase("Measuring updates", 0.85);
 	const incrementalNodeCount = Math.max(10, Math.floor(nodeCount * 0.01));
 	const incrementalStartedAt = performance.now();
@@ -123,6 +127,7 @@ export async function runProve({ container, mode, nodeCount, onPhase }: ProveOpt
 	const payload = {
 		approach: "graphraum",
 		fixture: { edgeCount, nodeCount },
+		layoutStability,
 		protocol: { frameSampleCount, selectionSampleCount, warmupFrameCount },
 		mode,
 		devicePixelRatio: window.devicePixelRatio,

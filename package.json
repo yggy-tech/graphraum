@@ -20,11 +20,15 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./diagnostics": {
+			"types": "./dist/diagnostics.d.ts",
+			"import": "./dist/diagnostics.js"
 		}
 	},
 	"scripts": {
-		"api:check": "api-extractor run",
-		"api:update": "api-extractor run --local",
+		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json",
+		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json",
 		"build": "tsdown",
 		"check": "biome check . && tsc --noEmit",
 		"check:package": "publint && attw --pack . --profile esm-only && bun scripts/check-bundle-size.ts",

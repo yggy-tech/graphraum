@@ -1,19 +1,38 @@
 // Fails when the published bundle grows past its budget. Raise a budget on purpose, in the same PR
-// that explains the growth; three.js stays a peer and is not counted.
+// that explains the growth; three.js stays a peer and is not counted. An entry counts together with
+// the local chunks it imports, so code shared between entries still counts against the main entry.
 import { appendFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 // 64 000 since lit and toon shading (#165): the light shader and scene option validation.
 // 66 000 since layout styles (#191): edge-t, plus room for the planned styles in #170, #192 and #193.
 const BUDGETS = [{ file: "dist/index.js", gzipBytes: 66_000 }];
+
+const LOCAL_IMPORT = /\bfrom\s*["'](\.\/[^"']+\.js)["']/g;
+
+/** The entry plus every local chunk it imports, each counted once. */
+async function bundleOf(entry: string): Promise<Uint8Array> {
+	const seen = new Set<string>();
+	const parts: Uint8Array[] = [];
+	async function visit(file: string) {
+		if (seen.has(file)) return;
+		seen.add(file);
+		const source = Bun.file(file);
+		if (!(await source.exists())) throw new Error(`${file} is missing. Run \`bun run build\` first.`);
+		const text = await source.text();
+		parts.push(new TextEncoder().encode(text));
+		for (const [, chunk] of text.matchAll(LOCAL_IMPORT)) await visit(join(dirname(file), chunk ?? ""));
+	}
+	await visit(entry);
+	return Buffer.concat(parts);
+}
 
 const kib = (bytes: number) => `${(bytes / 1024).toFixed(1)} KiB`;
 const rows: string[] = [];
 let failed = false;
 
 for (const { file, gzipBytes } of BUDGETS) {
-	const source = Bun.file(file);
-	if (!(await source.exists())) throw new Error(`${file} is missing. Run \`bun run build\` first.`);
-	const bytes = await source.bytes();
+	const bytes = await bundleOf(file);
 	const gzip = Bun.gzipSync(bytes).length;
 	const over = gzip > gzipBytes;
 	failed ||= over;

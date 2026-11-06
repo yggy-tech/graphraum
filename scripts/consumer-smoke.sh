@@ -16,10 +16,13 @@ node --input-type=module -e "
 const graphraum = await import('@yggy-tech/graphraum');
 if (typeof graphraum.Graphraum !== 'function') throw new Error('Graphraum export missing');
 console.log('runtime import ok:', Object.keys(graphraum).length, 'exports');
+const diagnostics = await import('@yggy-tech/graphraum/diagnostics');
+if (typeof diagnostics.measureLayoutStability !== 'function') throw new Error('diagnostics export missing');
 "
 
 cat > consumer.ts <<'TS'
 import { computeForcePositions, Graphraum, type GraphraumData } from "@yggy-tech/graphraum";
+import { measureLayoutStability } from "@yggy-tech/graphraum/diagnostics";
 
 const data: GraphraumData = {
 	nodes: [{ id: "a", position: { x: 0, y: 0 } }],
@@ -28,6 +31,7 @@ const data: GraphraumData = {
 export function mount(element: HTMLElement) {
 	const graph = new Graphraum(element, { mode: "3d" });
 	graph.setData(data);
+	void measureLayoutStability;
 	return computeForcePositions({ dimensions: 2, edges: new Uint32Array(), nodeCount: 1 });
 }
 TS

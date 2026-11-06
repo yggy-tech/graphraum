@@ -1,0 +1,81 @@
+name: PR
+
+# One required check ("PR checks") that runs only what a change can break:
+# - code (src, examples, scripts, build config, lockfile): every check
+# - docs only: commit lint, lint, types and the docs build
+# - workflows: every check, so a CI change is exercised before it lands
+# CodeQL keeps its own PR trigger (codeql.yml). main runs the full set on push either way.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.paths.outputs.code }}
+      docs: ${{ steps.paths.outputs.docs }}
+      deps: ${{ steps.paths.outputs.deps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/pr-changes.sh "$BASE" "$HEAD" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: changes
+    uses: $/.github/workflows/verify.yml
+    with:
+      code: ${{ needs.changes.outputs.code == 'true' }}
+      docs: ${{ needs.changes.outputs.docs == 'true' }}
+
+  browser:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: $/.github/workflows/browser.yml
+
+  package:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: $/.github/workflows/package.yml
+
+  security:
+    needs: changes
+    permissions:
+      contents: read
+      security-events: write
+    uses: $/.github/workflows/security.yml
+    with:
+      deps: ${{ needs.changes.outputs.deps == 'true' }}
+
+  gate:
+    name: PR checks
+    if: always()
+    needs: [changes, verify, browser, package, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every check passed or was not needed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) echo "::error::A required check ended as $result"; exit 1 ;;
+            esac
+          done

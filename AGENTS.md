@@ -76,6 +76,8 @@ Custom docs surfaces use flat cards with one outer border and edge-to-edge secti
 4. Open a PR with **What / Why or Fix / Verification** and link the GitHub issue.
 5. Wait for CI and record follow-up work as GitHub issues instead of expanding scope silently.
 
+PRs have one required check, **PR checks**. `.github/workflows/pr.yml` runs only what the changed paths can break (`scripts/pr-changes.sh`): a docs-only PR gets commit lint, lint, types and the docs build; a change to `src`, `examples`, `scripts`, build config, the lockfile or `.github/` gets every check. CodeQL keeps its own PR trigger and skips docs-only PRs. `main` runs the full set on push.
+
 ## Conventional Commits and releases
 
 Commit messages and PR titles follow:

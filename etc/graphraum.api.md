@@ -33,6 +33,8 @@ export function computeForcePositions(request: ForceLayoutRequest): Float32Array
 
 // @public (undocumented)
 export function createForceSimulation(request: ForceLayoutRequest): {
+    readonly settings: Readonly<Required<ForceSettings>>;
+    setSettings(next: ForceSettings): void;
     readonly nodeCount: number;
     readonly edges: Uint32Array<ArrayBuffer>;
     readonly positions: Float32Array<ArrayBuffer>;
@@ -70,6 +72,9 @@ export interface EndpointOutline {
     width?: number;
 }
 
+// @public
+export const FORCE_REPULSION_MODELS: readonly ForceRepulsionModel[];
+
 // @public (undocumented)
 export function forceIterationCount(nodeCount: number): number;
 
@@ -89,6 +94,9 @@ export interface ForceLayoutRequest {
     springStrengths?: Float32Array;
 }
 
+// @public
+export type ForceRepulsionModel = "classic" | "edge-t";
+
 // @public (undocumented)
 export interface ForceSettings {
     // (undocumented)
@@ -98,10 +106,13 @@ export interface ForceSettings {
     damping: number;
     // (undocumented)
     linkDistance: number;
+    negativeSamples?: number;
     // (undocumented)
     repulsion: number;
+    repulsionModel?: ForceRepulsionModel;
     // (undocumented)
     springStrength: number;
+    tDegrees?: number;
 }
 
 // @public (undocumented)

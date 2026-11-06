@@ -1,4 +1,4 @@
-import type { ForceSettings } from "../../src";
+import type { ForceRepulsionModel, ForceSettings } from "../../src";
 import {
 	defineVisuals,
 	Graphraum,
@@ -119,6 +119,7 @@ function readState(): LabState {
 			damping: formNumber(values, "forceDamping"),
 			linkDistance: formNumber(values, "forceLinkDistance"),
 			repulsion: formNumber(values, "forceRepulsion"),
+			repulsionModel: formValue(values, "forceRepulsionModel") as ForceRepulsionModel,
 			springStrength: formNumber(values, "forceSpringStrength"),
 		},
 		glowNodes: formNumber(values, "glowNodes"),

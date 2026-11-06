@@ -37,6 +37,41 @@ simulation.step(0.35);
 
 The simulation recalculates and recenters its centroid after every step, so a live renderer can keep orbit controls focused without refitting the camera. In 2D every Z coordinate remains zero.
 
+### Layout styles
+
+`ForceSettings.repulsionModel` picks how nodes push each other apart. Each style is a named choice, so more can be added later without changing what an existing name does. `FORCE_REPULSION_MODELS` lists the supported names; an unknown name throws.
+
+| Style | What it does | When to use it |
+| --- | --- | --- |
+| `"classic"` (default) | Every node is pushed away from 8 sampled nodes with a capped inverse-square force, whatever its degree. | Small graphs, and anything tuned against earlier releases. |
+| `"edge-t"` | Every edge pushes both of its nodes away from `negativeSamples` sampled nodes with a bounded Student-t force. A node with many edges gets more room, so groups separate and hubs stop piling up in the middle. | Degree-skewed graphs, for example documents with many facts, that otherwise end up as one tangled ball. |
+
+`"edge-t"` has two settings of its own, clamped like the others:
+
+- `negativeSamples` (default `2`, integer `1` to `16`): sampled nodes per edge end and step. More samples give a smoother push at a linear cost.
+- `tDegrees` (default `1`, `0.5` to `10`): the tail of the force. Lower values keep distant groups pushing each other apart; higher values make the push more local.
+
+Each step still costs O(edges + nodes) and needs no spatial index. `"edge-t"` also uses stronger springs and a stronger cluster pull to balance its push, so `repulsion`, `springStrength` and `clusterStrength` are relative to that style: tune them for the style you use. Its one-shot layout runs 8 times `forceIterationCount(nodeCount)` steps by default (explicit `iterations` are capped at 512 instead of 64), because it keeps separating groups after the classic style has stopped improving.
+
+```ts
+const positions = computeForcePositions({
+  dimensions: 2,
+  edges,
+  nodeCount,
+  settings: { ...DEFAULT_FORCE_SETTINGS, repulsionModel: "edge-t" },
+});
+```
+
+A live simulation can switch style while it runs. `setSettings()` keeps positions, velocities, edges and clusters, so the graph moves from where it is into the new style over the next steps instead of jumping back to a fresh seed. `simulation.settings` returns the effective settings after clamping.
+
+```ts
+const simulation = createForceSimulation({ dimensions: 2, edges, nodeCount });
+simulation.setSettings({ ...simulation.settings, repulsionModel: "edge-t" });
+simulation.step(0.35);
+```
+
+Measured on the deterministic fixtures in `src/force-layout.quality.test.ts` (a 400-node block model with hub documents, a 200-node chain and a star forest), `"edge-t"` lifts the group silhouette of the block model from about -0.2 to 0.3 (one-shot) and 0.45 (live), and makes edge lengths on chains and stars two to three times more even, at about the same cost per step. Edges between groups get longer, which is the point, but it also makes edge lengths on the block model less even.
+
 ### Clusters in a live simulation
 
 Pass `clusters` (one `Uint32Array` entry per node) to `createForceSimulation()` to keep data-defined communities together while the layout runs. The simulation seeds nodes around cluster centres exactly like `computeClusteredForcePositions()`, then adds a weak pull of every node towards its cluster centroid on each step. `settings.clusterStrength` scales the pull (default `0.02`, range `0` to `0.1`); `0` disables it, and it is ignored without `clusters`. The array length must equal `nodeCount`, and the simulation keeps its own copy. Cluster ids must be dense: every id has to be smaller than the node count (`addNodes()` checks against the new total), otherwise the call throws before changing anything. `createForceSimulation()` honours `clusters`, and so does `computeForcePositions()`, which runs a simulation; `computeClusteredForcePositions()` keeps its one-shot seeding and accepts sparse ids.

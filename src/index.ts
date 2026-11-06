@@ -6,12 +6,13 @@ export {
 	trimEdgeEndpoints,
 } from "./edge-endpoint-attach";
 export { graphraumEdgePaths } from "./edge-styles";
-export type { ForceLayoutRequest, ForceSettings } from "./force-layout";
+export type { ForceLayoutRequest, ForceRepulsionModel, ForceSettings } from "./force-layout";
 export {
 	computeClusteredForcePositions,
 	computeForcePositions,
 	createForceSimulation,
 	DEFAULT_FORCE_SETTINGS,
+	FORCE_REPULSION_MODELS,
 	forceIterationCount,
 } from "./force-layout";
 export type { GraphologyEdgeAttributes, GraphologyNodeAttributes, GraphologyRenderer } from "./graphology";

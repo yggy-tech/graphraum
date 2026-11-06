@@ -1,10 +1,11 @@
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
 	computeClusteredForcePositions,
 	computeForcePositions,
 	createForceSimulation,
 	DEFAULT_FORCE_SETTINGS,
+	type ForceSettings,
 	forceIterationCount,
 } from "./force-layout";
 
@@ -408,4 +409,112 @@ test("computeForcePositions honours clusters through the live simulation", () =>
 	expect(meanIntraClusterDistance(clustered, request.clusters)).toBeLessThan(
 		meanIntraClusterDistance(computeForcePositions({ ...unclustered, iterations: 16 }), request.clusters),
 	);
+});
+
+describe("repulsionModel", () => {
+	const ring = (nodeCount: number) => {
+		const edges = new Uint32Array(nodeCount * 2);
+		for (let index = 0; index < nodeCount; index += 1) edges.set([index, (index + 1) % nodeCount], index * 2);
+		return { dimensions: 2 as const, edges, nodeCount };
+	};
+
+	test("defaults to classic and keeps classic positions unchanged", () => {
+		const request = ring(32);
+		const simulation = createForceSimulation(request);
+		expect(simulation.settings.repulsionModel).toBe("classic");
+		expect(
+			computeForcePositions({ ...request, settings: { ...DEFAULT_FORCE_SETTINGS, repulsionModel: "classic" } }),
+		).toEqual(computeForcePositions(request));
+	});
+
+	test("is deterministic for edge-t and differs from classic", () => {
+		const request = { ...ring(64), settings: { ...DEFAULT_FORCE_SETTINGS, repulsionModel: "edge-t" as const } };
+		const first = computeForcePositions(request);
+		expect(computeForcePositions(request)).toEqual(first);
+		expect(first.every(Number.isFinite)).toBe(true);
+		expect(first).not.toEqual(computeForcePositions(ring(64)));
+	});
+
+	test("clamps edge-t parameters like the other settings", () => {
+		const clamped = createForceSimulation({
+			...ring(4),
+			settings: { ...DEFAULT_FORCE_SETTINGS, negativeSamples: 100.4, repulsionModel: "edge-t", tDegrees: 0 },
+		}).settings;
+		expect(clamped.negativeSamples).toBe(16);
+		expect(clamped.tDegrees).toBe(0.5);
+		const low = createForceSimulation({
+			...ring(4),
+			settings: { ...DEFAULT_FORCE_SETTINGS, negativeSamples: -3, tDegrees: 99 },
+		}).settings;
+		expect(low.negativeSamples).toBe(1);
+		expect(low.tDegrees).toBe(10);
+		const fallback = createForceSimulation({
+			...ring(4),
+			settings: { ...DEFAULT_FORCE_SETTINGS, negativeSamples: Number.NaN, tDegrees: Number.NaN },
+		}).settings;
+		expect(fallback.negativeSamples).toBe(DEFAULT_FORCE_SETTINGS.negativeSamples);
+		expect(fallback.tDegrees).toBe(DEFAULT_FORCE_SETTINGS.tDegrees);
+	});
+
+	test("rejects an unknown model", () => {
+		const settings = { ...DEFAULT_FORCE_SETTINGS, repulsionModel: "spring" } as unknown as ForceSettings;
+		expect(() => createForceSimulation({ ...ring(4), settings })).toThrow(/Unknown repulsionModel "spring"/);
+	});
+
+	test("caps explicit iterations per model", () => {
+		const request = ring(16);
+		const edgeT = { ...DEFAULT_FORCE_SETTINGS, repulsionModel: "edge-t" as const };
+		expect(computeForcePositions({ ...request, iterations: 1_000 })).toEqual(
+			computeForcePositions({ ...request, iterations: 64 }),
+		);
+		expect(computeForcePositions({ ...request, iterations: 1_000, settings: edgeT })).toEqual(
+			computeForcePositions({ ...request, iterations: 512, settings: edgeT }),
+		);
+	});
+
+	test("switches model on a live simulation without re-seeding", () => {
+		const simulation = createForceSimulation(ring(48));
+		for (let step = 0; step < 10; step += 1) simulation.step(0.35);
+		const before = simulation.positions.slice();
+		simulation.setSettings({ ...DEFAULT_FORCE_SETTINGS, repulsionModel: "edge-t" });
+		expect(simulation.positions).toEqual(before);
+		expect(simulation.settings.repulsionModel).toBe("edge-t");
+		simulation.step(0.35);
+		expect(simulation.positions).not.toEqual(before);
+		expect(simulation.positions.every(Number.isFinite)).toBe(true);
+		const settingsBefore = simulation.settings;
+		expect(() =>
+			simulation.setSettings({ ...DEFAULT_FORCE_SETTINGS, repulsionModel: "nope" } as unknown as ForceSettings),
+		).toThrow(/Unknown repulsionModel/);
+		expect(simulation.settings).toBe(settingsBefore);
+	});
+
+	test("matches a live simulation that started in the same model after switching back", () => {
+		const request = ring(24);
+		const switched = createForceSimulation(request);
+		switched.setSettings({ ...DEFAULT_FORCE_SETTINGS, repulsionModel: "edge-t" });
+		switched.setSettings(DEFAULT_FORCE_SETTINGS);
+		const plain = createForceSimulation(request);
+		for (let step = 0; step < 5; step += 1) {
+			switched.step(0.35);
+			plain.step(0.35);
+		}
+		expect(switched.positions).toEqual(plain.positions);
+	});
+
+	test("pushes isolated nodes and counts degrees of added edges", () => {
+		const simulation = createForceSimulation({
+			dimensions: 3,
+			edges: new Uint32Array(),
+			nodeCount: 6,
+			settings: { ...DEFAULT_FORCE_SETTINGS, repulsionModel: "edge-t" },
+		});
+		const seed = simulation.positions.slice();
+		simulation.step(1);
+		expect(simulation.positions).not.toEqual(seed);
+		simulation.addNodes(2);
+		simulation.addEdges(new Uint32Array([0, 6, 0, 7]));
+		for (let step = 0; step < 20; step += 1) simulation.step(0.35);
+		expect(simulation.positions.every(Number.isFinite)).toBe(true);
+	});
 });

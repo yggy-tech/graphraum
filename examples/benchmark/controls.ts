@@ -121,6 +121,10 @@ export function renderControls(form: HTMLFormElement) {
 		),
 		Section(
 			"Force layout",
+			SelectField("Repulsion model", "forceRepulsionModel", DEFAULT_FORCE_SETTINGS.repulsionModel, [
+				{ label: "Classic", value: "classic" },
+				{ label: "Edge-t (degree-aware)", value: "edge-t" },
+			]),
 			NumberField("Repulsion", "forceRepulsion", DEFAULT_FORCE_SETTINGS.repulsion, 0, 5000, 25),
 			NumberField("Link distance", "forceLinkDistance", DEFAULT_FORCE_SETTINGS.linkDistance, 1, 500, 1),
 			NumberField(

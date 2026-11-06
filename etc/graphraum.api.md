@@ -32,14 +32,7 @@ export function computeClusteredForcePositions(request: ForceLayoutRequest & {
 export function computeForcePositions(request: ForceLayoutRequest): Float32Array<ArrayBuffer>;
 
 // @public (undocumented)
-export function createForceSimulation(request: ForceLayoutRequest): {
-    readonly nodeCount: number;
-    readonly edges: Uint32Array<ArrayBuffer>;
-    readonly positions: Float32Array<ArrayBuffer>;
-    addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array): number;
-    addEdges(nextEdges: Uint32Array): void;
-    step(alpha: number): void;
-};
+export function createForceSimulation(request: ForceLayoutRequest): ForceSimulation;
 
 // @public (undocumented)
 export const DEFAULT_ENDPOINT_ATTACH: EndpointAttach;
@@ -70,6 +63,9 @@ export interface EndpointOutline {
     width?: number;
 }
 
+// @public
+export const FORCE_LAYOUT_STYLES: readonly ["classic", "edge-t"];
+
 // @public (undocumented)
 export function forceIterationCount(nodeCount: number): number;
 
@@ -89,6 +85,9 @@ export interface ForceLayoutRequest {
     springStrengths?: Float32Array;
 }
 
+// @public
+export type ForceLayoutStyle = (typeof FORCE_LAYOUT_STYLES)[number];
+
 // @public (undocumented)
 export interface ForceSettings {
     // (undocumented)
@@ -96,12 +95,27 @@ export interface ForceSettings {
     clusterStrength?: number;
     // (undocumented)
     damping: number;
+    layoutStyle?: ForceLayoutStyle;
     // (undocumented)
     linkDistance: number;
+    negativeSamples?: number;
     // (undocumented)
     repulsion: number;
     // (undocumented)
     springStrength: number;
+    tDegrees?: number;
+}
+
+// @public
+export interface ForceSimulation {
+    addEdges(edges: Uint32Array): void;
+    addNodes(count: number, initial?: Float32Array, clusters?: Uint32Array): number;
+    readonly edges: Uint32Array<ArrayBuffer>;
+    readonly nodeCount: number;
+    readonly positions: Float32Array<ArrayBuffer>;
+    setSettings(patch: Partial<ForceSettings>): void;
+    readonly settings: Readonly<Required<ForceSettings>>;
+    step(alpha: number): void;
 }
 
 // @public (undocumented)

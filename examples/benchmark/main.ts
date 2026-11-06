@@ -1,6 +1,7 @@
-import type { ForceSettings } from "../../src";
 import {
 	defineVisuals,
+	FORCE_LAYOUT_STYLES,
+	type ForceSettings,
 	Graphraum,
 	type GraphraumEdgeDepth,
 	type GraphraumEdgeMarker,
@@ -119,6 +120,7 @@ function readState(): LabState {
 			damping: formNumber(values, "forceDamping"),
 			linkDistance: formNumber(values, "forceLinkDistance"),
 			repulsion: formNumber(values, "forceRepulsion"),
+			layoutStyle: FORCE_LAYOUT_STYLES.find((style) => style === formValue(values, "forceLayoutStyle")),
 			springStrength: formNumber(values, "forceSpringStrength"),
 		},
 		glowNodes: formNumber(values, "glowNodes"),

@@ -1,10 +1,13 @@
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
 	computeClusteredForcePositions,
 	computeForcePositions,
 	createForceSimulation,
 	DEFAULT_FORCE_SETTINGS,
+	FORCE_LAYOUT_STYLE_PRESETS,
+	FORCE_LAYOUT_STYLES,
+	type ForceSettings,
 	forceIterationCount,
 } from "./force-layout";
 
@@ -408,4 +411,227 @@ test("computeForcePositions honours clusters through the live simulation", () =>
 	expect(meanIntraClusterDistance(clustered, request.clusters)).toBeLessThan(
 		meanIntraClusterDistance(computeForcePositions({ ...unclustered, iterations: 16 }), request.clusters),
 	);
+});
+
+describe("layoutStyle", () => {
+	const ring = (nodeCount: number) => {
+		const edges = new Uint32Array(nodeCount * 2);
+		for (let index = 0; index < nodeCount; index += 1) edges.set([index, (index + 1) % nodeCount], index * 2);
+		return { dimensions: 2 as const, edges, nodeCount };
+	};
+	const edgeT = { ...DEFAULT_FORCE_SETTINGS, layoutStyle: "edge-t" as const };
+	const spread = (positions: Float32Array) => {
+		let total = 0;
+		for (let index = 0; index < positions.length; index += 3) {
+			total += Math.hypot(positions[index] ?? 0, positions[index + 1] ?? 0, positions[index + 2] ?? 0);
+		}
+		return total / (positions.length / 3);
+	};
+
+	test("pins the documented style presets", () => {
+		expect(FORCE_LAYOUT_STYLES).toEqual(["classic", "edge-t"]);
+		expect(FORCE_LAYOUT_STYLE_PRESETS).toEqual({
+			classic: {
+				clusterGain: 1,
+				iterationScale: 1,
+				maxIterations: 64,
+				repulsion: "node-sampled-inverse-square",
+				repulsionGain: 1,
+				springGain: 1,
+			},
+			"edge-t": {
+				clusterGain: 2.5,
+				iterationScale: 8,
+				maxIterations: 512,
+				repulsion: "edge-sampled-student-t",
+				repulsionGain: 4,
+				springGain: 10,
+			},
+		});
+	});
+
+	test("defaults to classic and keeps classic positions unchanged", () => {
+		const request = ring(32);
+		expect(createForceSimulation(request).settings.layoutStyle).toBe("classic");
+		expect(
+			computeForcePositions({ ...request, settings: { ...DEFAULT_FORCE_SETTINGS, layoutStyle: "classic" } }),
+		).toEqual(computeForcePositions(request));
+	});
+
+	test("is deterministic for edge-t and differs from classic", () => {
+		const request = { ...ring(64), settings: edgeT };
+		const first = computeForcePositions(request);
+		expect(computeForcePositions(request)).toEqual(first);
+		expect(first.every(Number.isFinite)).toBe(true);
+		expect(first).not.toEqual(computeForcePositions(ring(64)));
+	});
+
+	test("clamps edge-t parameters like the other settings", () => {
+		const clamped = createForceSimulation({
+			...ring(4),
+			settings: { ...edgeT, negativeSamples: 100.4, tDegrees: 0 },
+		}).settings;
+		expect(clamped.negativeSamples).toBe(16);
+		expect(clamped.tDegrees).toBe(0.5);
+		const low = createForceSimulation({
+			...ring(4),
+			settings: { ...DEFAULT_FORCE_SETTINGS, negativeSamples: -3, tDegrees: 99 },
+		}).settings;
+		expect(low.negativeSamples).toBe(1);
+		expect(low.tDegrees).toBe(10);
+	});
+
+	test("falls back to defaults for NaN settings", () => {
+		const settings = createForceSimulation({
+			...ring(4),
+			settings: {
+				centerAttraction: Number.NaN,
+				damping: Number.NaN,
+				linkDistance: Number.NaN,
+				negativeSamples: Number.NaN,
+				repulsion: Number.NaN,
+				springStrength: Number.NaN,
+				tDegrees: Number.NaN,
+			},
+		}).settings;
+		expect(settings).toEqual(DEFAULT_FORCE_SETTINGS);
+	});
+
+	test("rejects an unknown style", () => {
+		const settings = { ...DEFAULT_FORCE_SETTINGS, layoutStyle: "spring" } as unknown as ForceSettings;
+		expect(() => createForceSimulation({ ...ring(4), settings })).toThrow(/Unknown layoutStyle "spring"/);
+	});
+
+	test("caps explicit iterations per style", () => {
+		const request = ring(16);
+		expect(computeForcePositions({ ...request, iterations: 1_000 })).toEqual(
+			computeForcePositions({ ...request, iterations: 64 }),
+		);
+		expect(computeForcePositions({ ...request, iterations: 1_000, settings: edgeT })).toEqual(
+			computeForcePositions({ ...request, iterations: 512, settings: edgeT }),
+		);
+	});
+
+	test("lays out an empty graph", () => {
+		const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount: 0, settings: edgeT };
+		expect(computeForcePositions(request)).toHaveLength(0);
+		const simulation = createForceSimulation(request);
+		expect(() => simulation.step(0.35)).not.toThrow();
+	});
+
+	test("uses tDegrees and negativeSamples", () => {
+		const request = ring(48);
+		const base = computeForcePositions({ ...request, settings: edgeT });
+		const heavy = computeForcePositions({ ...request, settings: { ...edgeT, tDegrees: 3.5 } });
+		const sampled = computeForcePositions({ ...request, settings: { ...edgeT, negativeSamples: 5 } });
+		expect(heavy.every(Number.isFinite)).toBe(true);
+		expect(heavy).not.toEqual(base);
+		expect(sampled).not.toEqual(base);
+	});
+
+	test("pushes isolated nodes apart", () => {
+		// No center pull and no edges: only the repulsion moves nodes, so the cloud must grow.
+		const simulation = createForceSimulation({
+			dimensions: 3,
+			edges: new Uint32Array(),
+			nodeCount: 50,
+			settings: { ...edgeT, centerAttraction: 0 },
+		});
+		const before = spread(simulation.positions);
+		for (let step = 0; step < 30; step += 1) simulation.step(0.35);
+		expect(spread(simulation.positions)).toBeGreaterThan(before * 1.1);
+	});
+
+	test("counts degrees of added edges like edges given at creation", () => {
+		const { edges, nodeCount } = ring(30);
+		const created = createForceSimulation({ dimensions: 2, edges, nodeCount, settings: edgeT });
+		const added = createForceSimulation({ dimensions: 2, edges: new Uint32Array(), nodeCount, settings: edgeT });
+		added.addEdges(edges);
+		for (let step = 0; step < 10; step += 1) {
+			created.step(0.35);
+			added.step(0.35);
+		}
+		expect(added.positions).toEqual(created.positions);
+	});
+
+	test("keeps a 5k-leaf hub finite and its star compact", () => {
+		const leaves = 5_000;
+		const edges = new Uint32Array(leaves * 2);
+		for (let leaf = 1; leaf <= leaves; leaf += 1) edges.set([0, leaf], (leaf - 1) * 2);
+		const positions = computeForcePositions({ dimensions: 2, edges, nodeCount: leaves + 1, settings: edgeT });
+		expect(positions.every(Number.isFinite)).toBe(true);
+		const lengths = Array.from({ length: leaves }, (_, index) =>
+			Math.hypot(
+				(positions[(index + 1) * 3] ?? 0) - (positions[0] ?? 0),
+				(positions[(index + 1) * 3 + 1] ?? 0) - (positions[1] ?? 0),
+			),
+		).sort((left, right) => left - right);
+		// The hub stays inside its own star and the leaves stay within a few link distances of it.
+		expect(Math.hypot(positions[0] ?? 0, positions[1] ?? 0)).toBeLessThan(spread(positions) * 1.5);
+		expect(lengths[leaves >> 1]).toBeLessThan(DEFAULT_FORCE_SETTINGS.linkDistance * 3);
+	});
+
+	test("switches style on a live simulation without re-seeding", () => {
+		const simulation = createForceSimulation(ring(48));
+		for (let step = 0; step < 10; step += 1) simulation.step(0.35);
+		const before = simulation.positions.slice();
+		simulation.setSettings({ layoutStyle: "edge-t" });
+		expect(simulation.positions).toEqual(before);
+		expect(simulation.settings.layoutStyle).toBe("edge-t");
+		simulation.step(0.35);
+		expect(simulation.positions).not.toEqual(before);
+		expect(simulation.positions.every(Number.isFinite)).toBe(true);
+		const settingsBefore = simulation.settings;
+		expect(() => simulation.setSettings({ layoutStyle: "nope" } as unknown as ForceSettings)).toThrow(
+			/Unknown layoutStyle/,
+		);
+		expect(simulation.settings).toBe(settingsBefore);
+	});
+
+	test("merges a settings patch and keeps omitted values", () => {
+		const simulation = createForceSimulation({
+			...ring(8),
+			settings: { ...edgeT, clusterStrength: 0.07, negativeSamples: 6, repulsion: 900, tDegrees: 2 },
+		});
+		simulation.setSettings({ damping: 0.7 });
+		expect(simulation.settings).toEqual({
+			...edgeT,
+			clusterStrength: 0.07,
+			damping: 0.7,
+			negativeSamples: 6,
+			repulsion: 900,
+			tDegrees: 2,
+		});
+		simulation.setSettings({ repulsion: Number.NaN, tDegrees: undefined });
+		expect(simulation.settings.repulsion).toBe(900);
+		expect(simulation.settings.tDegrees).toBe(2);
+	});
+
+	test("matches a simulation that never switched after switching back", () => {
+		const request = ring(24);
+		const switched = createForceSimulation(request);
+		switched.setSettings({ layoutStyle: "edge-t" });
+		switched.setSettings({ layoutStyle: "classic" });
+		const plain = createForceSimulation(request);
+		for (let step = 0; step < 5; step += 1) {
+			switched.step(0.35);
+			plain.step(0.35);
+		}
+		expect(switched.positions).toEqual(plain.positions);
+	});
+
+	test("switches style on a clustered simulation with added nodes", () => {
+		const simulation = createForceSimulation({
+			clusters: new Uint32Array([0, 0, 0, 1, 1, 1]),
+			dimensions: 2,
+			edges: new Uint32Array([0, 1, 1, 2, 3, 4, 4, 5, 2, 3]),
+			nodeCount: 6,
+		});
+		simulation.addNodes(2, undefined, new Uint32Array([1, 2]));
+		simulation.addEdges(new Uint32Array([5, 6, 6, 7]));
+		simulation.setSettings({ layoutStyle: "edge-t" });
+		for (let step = 0; step < 40; step += 1) simulation.step(0.35);
+		expect(simulation.positions).toHaveLength(24);
+		expect(simulation.positions.every(Number.isFinite)).toBe(true);
+	});
 });

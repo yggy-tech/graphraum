@@ -114,3 +114,5 @@ simulation.addNodes(2, undefined, new Uint32Array([1, 2]));
 ```
 
 `addNodes(count, initial?, clusters?)` requires `clusters` (length `count`) when the simulation was created with clusters, and throws when it was created without them. Nodes added without `initial` positions start at the default seed and are drawn into their cluster by the pull.
+
+To steer a layout with embeddings, see [Guided layout](/guide/guided-layout/).

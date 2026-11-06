@@ -4,7 +4,7 @@ name: PR
 # - code (src, examples, scripts, build config, lockfile): every check
 # - docs only: commit lint, lint, types and the docs build
 # - workflows: every check, so a CI change is exercised before it lands
-# main runs the full set on push either way.
+# CodeQL keeps its own PR trigger (codeql.yml). main runs the full set on push either way.
 on:
   pull_request:
 
@@ -24,7 +24,6 @@ jobs:
       code: ${{ steps.paths.outputs.code }}
       docs: ${{ steps.paths.outputs.docs }}
       deps: ${{ steps.paths.outputs.deps }}
-      codeql: ${{ steps.paths.outputs.codeql }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,20 +61,10 @@ jobs:
     with:
       deps: ${{ needs.changes.outputs.deps == 'true' }}
 
-  codeql:
-    needs: changes
-    if: needs.changes.outputs.codeql != '[]'
-    permissions:
-      contents: read
-      security-events: write
-    uses: $/.github/workflows/codeql.yml
-    with:
-      languages: ${{ needs.changes.outputs.codeql }}
-
   gate:
     name: PR checks
     if: always()
-    needs: [changes, verify, browser, package, security, codeql]
+    needs: [changes, verify, browser, package, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prints GitHub step outputs (code, docs, deps, codeql) for the files a PR changes between two commits.
+# Prints GitHub step outputs (code, docs, deps) for the files a PR changes between two commits.
 set -euo pipefail
 
 base="$1"
@@ -25,12 +25,6 @@ matches '^docs/' && docs=true
 deps=false
 matches '(^|/)(package\.json|bun\.lock)$' && deps=true
 
-languages=()
-[ "$code" = true ] && languages+=('"javascript-typescript"')
-[ "$workflows" = true ] && languages+=('"actions"')
-codeql="[$(IFS=,; echo "${languages[*]:-}")]"
-
 echo "code=$code"
 echo "docs=$docs"
 echo "deps=$deps"
-echo "codeql=$codeql"

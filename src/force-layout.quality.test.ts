@@ -14,11 +14,14 @@ import {
 	type ForceLayoutRequest,
 	type ForceLayoutStyle,
 } from "./force-layout";
+import { pivotMdsPositions } from "./layout-start";
 import {
 	binaryTree,
 	chain,
 	denseCommunities,
 	documentBlockModel,
+	foldCount,
+	gridStrip,
 	type LayoutQuality,
 	measureLayout,
 	type QualityGraph,
@@ -188,4 +191,14 @@ test.runIf(REPORT)("reports quality and timings", () => {
 		for (const style of STYLES) rows.push(`${label} ${style}: ${timeStyle(graph, style, steps)}`);
 	}
 	console.log(rows.join("\n"));
+});
+
+test("a pivot MDS start unfolds an aspect 200 strip that a random start leaves folded (#193)", () => {
+	const strip = gridStrip(2, 400);
+	const probe = strip.strip as NonNullable<QualityGraph["strip"]>;
+	const plain = request(strip, "classic", 2);
+	const random = computeForcePositions(plain);
+	const pivot = computeForcePositions({ ...plain, initialPositions: pivotMdsPositions(plain) });
+	expect(foldCount(probe, random)).toBeGreaterThan(50);
+	expect(foldCount(probe, pivot)).toBeLessThanOrEqual(4);
 });

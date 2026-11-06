@@ -101,6 +101,7 @@ export interface ForceLayoutRequest {
     dimensions: 2 | 3;
     // (undocumented)
     edges: Uint32Array;
+    initialPositions?: Float32Array;
     iterations?: number;
     linkDistances?: Float32Array;
     // (undocumented)

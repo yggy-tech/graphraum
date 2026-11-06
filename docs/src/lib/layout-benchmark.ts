@@ -1,4 +1,5 @@
 import { DEFAULT_FORCE_SETTINGS, type ForceSettings, forceIterationCount } from "../../../src/force-layout";
+import { type LayoutStability, measureLayoutStability } from "../../../src/layout-stability";
 
 export interface ProgressiveLayoutTiming {
 	batchCount: number;
@@ -172,4 +173,49 @@ export async function measureProgressiveForceLayout(options: {
 		};
 		worker.addEventListener("message", onMessage);
 	});
+}
+
+/** Largest fixture the Prove run checks for seed stability: the measurement is O(seeds * nodeCount^2). */
+export const STABILITY_SAMPLE_NODES = 1_000;
+
+export interface FixtureLayoutStability {
+	nodeCount: number;
+	neighbours: number;
+	/** Stability of the fixture's layout across seeds, from 0 to 1. */
+	overall: number;
+	/** The same number for a degree-preserving shuffle of the fixture: the floor a layout gets for free. */
+	placeboOverall: number;
+	seeds: number;
+}
+
+/**
+ * Seed stability of the one-shot `"edge-t"` layout on the first {@link STABILITY_SAMPLE_NODES} nodes of a
+ * fixture, as one cluster (the fixture has no planted groups). Edges that leave the sample are dropped.
+ */
+export function measureFixtureLayoutStability(
+	nodeCount: number,
+	edges: readonly { source: string; target: string }[],
+): FixtureLayoutStability {
+	const sampleCount = Math.min(nodeCount, STABILITY_SAMPLE_NODES);
+	const sampled = packIndexedForceEdges(edges).filter((_, index, all) => {
+		const pair = index - (index % 2);
+		return (all[pair] ?? 0) < sampleCount && (all[pair + 1] ?? 0) < sampleCount;
+	});
+	const result: LayoutStability = measureLayoutStability(
+		{
+			clusters: new Uint32Array(sampleCount),
+			dimensions: 3,
+			edges: sampled,
+			nodeCount: sampleCount,
+			settings: { ...DEFAULT_FORCE_SETTINGS, layoutStyle: "edge-t" },
+		},
+		{ neighbours: Math.min(10, sampleCount - 1) },
+	);
+	return {
+		neighbours: result.neighbours,
+		nodeCount: sampleCount,
+		overall: result.overall,
+		placeboOverall: result.placeboOverall ?? 0,
+		seeds: result.seeds,
+	};
 }

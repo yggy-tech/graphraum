@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ProgressiveLayoutTimer, packIndexedForceEdges, progressiveForceBatchSize } from "./layout-benchmark";
+import { createFixture } from "./benchmark";
+import {
+	measureFixtureLayoutStability,
+	ProgressiveLayoutTimer,
+	packIndexedForceEdges,
+	progressiveForceBatchSize,
+} from "./layout-benchmark";
 
 describe("layout benchmark helpers", () => {
 	it("packs node-N edge ids into a transferable index buffer", () => {
@@ -43,5 +49,15 @@ describe("layout benchmark helpers", () => {
 		const timer = new ProgressiveLayoutTimer(8, 4, 12);
 		timer.markStart(0);
 		expect(() => timer.complete(10)).toThrow(/without a useful position batch/);
+	});
+
+	it("reports seed stability next to the fixture, with its placebo", () => {
+		const fixture = createFixture(120);
+		const result = measureFixtureLayoutStability(120, fixture.edges);
+		expect(result).toEqual(measureFixtureLayoutStability(120, fixture.edges));
+		expect(result).toMatchObject({ nodeCount: 120, seeds: 5 });
+		expect(result.overall).toBeGreaterThan(0);
+		expect(result.overall).toBeLessThanOrEqual(1);
+		expect(result.placeboOverall).toBeGreaterThan(0);
 	});
 });

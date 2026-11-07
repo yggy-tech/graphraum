@@ -49,4 +49,11 @@ describe("resolveNodeStroke", () => {
 			resolveNodeStroke({ id: "a", position: { x: 0, y: 0 }, strokeWidth: 1, width: 0 }, graphraumTheme),
 		).toThrow('Node "a" width must be a positive finite number');
 	});
+
+	test("falls back to the style default width only when the node sets none", () => {
+		const node = { id: "a", position: { x: 0, y: 0 }, size: 10 };
+		expect(resolveNodeStroke(node, graphraumTheme, 2).strokeWidthUv).toBe(0.2);
+		expect(resolveNodeStroke({ ...node, strokeWidth: 1 }, graphraumTheme, 2).strokeWidthUv).toBe(0.1);
+		expect(resolveNodeStroke({ ...node, strokeWidth: 0 }, graphraumTheme, 2).strokeWidthUv).toBe(0);
+	});
 });

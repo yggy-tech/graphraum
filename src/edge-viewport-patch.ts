@@ -87,7 +87,7 @@ export function buildVisibleEdgeLayouts(
 
 export interface PatchVisibleEdgesInput {
 	changedEdgeIndices: readonly number[];
-	defaults: { color: GraphraumColor; opacity: number; width: number };
+	defaults: { color: GraphraumColor; markerSize?: number; opacity: number; width: number };
 	edgeNodeIndices?: Uint32Array;
 	edgeStates?: EdgeStateStyling;
 	edgeVisuals: readonly Readonly<GraphraumEdgeVisual>[];

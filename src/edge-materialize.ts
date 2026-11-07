@@ -55,7 +55,7 @@ export function packEdgeInstances(input: {
 	edgeIndices: readonly number[];
 	edgeVisuals: readonly Readonly<GraphraumEdgeVisual>[];
 	endpointPositions: Float32Array; // 6 floats per edge index in canonical order
-	defaults: { color: GraphraumColor; opacity: number; width: number };
+	defaults: { color: GraphraumColor; markerSize?: number; opacity: number; width: number };
 	tier: EdgeLodTier;
 	/** Soft cap on segment instances; remaining edges are skipped when exceeded. */
 	maxSegments?: number;
@@ -159,7 +159,7 @@ export function packEdgeInstances(input: {
 		if (input.tier === "overview") continue;
 		const marker = visual.marker ?? "none";
 		if (marker === "none") continue;
-		const markerSize = (visual.markerSize ?? 1) * width;
+		const markerSize = (visual.markerSize ?? input.defaults.markerSize ?? 1) * width;
 		const ends: GraphraumEdgeMarkerEnd = visual.markerEnd ?? "target";
 		const first = points[0];
 		const second = points[1] ?? points[0];

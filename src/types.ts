@@ -342,6 +342,55 @@ export type GraphraumBackground = GraphraumColor | GraphraumPatternBackground | 
 
 export type GraphraumThemeName = "dark" | "light";
 
+/**
+ * Overlay label look, written as `--graphraum-label-*` CSS custom properties on the graph container
+ * (the overlay sits inside it). A field you leave out is not written, so the host's CSS decides.
+ * Values are any CSS value; they are applied with `style.setProperty`, so no CSP change is needed.
+ */
+export interface GraphraumLabelStyle {
+	/** `--graphraum-label-bg`: a CSS background. */
+	bg?: string;
+	/** `--graphraum-label-border`: a CSS border colour. */
+	border?: string;
+	/** `--graphraum-label-fg`: a CSS text colour. */
+	fg?: string;
+	/** `--graphraum-label-font`: a CSS font-family list. */
+	font?: string;
+	/** `--graphraum-label-padding`: CSS padding, e.g. `2px 6px`. */
+	padding?: string;
+	/** `--graphraum-label-radius`: a CSS border radius. */
+	radius?: string;
+	/** `--graphraum-label-size`: a CSS font size, e.g. `12px`. */
+	size?: string;
+	/** `--graphraum-label-weight`: a CSS font weight, e.g. `500`. */
+	weight?: string;
+}
+
+/** The look of a graph beyond the colours in `theme`. A preset is one of these. */
+export interface GraphraumStyle {
+	edge: {
+		/** Arrowhead size as a multiple of edge width, for edges that set no `markerSize`. */
+		markerSize: number;
+	};
+	label: GraphraumLabelStyle;
+	node: {
+		/** Stroke width in world units for nodes that set no `strokeWidth`. */
+		strokeWidth: number;
+	};
+	theme: GraphraumTheme;
+}
+
+/**
+ * What `style` and `setStyle` accept: every group and field optional, merged onto the current look, so
+ * fields you leave out keep their value. A preset sets them all. Label fields become
+ * `--graphraum-label-*` custom properties on the container. Only uniforms, visible-node instance
+ * values and edge instances are rewritten; no buffers are rebuilt. Invalid values throw and change nothing.
+ */
+export type GraphraumStyleInput = { [Group in keyof GraphraumStyle]?: Partial<GraphraumStyle[Group]> };
+
+/** Presets in `graphraumStylePresets` from `@yggy-tech/graphraum/styles`. */
+export type GraphraumStyleName = "blueprint" | "classicDark" | "classicLight" | "neutral";
+
 export interface GraphraumTheme {
 	background: GraphraumBackground;
 	/** Color of edges dimmed with `setEdgeState("dimmed", ids)`. Selected edges stay selected. */
@@ -469,6 +518,8 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
 	mode?: GraphraumMode;
 	/** Named preset (`"dark"` / `"light"`) or a partial override merged onto dark. */
 	theme?: Partial<GraphraumTheme> | GraphraumThemeName;
+	/** Look beyond colours, applied after `theme`; see `setStyle`. Omitted: today's look. */
+	style?: GraphraumStyleInput;
 	viewportCulling?: boolean;
 	viewportOverscan?: number;
 	visuals?: GraphraumVisualMapper<NodeAttributes, EdgeAttributes>;

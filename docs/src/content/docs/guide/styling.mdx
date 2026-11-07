@@ -1,0 +1,90 @@
+---
+title: Styling
+description: Change how a graph looks beyond colours with one style object, ready-made presets, and CSS custom properties for labels.
+---
+
+A style is one plain object that holds everything about how a graph looks: the colours of the [theme](../theme/), a default node stroke, a default arrowhead size, and the typography of overlay labels. Applying a style rewrites uniforms, instance values for visible nodes and edges, and CSS custom properties. It never adds a draw call and never rebuilds a buffer, so the two-draw-call baseline stays true.
+
+```ts
+import { Graphraum } from "@yggy-tech/graphraum";
+import { graphraumStylePresets } from "@yggy-tech/graphraum/styles";
+
+const graph = new Graphraum(container, { style: graphraumStylePresets.neutral });
+
+graph.setStyle(graphraumStylePresets.blueprint); // switch at runtime
+graph.setStyle({ node: { strokeWidth: 1 } }); // or change one field
+```
+
+## The style object
+
+```ts
+interface GraphraumStyle {
+  theme: GraphraumTheme; // the existing colour contract, unchanged
+  node: { strokeWidth: number }; // world units, for nodes with no strokeWidth of their own
+  edge: { markerSize: number }; // multiple of edge width, for edges with no markerSize of their own
+  label: GraphraumLabelStyle; // overlay label typography, see below
+}
+```
+
+`style` and `setStyle` take every group and every field as optional and merge them onto the current look. A field you leave out keeps its value. Precedence, highest first: a value on the node or edge, the `visuals` mapper, `style`, the `theme` shorthand, the built-in default.
+
+Invalid values throw an error that names the field and nothing changes. A negative `node.strokeWidth` or `edge.markerSize`, a `style.theme.dimmedEdgeOpacity` outside 0 to 1, or an empty label value are all rejected.
+
+## Presets
+
+| Preset | Look |
+| --- | --- |
+| `classicDark` | Exactly the look graphraum has always had by default. |
+| `classicLight` | The light theme with the same defaults. |
+| `neutral` | Greys on a transparent canvas, a system font stack, no brand colours. |
+| `blueprint` | Dark blue paper, light lines, monospace labels. |
+
+Presets live in `@yggy-tech/graphraum/styles` as plain objects, so they cost nothing in the main bundle. Applying a preset with `setStyle` sets every field, including clearing label fields the previous preset set.
+
+Spread a preset to make your own:
+
+```ts
+const mine = {
+  ...graphraumStylePresets.neutral,
+  theme: { ...graphraumStylePresets.neutral.theme, selectedNode: "#d946ef" },
+};
+```
+
+## Default look
+
+The default has not changed. A graph created with no `style` and no `theme` looks exactly as before, and `classicDark` spells that look out in one line for hosts that want it explicit. The `neutral` default is planned as a later, separate breaking change.
+
+## Label typography
+
+Labels stay your application's DOM, so graphraum does not draw them. The `label` group is written as CSS custom properties on the graph container, which the overlay sits inside, using `style.setProperty` so no Content Security Policy change is needed.
+
+| Field | Custom property |
+| --- | --- |
+| `bg` | `--graphraum-label-bg` |
+| `border` | `--graphraum-label-border` |
+| `fg` | `--graphraum-label-fg` |
+| `font` | `--graphraum-label-font` |
+| `padding` | `--graphraum-label-padding` |
+| `radius` | `--graphraum-label-radius` |
+| `size` | `--graphraum-label-size` |
+| `weight` | `--graphraum-label-weight` |
+
+Only the fields the style sets are written. Use them in the CSS of your label element, with a fallback for when a style leaves one out:
+
+```css
+.my-label {
+  background: var(--graphraum-label-bg, transparent);
+  color: var(--graphraum-label-fg, inherit);
+  font: var(--graphraum-label-weight, 400) var(--graphraum-label-size, 12px) var(--graphraum-label-font, inherit);
+  border-radius: var(--graphraum-label-radius, 0);
+  padding: var(--graphraum-label-padding, 0);
+}
+```
+
+You can also set the properties yourself in a stylesheet. A value set by `style` on the container wins over a rule on the container itself, so set your own on the overlay or the label element when you want to override a style.
+
+## Cost
+
+Measured with the real WebGL2 browser tests: every preset renders with 2 draw calls and the same geometry and instance counts in 2D and 3D, and `classicDark` renders the same pixels as the default. Per frame nothing is added, because the style is read when instances are materialized, not while drawing.
+
+State halos, a ring drawn around hovered, focused and selected nodes, are not part of this style yet. Those states still recolour the node through the theme.

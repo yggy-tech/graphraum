@@ -226,6 +226,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     // (undocumented)
     setSelection(nodeIds: Iterable<string>): void;
     // (undocumented)
+    setStyle(style: GraphraumStyleInput): void;
+    // (undocumented)
     setTheme(theme: Partial<GraphraumTheme> | GraphraumThemeName): void;
     // (undocumented)
     updateNodes(updates: readonly GraphraumNodeUpdate[]): void;
@@ -485,6 +487,18 @@ export interface GraphraumLabelCandidate {
 }
 
 // @public
+export interface GraphraumLabelStyle {
+    bg?: string;
+    border?: string;
+    fg?: string;
+    font?: string;
+    padding?: string;
+    radius?: string;
+    size?: string;
+    weight?: string;
+}
+
+// @public
 export interface GraphraumLayoutPositions {
     // (undocumented)
     nodeIds: readonly string[];
@@ -615,6 +629,7 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
     // (undocumented)
     mode?: GraphraumMode;
     scene?: GraphraumSceneOptions;
+    style?: GraphraumStyleInput;
     theme?: Partial<GraphraumTheme> | GraphraumThemeName;
     // (undocumented)
     viewportCulling?: boolean;
@@ -771,6 +786,28 @@ export interface GraphraumSetDataOptions {
 
 // @public
 export type GraphraumShading = "flat" | "lit" | "toon";
+
+// @public
+export interface GraphraumStyle {
+    // (undocumented)
+    edge: {
+        markerSize: number;
+    };
+    // (undocumented)
+    label: GraphraumLabelStyle;
+    // (undocumented)
+    node: {
+        strokeWidth: number;
+    };
+    // (undocumented)
+    theme: GraphraumTheme;
+}
+
+// @public
+export type GraphraumStyleInput = { [Group in keyof GraphraumStyle]?: Partial<GraphraumStyle[Group]>; };
+
+// @public
+export type GraphraumStyleName = "blueprint" | "classicDark" | "classicLight" | "neutral";
 
 // @public
 export interface GraphraumSunOptions {

@@ -7,7 +7,11 @@ import { dirname, join } from "node:path";
 // 64 000 since lit and toon shading (#165): the light shader and scene option validation.
 // 66 000 since layout styles (#191): edge-t, plus room for the planned styles in #170, #192 and #193.
 // 70 000 since the focus lens: the per-frame size pass, lens-aware picking, label opacity and its option checks.
-const BUDGETS = [{ file: "dist/index.js", gzipBytes: 70_000 }];
+// 1 500 for the styles entry (#203): four presets as plain objects, kept out of the main bundle.
+const BUDGETS = [
+	{ file: "dist/index.js", gzipBytes: 70_000 },
+	{ file: "dist/styles.js", gzipBytes: 1_500 },
+];
 
 const LOCAL_IMPORT = /\bfrom\s*["'](\.\/[^"']+\.js)["']/g;
 

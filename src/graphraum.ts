@@ -102,6 +102,7 @@ import { configureControlsForMode } from "./orbit-controls-mode";
 import { GraphraumOverlay } from "./overlay";
 import { resolveSceneDrawSetup, resolveSceneOptions, SCENE_DEFAULTS, sceneLightColours, sunDirection } from "./scene";
 import { type Bounds2D, SpatialGrid2D } from "./spatial-grid-2d";
+import { applyLabelVariables, resolveStyleExtras, STYLE_DEFAULTS, type StyleExtras } from "./style";
 import { normalizeGraphraumBackground, resolveGraphraumTheme } from "./theme";
 import type {
 	CompiledGraphraumPresentation,
@@ -133,6 +134,7 @@ import type {
 	GraphraumSceneOptions,
 	GraphraumScreenPosition,
 	GraphraumSetDataOptions,
+	GraphraumStyleInput,
 	GraphraumTheme,
 	GraphraumThemeName,
 	GraphraumVisualMapper,
@@ -227,6 +229,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private readonly pickRight = new Vector3();
 	private readonly pickUp = new Vector3();
 	private theme: GraphraumTheme;
+	private extras: StyleExtras = STYLE_DEFAULTS;
 	private backgroundTexture: Texture | null = null;
 	private readonly resizeObserver: ResizeObserver;
 	private readonly maxVisibleEdges: number;
@@ -332,6 +335,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			throw new Error("Viewport overscan must be a non-negative finite number.");
 		}
 		this.theme = resolveGraphraumTheme(options.theme);
+		if (options.style) this.mergeStyle(options.style);
 		if (options.scene !== undefined) this.scene3d = resolveSceneOptions(options.scene);
 		if (options.depthOfField !== undefined) {
 			this.depthOfField = resolveDepthOfFieldOptions(options.depthOfField);
@@ -546,7 +550,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			edgeStates: this.edgeStateStyling(),
 			edgeVisuals: this.data.edges,
 			endpointPositions: this.canonicalEdgePositions,
-			defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity, width: this.theme.edgeWidth },
+			defaults: this.edgeDefaults(),
 			tier: this.lastEdgeLodTier,
 			maxSegments: this.edgeSegmentCapacity - segmentsBefore,
 			endpointAttach: this.endpointAttach(),
@@ -763,7 +767,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				nodeShape.addUpdateRange(nodeSlot, 1);
 			}
 			if (update.strokeChanged && nodeSlot !== undefined) {
-				setNodeStrokeAt(nodeStrokeWidth, nodeStrokeColor, nodeSlot, resolveNodeStroke(update.next, this.theme));
+				setNodeStrokeAt(
+					nodeStrokeWidth,
+					nodeStrokeColor,
+					nodeSlot,
+					resolveNodeStroke(update.next, this.theme, this.extras.node.strokeWidth),
+				);
 				nodeStrokeWidth.addUpdateRange(nodeSlot, 1);
 				nodeStrokeColor.addUpdateRange(nodeSlot * 3, 3);
 			}
@@ -826,7 +835,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.edgeMesh.geometry,
 			{
 				changedEdgeIndices,
-				defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity, width: this.theme.edgeWidth },
+				defaults: this.edgeDefaults(),
 				edgeNodeIndices: this.edgeNodeIndices,
 				edgeStates: this.edgeStateStyling(),
 				edgeVisuals: this.data.edges,
@@ -889,7 +898,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const indices = this.edgeIndicesById();
 		const result = patchVisibleEdgePaint(this.edgeMesh.geometry, {
 			changedEdgeIndices: changedEdgeIds.flatMap((id) => indices.get(id) ?? []),
-			defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity },
+			defaults: this.edgeDefaults(),
 			edgeStates: this.edgeStateStyling(),
 			edgeVisuals: this.data.edges,
 			instanceCount: this.edgeMesh.count,
@@ -1708,6 +1717,23 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.requestRender();
 	}
 
+	setStyle(style: GraphraumStyleInput) {
+		this.mergeStyle(style);
+		this.setTheme({});
+	}
+
+	private mergeStyle(style: GraphraumStyleInput) {
+		const extras = resolveStyleExtras(style, this.extras);
+		if (style.theme) this.theme = resolveGraphraumTheme(style.theme, this.theme);
+		this.extras = extras;
+		applyLabelVariables(this.container, extras.label);
+	}
+
+	private edgeDefaults() {
+		const { edge, edgeOpacity, edgeWidth } = this.theme;
+		return { color: edge, markerSize: this.extras.edge.markerSize, opacity: edgeOpacity, width: edgeWidth };
+	}
+
 	setBackground(background: GraphraumBackground) {
 		this.setTheme({ background });
 	}
@@ -2276,7 +2302,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			edgeStates: this.edgeStateStyling(),
 			edgeVisuals: this.data.edges,
 			endpointPositions: this.canonicalEdgePositions,
-			defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity, width: this.theme.edgeWidth },
+			defaults: this.edgeDefaults(),
 			tier: this.lastEdgeLodTier,
 			maxSegments: this.edgeSegmentCapacity,
 			endpointAttach: this.endpointAttach(),
@@ -2354,7 +2380,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		(this.nodePickMesh as InstancedMesh).setMatrixAt(slot, matrix);
 		(this.nodeMesh as InstancedMesh).setColorAt(slot, this.getNodeColor(node));
 		setNodeShapeAt(shape, slot, node.shape);
-		setNodeStrokeAt(strokeWidth, strokeColor, slot, resolveNodeStroke(node, this.theme));
+		setNodeStrokeAt(strokeWidth, strokeColor, slot, resolveNodeStroke(node, this.theme, this.extras.node.strokeWidth));
 	}
 
 	/**

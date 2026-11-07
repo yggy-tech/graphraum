@@ -18,9 +18,13 @@ const MAX_STROKE_WIDTH_UV = 0.45;
  * `max(width, height)` — the same unit space `containsNodePoint` and the node fragment shader
  * use — so the ring reads consistently regardless of the node's rendered size.
  */
-export function resolveNodeStroke(node: GraphraumNodeGeometry, theme: GraphraumTheme): ResolvedNodeStroke {
+export function resolveNodeStroke(
+	node: GraphraumNodeGeometry,
+	theme: GraphraumTheme,
+	defaultWidth = 0,
+): ResolvedNodeStroke {
 	const strokeColor = node.strokeColor ?? theme.nodeStroke;
-	const strokeWidth = node.strokeWidth ?? 0;
+	const strokeWidth = node.strokeWidth ?? defaultWidth;
 	if (strokeWidth <= 0) return { strokeColor, strokeWidthUv: 0 };
 
 	const { height, width } = resolveNodeAxes({

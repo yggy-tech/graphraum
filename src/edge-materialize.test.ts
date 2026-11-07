@@ -7,6 +7,20 @@ const endpoints = {
 };
 
 describe("packEdgeInstances", () => {
+	it("sizes markers from the default marker size unless the edge sets one", () => {
+		const markerSizes = (markerSize?: number) =>
+			packEdgeInstances({
+				edgeIndices: [0],
+				edgeVisuals: [{ marker: "triangle", markerSize }],
+				endpointPositions: endpoints.positions,
+				defaults: { color: "#226f54", markerSize: 3, opacity: 0.55, width: 2 },
+				mode: "2d",
+				tier: "detail",
+			}).markers.map((marker) => marker.size);
+		expect(markerSizes()).toEqual([6]);
+		expect(markerSizes(1.5)).toEqual([3]);
+	});
+
 	it("packs one segment and omits markers in overview", () => {
 		const packed = packEdgeInstances({
 			edgeIndices: [0],

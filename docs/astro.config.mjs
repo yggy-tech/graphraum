@@ -40,6 +40,7 @@ export default defineConfig({
 						{ label: "Guided layout", link: "/guide/guided-layout/" },
 						{ label: "Camera and 3D", link: "/guide/camera-and-3d/" },
 						{ label: "Theme", link: "/guide/theme/" },
+						{ label: "Styling", link: "/guide/styling/" },
 					],
 				},
 				{

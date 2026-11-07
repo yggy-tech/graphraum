@@ -28,11 +28,15 @@
 		"./styles": {
 			"types": "./dist/styles.d.ts",
 			"import": "./dist/styles.js"
+		},
+		"./layout-start": {
+			"types": "./dist/layout-start.d.ts",
+			"import": "./dist/layout-start.js"
 		}
 	},
 	"scripts": {
-		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json && api-extractor run -c api-extractor.styles.json",
-		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json && api-extractor run --local -c api-extractor.styles.json",
+		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json && api-extractor run -c api-extractor.styles.json && api-extractor run -c api-extractor.layout-start.json",
+		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json && api-extractor run --local -c api-extractor.styles.json && api-extractor run --local -c api-extractor.layout-start.json",
 		"build": "tsdown",
 		"check": "biome check . && tsc --noEmit",
 		"check:package": "publint && attw --pack . --profile esm-only && bun scripts/check-bundle-size.ts",

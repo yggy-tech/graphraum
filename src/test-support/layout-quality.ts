@@ -9,6 +9,14 @@ export interface QualityGraph {
 	groups: Uint32Array;
 	name: string;
 	nodeCount: number;
+	/** Strip fixtures: per position along the strip, a spine node and a node across its width. */
+	strip?: StripProbe;
+}
+
+/** `spine[c]` and `side[c]` are on the same cross-section c; `side - spine` is the local minor axis. */
+export interface StripProbe {
+	side: Uint32Array;
+	spine: Uint32Array;
 }
 
 export interface LayoutQuality {
@@ -421,4 +429,140 @@ export function discReference(graph: QualityGraph, seed = 1, gapFactor = 0.2): F
 		positions.set([(centres[group] ?? 0) + distance * Math.cos(angle), distance * Math.sin(angle), 0], node * 3);
 	}
 	return positions;
+}
+
+/** Grid strip `rows` x `columns` (aspect `columns / rows`); node id is `row * columns + column`. */
+export function gridStrip(rows: number, columns: number): QualityGraph {
+	const pairs: number[][] = [];
+	for (let row = 0; row < rows; row += 1) {
+		for (let column = 0; column < columns; column += 1) {
+			const node = row * columns + column;
+			if (column + 1 < columns) pairs.push([node, node + 1]);
+			if (row + 1 < rows) pairs.push([node, node + columns]);
+		}
+	}
+	return {
+		edges: packEdges(pairs),
+		groups: new Uint32Array(rows * columns),
+		name: `strip ${rows}x${columns} (aspect ${columns / rows})`,
+		nodeCount: rows * columns,
+		strip: {
+			side: Uint32Array.from({ length: columns }, (_, column) => (rows - 1) * columns + column),
+			spine: Uint32Array.from({ length: columns }, (_, column) => column),
+		},
+	};
+}
+
+/**
+ * Swiss-roll style strip: a thin strip that winds `turns` times, with a bridge between the
+ * neighbouring turns every `bridgeEvery` columns (what a nearest-neighbour graph of a rolled sheet
+ * adds). A random start has to untangle the bridged layers; the intended layout is the unrolled strip.
+ */
+export function rolledStrip(rows = 4, columns = 200, turns = 2, bridgeEvery = 20): QualityGraph {
+	const base = gridStrip(rows, columns);
+	const pairs: number[][] = [];
+	for (let index = 0; index < base.edges.length; index += 2)
+		pairs.push([base.edges[index] ?? 0, base.edges[index + 1] ?? 0]);
+	const turnLength = Math.floor(columns / turns);
+	for (let column = 0; column + turnLength < columns; column += bridgeEvery) {
+		for (const row of [0, rows - 1]) pairs.push([row * columns + column, row * columns + column + turnLength]);
+	}
+	return { ...base, edges: packEdges(pairs), name: `rolled strip ${rows}x${columns}, ${turns} turns` };
+}
+
+/** Path of `length` nodes with a two-node branch on one side of every third node. */
+export function pathWithBranches(length = 600): QualityGraph {
+	const pairs: number[][] = [];
+	for (let node = 0; node + 1 < length; node += 1) pairs.push([node, node + 1]);
+	const spine: number[] = [];
+	const side: number[] = [];
+	let next = length;
+	for (let node = 1; node + 1 < length; node += 3) {
+		pairs.push([node, next], [next, next + 1]);
+		spine.push(node);
+		side.push(next);
+		next += 2;
+	}
+	return {
+		edges: packEdges(pairs),
+		groups: new Uint32Array(next),
+		name: `path ${length} with side branches`,
+		nodeCount: next,
+		strip: { side: Uint32Array.from(side), spine: Uint32Array.from(spine) },
+	};
+}
+
+/** Breadth-first hop distances from `source` (unreachable = -1). */
+function hopDistances(neighbours: Set<number>[], source: number) {
+	const distance = new Int32Array(neighbours.length).fill(-1);
+	const queue = [source];
+	distance[source] = 0;
+	for (let head = 0; head < queue.length; head += 1) {
+		const node = queue[head] ?? 0;
+		for (const next of neighbours[node] ?? []) {
+			if (distance[next] !== -1) continue;
+			distance[next] = (distance[node] ?? 0) + 1;
+			queue.push(next);
+		}
+	}
+	return distance;
+}
+
+/**
+ * Normalised stress against hop distances: the mean over node pairs of `(|xi - xj| / (s dij) - 1)^2`
+ * with the scale `s` that minimises it. Scale free; 0 means the layout reproduces the graph metric.
+ */
+export function normalizedStress(graph: QualityGraph, positions: Float32Array) {
+	const neighbours = adjacency(graph);
+	const ratios: number[] = [];
+	for (let source = 0; source < graph.nodeCount; source += 1) {
+		const hops = hopDistances(neighbours, source);
+		for (let target = source + 1; target < graph.nodeCount; target += 1) {
+			const hop = hops[target] ?? -1;
+			if (hop <= 0) continue;
+			const length = Math.hypot(
+				(positions[source * 3] ?? 0) - (positions[target * 3] ?? 0),
+				(positions[source * 3 + 1] ?? 0) - (positions[target * 3 + 1] ?? 0),
+				(positions[source * 3 + 2] ?? 0) - (positions[target * 3 + 2] ?? 0),
+			);
+			ratios.push(length / hop);
+		}
+	}
+	// Minimising mean((r/s - 1)^2) over s gives s = mean(r^2) / mean(r).
+	const meanRatio = ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length;
+	const meanSquare = ratios.reduce((sum, ratio) => sum + ratio * ratio, 0) / ratios.length;
+	const scale = meanSquare / Math.max(meanRatio, 1e-12);
+	return ratios.reduce((sum, ratio) => sum + (ratio / scale - 1) ** 2, 0) / ratios.length;
+}
+
+/**
+ * Folds of a strip: walk the cross-sections in order, take the sign of cross(tangent, minor axis)
+ * (the orientation of the local frame), and count sign flips. An unfolded strip has the same
+ * orientation everywhere (0 folds); each fold reverses it. Near-degenerate frames are skipped.
+ */
+export function foldCount(probe: StripProbe, positions: Float32Array) {
+	const at = (node: number, axis: number) => positions[node * 3 + axis] ?? 0;
+	const length = probe.spine.length;
+	let previous = 0;
+	let folds = 0;
+	// A tangent over a window of a fortieth of the strip ignores the jitter of single edges.
+	const window = Math.max(1, Math.round(length / 40));
+	for (let index = 0; index < length; index += 1) {
+		const before = probe.spine[Math.max(0, index - window)] ?? 0;
+		const after = probe.spine[Math.min(length - 1, index + window)] ?? 0;
+		const spine = probe.spine[index] ?? 0;
+		const side = probe.side[index] ?? 0;
+		const tx = at(after, 0) - at(before, 0);
+		const ty = at(after, 1) - at(before, 1);
+		const mx = at(side, 0) - at(spine, 0);
+		const my = at(side, 1) - at(spine, 1);
+		const magnitude = Math.hypot(tx, ty) * Math.hypot(mx, my);
+		if (magnitude < 1e-9) continue;
+		const cross = (tx * my - ty * mx) / magnitude;
+		if (Math.abs(cross) < 0.2) continue;
+		const sign = Math.sign(cross);
+		if (previous !== 0 && sign !== previous) folds += 1;
+		previous = sign;
+	}
+	return folds;
 }

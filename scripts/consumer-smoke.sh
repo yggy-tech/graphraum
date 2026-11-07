@@ -20,12 +20,15 @@ const diagnostics = await import('@yggy-tech/graphraum/diagnostics');
 if (typeof diagnostics.measureLayoutStability !== 'function') throw new Error('diagnostics export missing');
 const styles = await import('@yggy-tech/graphraum/styles');
 if (!styles.graphraumStylePresets.classicDark) throw new Error('styles export missing');
+const layoutStart = await import('@yggy-tech/graphraum/layout-start');
+if (typeof layoutStart.pivotMdsPositions !== 'function') throw new Error('layout-start export missing');
 "
 
 cat > consumer.ts <<'TS'
 import { computeForcePositions, Graphraum, type GraphraumData } from "@yggy-tech/graphraum";
 import { measureLayoutStability } from "@yggy-tech/graphraum/diagnostics";
 import { graphraumStylePresets } from "@yggy-tech/graphraum/styles";
+import { pivotMdsPositions } from "@yggy-tech/graphraum/layout-start";
 
 const data: GraphraumData = {
 	nodes: [{ id: "a", position: { x: 0, y: 0 } }],
@@ -35,7 +38,8 @@ export function mount(element: HTMLElement) {
 	const graph = new Graphraum(element, { mode: "3d", style: graphraumStylePresets.neutral });
 	graph.setData(data);
 	void measureLayoutStability;
-	return computeForcePositions({ dimensions: 2, edges: new Uint32Array(), nodeCount: 1 });
+	const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount: 1 };
+	return computeForcePositions({ ...request, initialPositions: pivotMdsPositions(request) });
 }
 TS
 for resolution in bundler nodenext; do

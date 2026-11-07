@@ -115,4 +115,31 @@ simulation.addNodes(2, undefined, new Uint32Array([1, 2]));
 
 `addNodes(count, initial?, clusters?)` requires `clusters` (length `count`) when the simulation was created with clusters, and throws when it was created without them. Nodes added without `initial` positions start at the default seed and are drawn into their cluster by the pull.
 
+### Unfolding long chains
+
+A random start knots a long thin structure (a process chain, a version history, a timeline), and local forces cannot undo a fold that spans the whole graph. Pass your own start with `initialPositions`, and let `@yggy-tech/graphraum/layout-start` compute one from graph distances:
+
+```ts
+import { computeForcePositions } from "@yggy-tech/graphraum";
+import { pivotMdsPositions } from "@yggy-tech/graphraum/layout-start";
+
+const request = { dimensions: 2, edges, nodeCount, settings: { linkDistance: 24 } };
+const positions = computeForcePositions({
+  ...request,
+  initialPositions: pivotMdsPositions({ ...request, linkDistance: 24 }),
+});
+```
+
+`pivotMdsPositions()` measures hop distances from 20 well-spread pivot nodes and embeds them with classical multidimensional scaling, so a chain starts as a line with one hop per link distance. It is deterministic and costs about as much as a few layout steps (about 45 ms for 10,000 nodes in the measured runs). It lives in its own entry, so the main bundle does not grow; pass the same `linkDistance` you give the layout.
+
+`initialPositions` is `nodeCount * 3` values (XYZ per node, Z ignored in 2D). A node with a NaN value keeps the default start. Infinite values and a wrong length throw. It works with `createForceSimulation()` and `computeForcePositions()`.
+
+- Disconnected graphs: each component is laid out on its own and the components are packed side by side. Nodes without any edge get NaN and keep the default start.
+- `anchors` still seed the nodes they anchor, on top of `initialPositions`.
+- With `clusters`, `initialPositions` replaces the cluster seeding for the nodes it covers, and the cluster pull (`clusterStrength`) then gathers each cluster.
+- Make the start about as large as the relaxed layout. A start squeezed into the smaller random extent did not unfold in the measurements.
+- Nodes added later with `addNodes()` use the default start.
+
+On a 2 by 400 grid strip (800 nodes, default one-shot schedule) a random start leaves 163 to 169 folds in the `"classic"` style and 35 to 37 in `"edge-t"`; the pivot start leaves 0 to 4. A bridged strip such as a rolled sheet is only partly unfolded.
+
 To steer a layout with embeddings, see [Guided layout](/guide/guided-layout/).

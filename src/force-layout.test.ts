@@ -855,3 +855,57 @@ describe("anchors", () => {
 		);
 	});
 });
+
+describe("initialPositions", () => {
+	const edges = new Uint32Array([0, 1, 1, 2]);
+	const base = { dimensions: 2 as const, edges, nodeCount: 3 };
+	const start = (extra: Partial<Parameters<typeof createForceSimulation>[0]> = {}) =>
+		Float32Array.from(createForceSimulation({ ...base, ...extra }).positions);
+
+	test("leaves the default start unchanged when omitted", () => {
+		expect(start({ initialPositions: undefined })).toEqual(start());
+		expect(start()[0]).not.toBe(100);
+	});
+
+	test("uses the given start, ignores Z in 2D and keeps the default for NaN nodes", () => {
+		const given = new Float32Array([100, 0, 7, Number.NaN, Number.NaN, Number.NaN, -100, 5, 9]);
+		const defaults = start();
+		const positions = start({ initialPositions: given });
+		expect(Array.from(positions.subarray(0, 3))).toEqual([100, 0, 0]);
+		expect(Array.from(positions.subarray(3, 6))).toEqual(Array.from(defaults.subarray(3, 6)));
+		expect(Array.from(positions.subarray(6, 9))).toEqual([-100, 5, 0]);
+	});
+
+	test("keeps Z in 3D and copies the array", () => {
+		const given = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+		const simulation = createForceSimulation({ ...base, dimensions: 3, initialPositions: given });
+		given.fill(0);
+		expect(Array.from(simulation.positions)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+	});
+
+	test("lets anchors seed the nodes they anchor on top", () => {
+		const anchors = { positions: new Float32Array([0, 0, Number.NaN, Number.NaN, 200, 0]) };
+		const positions = start({ anchors, initialPositions: new Float32Array([9, 9, 0, 50, 50, 0, 60, 60, 0]) });
+		// Anchors are rescaled to the layout's own scale (about 12 units here), far from the given 9 and 60.
+		const anchoredOnly = start({ anchors });
+		expect(Math.abs((positions[6] ?? 0) - (anchoredOnly[6] ?? 0))).toBeLessThan(2);
+		expect(positions[6]).toBeLessThan(30);
+		expect(Array.from(positions.subarray(3, 5))).toEqual([50, 50]);
+	});
+
+	test("rejects a wrong length and infinite values", () => {
+		expect(() => start({ initialPositions: new Float32Array(6) })).toThrow(/nodeCount \* 3/);
+		const infinite = new Float32Array(9);
+		infinite[4] = Number.POSITIVE_INFINITY;
+		expect(() => start({ initialPositions: infinite })).toThrow(/Infinity/);
+		infinite[4] = Number.NEGATIVE_INFINITY;
+		expect(() => start({ initialPositions: infinite })).toThrow(/Infinity/);
+	});
+
+	test("feeds the one-shot layout", () => {
+		const given = new Float32Array([0, 0, 0, 24, 0, 0, 48, 0, 0]);
+		const settled = computeForcePositions({ ...base, initialPositions: given });
+		expect(settled.every(Number.isFinite)).toBe(true);
+		expect(settled).not.toEqual(computeForcePositions(base));
+	});
+});

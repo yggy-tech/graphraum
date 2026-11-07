@@ -38,6 +38,16 @@ export interface ForceLayoutRequest {
 	 * by the step alpha. Anchored nodes start at their anchor. Copies are stored.
 	 */
 	anchors?: ForceAnchors;
+	/**
+	 * Optional start positions, `nodeCount * 3` values (XYZ per node; Z is ignored in 2D) in layout
+	 * units. A node with a NaN value keeps the default start (random, or around its cluster centre).
+	 * Infinite values throw. A copy is used. The scale is yours: the layout relaxes from here, so a
+	 * start about as large as the relaxed layout (one link distance per hop) works best.
+	 * `@yggy-tech/graphraum/layout-start` computes such a start for long chains. `anchors` still seed
+	 * the nodes they anchor on top of this, and the cluster pull is unchanged. Nodes added later
+	 * with `addNodes()` use the default start.
+	 */
+	initialPositions?: Float32Array;
 	settings?: ForceSettings;
 	/**
 	 * Optional spring strength per edge (`edges.length / 2` values).
@@ -263,6 +273,27 @@ function initialPositions({ dimensions, nodeCount }: Pick<ForceLayoutRequest, "d
 		);
 	}
 	return positions;
+}
+
+/** Copies the host's start over the default start; a node with any NaN coordinate keeps the default. */
+function applyInitialPositions(positions: Float32Array, request: ForceLayoutRequest, start: Float32Array) {
+	const { dimensions, nodeCount } = request;
+	if (start.length !== nodeCount * 3) {
+		throw new Error(`Initial positions (${start.length} values) must be nodeCount * 3 (${nodeCount * 3}).`);
+	}
+	for (const value of start) {
+		if (value === Number.POSITIVE_INFINITY || value === Number.NEGATIVE_INFINITY) {
+			throw new Error("Initial positions must not contain Infinity; use NaN to keep the default start.");
+		}
+	}
+	for (let node = 0; node < nodeCount; node += 1) {
+		const offset = node * 3;
+		if (Number.isNaN(start[offset]) || Number.isNaN(start[offset + 1])) continue;
+		if (dimensions === 3 && Number.isNaN(start[offset + 2])) continue;
+		positions[offset] = start[offset] ?? 0;
+		positions[offset + 1] = start[offset + 1] ?? 0;
+		positions[offset + 2] = dimensions === 3 ? (start[offset + 2] ?? 0) : 0;
+	}
 }
 
 function hash32(seed: number) {
@@ -544,6 +575,7 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		clusters = new Uint32Array(request.clusters);
 	}
 	let positions = clusters ? clusteredInitialPositions({ ...request, clusters }) : initialPositions(request);
+	if (request.initialPositions) applyInitialPositions(positions, request, request.initialPositions);
 	let anchorState: AnchorState | null = request.anchors
 		? createAnchorState(request, request.anchors, settings.linkDistance)
 		: null;

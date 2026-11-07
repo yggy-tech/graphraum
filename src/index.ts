@@ -32,6 +32,7 @@ export type {
 	SelectFocusLabelIdsInput,
 } from "./label-budget";
 export { orderFocusNodeIds, selectBudgetedLabelIds, selectFocusLabelIds } from "./label-budget";
+export type { GraphraumIconAtlas, GraphraumIconOptions } from "./node-icon";
 export { graphraumNodeShapes } from "./node-shapes";
 export { GraphraumOverlay } from "./overlay";
 export type { RichNodePolicy } from "./overlay-budget";

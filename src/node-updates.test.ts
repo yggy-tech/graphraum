@@ -20,6 +20,7 @@ describe("prepareNodeUpdates", () => {
 			{
 				colorChanged: true,
 				glowChanged: false,
+				iconChanged: false,
 				index: 0,
 				next: { id: "a", position: { x: 8, y: 9 }, color: undefined, shape: "diamond", size: 4 },
 				positionChanged: true,
@@ -39,6 +40,7 @@ describe("prepareNodeUpdates", () => {
 			{
 				colorChanged: false,
 				glowChanged: false,
+				iconChanged: false,
 				index: 1,
 				next: {
 					id: "b",

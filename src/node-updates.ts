@@ -1,5 +1,6 @@
 import { resolveNodeAxes } from "./node-axes";
 import { assertNodeGlow } from "./node-glow";
+import { assertNodeIcon } from "./node-icon";
 import { assertNodeShape } from "./node-shapes";
 import type { GraphraumNode, GraphraumNodeGeometry, GraphraumNodeUpdate } from "./types";
 
@@ -7,6 +8,8 @@ export interface PreparedNodeUpdate<NodeAttributes = undefined> {
 	colorChanged: boolean;
 	/** True when `glow` changed — the glow halo selection must be rebuilt. */
 	glowChanged: boolean;
+	/** True when `icon` changed. */
+	iconChanged: boolean;
 	index: number;
 	next: GraphraumNode<NodeAttributes>;
 	positionChanged: boolean;
@@ -31,6 +34,7 @@ function assertValidNode(node: GraphraumNodeGeometry) {
 	}
 	if (node.shape !== undefined) assertNodeShape(node.id, node.shape);
 	assertNodeGlow(node.id, node.glow);
+	assertNodeIcon(node.id, node.icon);
 }
 
 /** Validates a complete update batch before the renderer mutates CPU or GPU state. */
@@ -51,6 +55,7 @@ export function prepareNodeUpdates<NodeAttributes = undefined>(
 			...current,
 			...(Object.hasOwn(update, "color") ? { color: update.color } : {}),
 			...(Object.hasOwn(update, "glow") ? { glow: update.glow } : {}),
+			...(Object.hasOwn(update, "icon") ? { icon: update.icon } : {}),
 			...(update.position ? { position: { ...update.position } } : {}),
 			...(Object.hasOwn(update, "shape") ? { shape: update.shape } : {}),
 			...(Object.hasOwn(update, "size") ? { size: update.size } : {}),
@@ -63,6 +68,7 @@ export function prepareNodeUpdates<NodeAttributes = undefined>(
 		return {
 			colorChanged: Object.hasOwn(update, "color"),
 			glowChanged: Object.hasOwn(update, "glow"),
+			iconChanged: Object.hasOwn(update, "icon"),
 			index,
 			next,
 			positionChanged: update.position !== undefined,

@@ -1,5 +1,6 @@
 import { assertEdgeVisual } from "./edge-styles";
 import { assertNodeGlow } from "./node-glow";
+import { assertNodeIcon } from "./node-icon";
 import { assertNodeShape } from "./node-shapes";
 import type {
 	CompiledGraphraumPresentation,
@@ -97,6 +98,7 @@ function compileNodeVisual(id: string, visual: GraphraumNodeVisual): Readonly<Gr
 	assertPositiveFiniteVisual(id, "height", visual.height);
 	assertNonNegativeFiniteVisual(id, "strokeWidth", visual.strokeWidth);
 	assertNodeGlow(id, visual.glow);
+	assertNodeIcon(id, visual.icon);
 	if (visual.shape !== undefined) assertNodeShape(id, visual.shape);
 	return Object.freeze({ ...visual });
 }
@@ -128,6 +130,7 @@ export function compileGraph<NodeAttributes = undefined, EdgeAttributes = undefi
 				color: node.color,
 				glow: node.glow,
 				height: node.height,
+				icon: node.icon,
 				shape: node.shape,
 				size: node.size,
 				strokeColor: node.strokeColor,

@@ -426,10 +426,41 @@ export interface GraphraumDepthOfFieldUpdate {
  */
 export type GraphraumDepthOfFieldStatus = "active" | "inactive" | "off" | "unsupported";
 
+/**
+ * Opt-in focus lens: nodes near the center of the canvas draw larger and nodes toward its edge
+ * draw smaller, like an app grid on a watch. Positions never change, only drawn size, label
+ * opacity and, in 2D, which node draws on top. Works in 2D and 3D; in 3D the distance is measured
+ * on screen, so depth cues and lighting are untouched. See `Graphraum.setFocusLens`.
+ */
+export interface GraphraumFocusLensOptions {
+	/** Size factor at the exact center. Default 2. */
+	centerScale?: number;
+	/**
+	 * Share of the gap to the target size closed each frame, above 0 and at most 1. Default 0.35. A
+	 * viewer who prefers reduced motion gets the target at once.
+	 */
+	easing?: number;
+	/** Size factor at `reach` and beyond. Default 0.75. */
+	edgeScale?: number;
+	/** Default `false`. While disabled nodes draw at their own size and the lens costs nothing. */
+	enabled?: boolean;
+	/** Width of the label fade-in, as a fraction of the size gain `centerScale - 1`. Default 0.35. */
+	labelRamp?: number;
+	/**
+	 * Where labels start to show, as a fraction of the size gain `centerScale - 1`: a label is
+	 * transparent until the size factor passes `1 + (centerScale - 1) * labelThreshold`. Default 0.45.
+	 */
+	labelThreshold?: number;
+	/** Distance from the center at which the lens reaches `edgeScale`, as a fraction of the shorter canvas side. Default 0.5. */
+	reach?: number;
+}
+
 export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	antialias?: boolean;
 	/** Opt-in 3D depth of field; off by default. Change it later with `setDepthOfField`. */
 	depthOfField?: GraphraumDepthOfFieldOptions;
+	/** Opt-in focus lens; off by default. Change it later with `setFocusLens`. */
+	focusLens?: GraphraumFocusLensOptions;
 	/** Scene options; see `Graphraum.setScene`. */
 	scene?: GraphraumSceneOptions;
 	maxVisibleEdges?: number;

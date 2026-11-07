@@ -71,6 +71,13 @@ import {
 	type VisibleEdgeLayout,
 } from "./edge-viewport-patch";
 import { fitPerspective, type PerspectiveFit } from "./fit-3d";
+import {
+	FOCUS_LENS_DEFAULTS,
+	focusLensLabelAlpha,
+	focusLensScale,
+	type ResolvedFocusLensOptions,
+	resolveFocusLensOptions,
+} from "./focus-lens";
 import { markInstanceColorSlots } from "./instance-color-ranges";
 import { prepareLayoutPositions } from "./layout-positions";
 import { resolveNodeAxes } from "./node-axes";
@@ -110,6 +117,7 @@ import type {
 	GraphraumEdge,
 	GraphraumEdgeState,
 	GraphraumFlyToOptions,
+	GraphraumFocusLensOptions,
 	GraphraumLabelCandidate,
 	GraphraumLayoutPositions,
 	GraphraumMode,
@@ -201,6 +209,9 @@ function disposeMaterial(material: Material | Material[]) {
 
 /** One warning per page when a context cannot run depth of field; diagnostics report it per instance. */
 let warnedDepthOfFieldUnsupported = false;
+
+/** A lens size closer than this to its target counts as arrived, which ends the easing frames. */
+const LENS_SETTLE_EPSILON = 0.002;
 
 /** Canvas input that cancels a running `flyTo`, so people take over the camera at once. */
 const FLIGHT_CANCEL_EVENTS = ["keydown", "pointerdown", "wheel"] as const;
@@ -296,6 +307,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private readonly depthOfFieldNearStrength = new Tween(0);
 	private depthOfFieldPass: DepthOfFieldPass | null = null;
 	private depthOfFieldStatus: GraphraumDepthOfFieldStatus = "off";
+	private focusLens: ResolvedFocusLensOptions = FOCUS_LENS_DEFAULTS;
+	/** Size factor shown for each node, by node index; 0 means not set yet. Sized on demand. */
+	private lensScales = new Float32Array(0);
+	/** True once lens factors were written to the GPU, so turning the lens off knows to reset them. */
+	private lensApplied = false;
+	private readonly lensMatrix = new Matrix4();
 
 	constructor(container: HTMLElement, options: GraphraumOptions<NodeAttributes, EdgeAttributes> = {}) {
 		this.container = container;
@@ -321,6 +338,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			void this.depthOfFieldStrength.retarget(this.depthOfFieldTargetStrength(), 0, resolveEasing("linear"));
 			void this.depthOfFieldNearStrength.retarget(this.depthOfFieldTargetNearStrength(), 0, resolveEasing("linear"));
 		}
+		if (options.focusLens !== undefined) this.focusLens = resolveFocusLensOptions(options.focusLens);
 		this.antialias = options.antialias ?? false;
 		this.renderer = new WebGLRenderer({ antialias: this.antialias, alpha: true });
 		this.applyBackground();
@@ -404,6 +422,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.nodeIds = compiled.nodeIds;
 		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
 		this.nodeIndices = new Map(compiled.nodeIndices);
+		this.lensScales.fill(0);
 		this.edgeNodeIndices = compiled.edgeNodeIndices;
 		this.canonicalEdgePositions = compiled.edgePositions;
 		this.incidentEdgeIndices = compiled.incidentEdgeIndices;
@@ -530,7 +549,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity, width: this.theme.edgeWidth },
 			tier: this.lastEdgeLodTier,
 			maxSegments: this.edgeSegmentCapacity - segmentsBefore,
-			endpointAttach: this.theme.endpointAttach,
+			endpointAttach: this.endpointAttach(),
 			edgeNodeIndices: this.edgeNodeIndices,
 			mode: this.mode,
 			nodeOutlines: this.data.nodes,
@@ -625,6 +644,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.nodeIds = compiled.nodeIds;
 		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
 		this.nodeIndices = new Map(compiled.nodeIndices);
+		this.lensScales.fill(0);
 		this.edgeNodeIndices = compiled.edgeNodeIndices;
 		this.canonicalEdgePositions = compiled.edgePositions;
 		this.incidentEdgeIndices = compiled.incidentEdgeIndices;
@@ -727,7 +747,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 					matrix.setPosition(update.next.position.x, update.next.position.y, update.next.position.z ?? 0);
 					nodeMesh.setMatrixAt(nodeSlot, matrix);
 					nodeMesh.instanceMatrix.addUpdateRange(nodeSlot * 16, 16);
-					const pickScale = maxAxis * Math.SQRT2;
+					const pickScale = maxAxis * Math.SQRT2 * this.lensPickGrowth();
 					matrix.makeScale(pickScale, pickScale, pickScale);
 					matrix.setPosition(update.next.position.x, update.next.position.y, update.next.position.z ?? 0);
 					nodePickMesh.setMatrixAt(nodeSlot, matrix);
@@ -810,7 +830,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				edgeNodeIndices: this.edgeNodeIndices,
 				edgeStates: this.edgeStateStyling(),
 				edgeVisuals: this.data.edges,
-				endpointAttach: this.theme.endpointAttach,
+				endpointAttach: this.endpointAttach(),
 				endpointPositions: this.canonicalEdgePositions,
 				layouts: this.visibleEdgeLayouts,
 				minHitSlop,
@@ -996,6 +1016,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		if (this.nodeMesh && this.nodeMesh.material instanceof ShaderMaterial) {
 			configureNodeMaterial(this.nodeMesh.material, {
 				depth: setup.nodeDepth,
+				lensDepth: this.mode === "2d" && this.focusLens.enabled,
 				shading: setup.shading,
 				sphereImpostors: setup.sphereImpostors,
 			});
@@ -1011,6 +1032,137 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.edgeMesh.material.depthTest = setup.edgeDepthTest;
 			this.edgeMesh.renderOrder = setup.edgeRenderOrder;
 		}
+	}
+
+	/**
+	 * Updates the focus lens; omitted fields keep their value. Enabled, nodes near the center of the
+	 * canvas draw larger and nodes toward its edge draw smaller, in 2D and 3D alike. Only drawn size
+	 * changes, never a position. Hovered and selected nodes never draw smaller than their own size.
+	 * Picking uses the drawn size. Edges meet node centers while the lens is on, and in 2D bigger nodes
+	 * draw on top. Sizes ease toward their target each frame unless the viewer prefers reduced motion.
+	 * Aggregated density tiers draw at their own size. Invalid options throw before anything changes.
+	 */
+	setFocusLens(options: GraphraumFocusLensOptions) {
+		const previous = this.focusLens;
+		this.focusLens = resolveFocusLensOptions(options, previous);
+		if (this.destroyed) return;
+		if (!this.focusLens.enabled) this.resetFocusLens();
+		if (!this.nodeMesh) return;
+		this.applySceneDrawSetup();
+		if (previous.enabled !== this.focusLens.enabled || previous.centerScale !== this.focusLens.centerScale) {
+			this.materializeViewport();
+		}
+		this.requestRender();
+	}
+
+	/** The focus lens options in effect, including defaults. */
+	getFocusLens(): ResolvedFocusLensOptions {
+		return this.focusLens;
+	}
+
+	/**
+	 * Opacity, 0 to 1, a host should give a node's label under the focus lens: only nodes drawn large
+	 * show one. Hovered and selected nodes are always 1, as is every node while the lens is off.
+	 * `GraphraumOverlay` applies it to its labels; hosts with their own labels can read it from a view
+	 * listener.
+	 */
+	getFocusLensLabelAlpha(nodeId: string): number {
+		if (!this.focusLens.enabled || !this.lensApplied) return 1;
+		if (this.hoveredNodeIds.has(nodeId) || this.selectedNodeIds.has(nodeId)) return 1;
+		const index = this.nodeIndices.get(nodeId);
+		const scale = index === undefined ? 0 : (this.lensScales[index] ?? 0);
+		return scale === 0 ? 1 : focusLensLabelAlpha(scale, this.focusLens);
+	}
+
+	/** Edges meet node centers under the lens, because the drawn outline moves each frame. */
+	private endpointAttach() {
+		return this.focusLens.enabled ? "center" : this.theme.endpointAttach;
+	}
+
+	/** How much larger than a node's own size its 3D pick proxy must be to cover the lens. */
+	private lensPickGrowth() {
+		return this.focusLens.enabled ? Math.max(1, this.focusLens.centerScale) : 1;
+	}
+
+	private lensScaleOf(nodeIndex: number) {
+		return this.lensApplied ? (this.lensScales[nodeIndex] ?? 0) || 1 : 1;
+	}
+
+	private resetFocusLens() {
+		this.lensScales.fill(0);
+		if (!this.lensApplied) return;
+		this.lensApplied = false;
+		const attribute = this.nodeMesh?.geometry.getAttribute("instanceLens") as InstancedBufferAttribute | undefined;
+		if (!attribute) return;
+		(attribute.array as Float32Array).fill(1);
+		attribute.clearUpdateRanges();
+		attribute.needsUpdate = true;
+		if (this.hasGlowNodes) this.glowLayer.rewrite(this.describeGlowNode);
+	}
+
+	/**
+	 * Moves every drawn node's lens size one frame toward its target and writes it to the GPU. Runs
+	 * before each frame; allocates nothing. Asks for another frame until all sizes have settled.
+	 */
+	private updateFocusLens() {
+		const options = this.focusLens;
+		if (!options.enabled || this.densityLodActive || !this.nodeMesh) {
+			if (this.lensApplied) this.resetFocusLens();
+			return;
+		}
+		const attribute = this.nodeMesh.geometry.getAttribute("instanceLens") as InstancedBufferAttribute;
+		const values = attribute.array as Float32Array;
+		if (this.lensScales.length < this.data.nodes.length) {
+			const grown = new Float32Array(Math.max(this.data.nodes.length, this.lensScales.length * 2));
+			grown.set(this.lensScales);
+			this.lensScales = grown;
+		}
+		const scales = this.lensScales;
+		const width = this.canvasWidth;
+		const height = this.canvasHeight;
+		const viewportMin = Math.min(width, height);
+		this.camera.updateMatrixWorld();
+		this.lensMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+		const m = this.lensMatrix.elements;
+		const instant = prefersReducedMotion();
+		const hasFocus = this.hoveredNodeIds.size > 0 || this.selectedNodeIds.size > 0;
+		const indices = this.visibleNodeIndices;
+		const count = Math.min(indices.length, values.length);
+		let unsettled = false;
+		for (let slot = 0; slot < count; slot += 1) {
+			const nodeIndex = indices[slot] as number;
+			const node = this.data.nodes[nodeIndex];
+			if (!node) continue;
+			const x = node.position.x;
+			const y = node.position.y;
+			const z = node.position.z ?? 0;
+			const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+			let distance = Number.POSITIVE_INFINITY;
+			if (w > 1e-9) {
+				const px = (((m[0] * x + m[4] * y + m[8] * z + m[12]) / w) * width) / 2;
+				const py = (((m[1] * x + m[5] * y + m[9] * z + m[13]) / w) * height) / 2;
+				distance = Math.hypot(px, py);
+			}
+			let target = focusLensScale(distance, viewportMin, options);
+			if (hasFocus && target < 1 && (this.hoveredNodeIds.has(node.id) || this.selectedNodeIds.has(node.id))) {
+				target = 1;
+			}
+			const shown = scales[nodeIndex] as number;
+			let next = target;
+			if (shown !== 0 && !instant) {
+				next = shown + (target - shown) * options.easing;
+				if (Math.abs(target - next) < LENS_SETTLE_EPSILON) next = target;
+				else unsettled = true;
+			}
+			scales[nodeIndex] = next;
+			values[slot] = next;
+		}
+		attribute.clearUpdateRanges();
+		attribute.addUpdateRange(0, count);
+		attribute.needsUpdate = true;
+		this.lensApplied = true;
+		if (this.hasGlowNodes) this.glowLayer.rewrite(this.describeGlowNode);
+		if (unsettled) this.requestRender();
 	}
 
 	getMode() {
@@ -1622,6 +1774,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private renderFrame() {
+		this.updateFocusLens();
 		this.readGpuTimers();
 		const timer = this.gpuTimer;
 		const query = timer?.context.createQuery() ?? null;
@@ -1826,7 +1979,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		);
 		if (this.camera instanceof OrthographicCamera) {
 			const world = new Vector3(this.pointer.x, this.pointer.y, 0).unproject(this.camera);
-			const index = this.spatialGrid2d.pick(world.x, world.y);
+			const index = this.focusLens.enabled
+				? this.spatialGrid2d.pick(world.x, world.y, this.lensScales, this.focusLens.centerScale)
+				: this.spatialGrid2d.pick(world.x, world.y);
 			return index === null ? null : (this.nodeIds[index] ?? null);
 		}
 		this.raycaster.setFromCamera(this.pointer, this.camera);
@@ -1845,14 +2000,21 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				width: node.width,
 			});
 			this.pickCenter.set(node.position.x, node.position.y, node.position.z ?? 0).project(this.camera);
-			this.pickRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion).multiplyScalar(width);
+			const lens = this.lensScaleOf(nodeIndex);
+			this.pickRight
+				.set(1, 0, 0)
+				.applyQuaternion(this.camera.quaternion)
+				.multiplyScalar(width * lens);
 			this.pickRight.set(
 				this.pickRight.x + node.position.x,
 				this.pickRight.y + node.position.y,
 				this.pickRight.z + (node.position.z ?? 0),
 			);
 			this.pickRight.project(this.camera);
-			this.pickUp.set(0, 1, 0).applyQuaternion(this.camera.quaternion).multiplyScalar(height);
+			this.pickUp
+				.set(0, 1, 0)
+				.applyQuaternion(this.camera.quaternion)
+				.multiplyScalar(height * lens);
 			this.pickUp.set(
 				this.pickUp.x + node.position.x,
 				this.pickUp.y + node.position.y,
@@ -1944,7 +2106,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			width: node.width,
 		});
 		target.color.copy(this.getNodeColor(node));
-		target.extent = Math.max(width, height);
+		target.extent = Math.max(width, height) * this.lensScaleOf(nodeIndex);
 		target.glow = node.glow ?? 0;
 		target.x = node.position.x;
 		target.y = node.position.y;
@@ -2117,7 +2279,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			defaults: { color: this.theme.edge, opacity: this.theme.edgeOpacity, width: this.theme.edgeWidth },
 			tier: this.lastEdgeLodTier,
 			maxSegments: this.edgeSegmentCapacity,
-			endpointAttach: this.theme.endpointAttach,
+			endpointAttach: this.endpointAttach(),
 			edgeNodeIndices: this.edgeNodeIndices,
 			mode: this.mode,
 			nodeOutlines: this.data.nodes,
@@ -2186,7 +2348,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		matrix.makeScale(width, height, maxAxis);
 		matrix.setPosition(materialized.x, materialized.y, materialized.z);
 		(this.nodeMesh as InstancedMesh).setMatrixAt(slot, matrix);
-		const pickScale = maxAxis * Math.SQRT2;
+		const pickScale = maxAxis * Math.SQRT2 * this.lensPickGrowth();
 		matrix.makeScale(pickScale, pickScale, pickScale);
 		matrix.setPosition(materialized.x, materialized.y, materialized.z);
 		(this.nodePickMesh as InstancedMesh).setMatrixAt(slot, matrix);

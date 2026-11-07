@@ -173,3 +173,86 @@ describe("pixels", () => {
 		expect(colorDistance(frame.at(hub.x, hub.y), hexToRgb(NODE))).toBeLessThanOrEqual(6);
 	});
 });
+
+describe("focus lens", () => {
+	const theme = { background: BACKGROUND, edgeOpacity: 0, node: NODE, hoveredNode: NODE, selectedNode: NODE } as const;
+	// One node at the center and four of the same size toward the edges of the view.
+	const equalNodes: GraphraumData = {
+		nodes: [
+			{ id: "center", position: { x: 0, y: 0, z: 0 }, size: 6 },
+			{ id: "east", position: { x: 150, y: 0, z: 0 }, size: 6 },
+			{ id: "west", position: { x: -150, y: 0, z: 0 }, size: 6 },
+			{ id: "north", position: { x: 0, y: 110, z: 0 }, size: 6 },
+			{ id: "south", position: { x: 0, y: -110, z: 0 }, size: 6 },
+		],
+		edges: [],
+	};
+
+	/** Width in pixels of the node-coloured run through a node's center. */
+	function runWidth(frame: ReturnType<typeof renderAndRead>, x: number, y: number) {
+		const isNode = (px: number) => colorDistance(frame.at(px, y), hexToRgb(NODE)) <= 40;
+		let left = Math.round(x);
+		let right = Math.round(x);
+		while (isNode(left - 1)) left -= 1;
+		while (isNode(right + 1)) right += 1;
+		return right - left + 1;
+	}
+
+	function widths(graph: ReturnType<typeof mountGraph>) {
+		const frame = renderAndRead(graph);
+		const at = (id: string) => {
+			const position = graph.getNodeScreenPosition(id);
+			if (!position?.visible) throw new Error(`expected ${id} on screen`);
+			return runWidth(frame, position.x, position.y);
+		};
+		return { center: at("center"), east: at("east") };
+	}
+
+	test.each(["2d", "3d"] as const)("compiles and keeps the draw budget in %s", (mode) => {
+		const plain = mountGraph({ mode, theme }, equalNodes);
+		renderAndRead(plain);
+		const graph = mountGraph({ mode, focusLens: { enabled: true }, theme }, equalNodes);
+		renderAndRead(graph);
+		expectCleanCompile(graph);
+		expect(graph.getDiagnostics().gpuDrawCalls).toBe(plain.getDiagnostics().gpuDrawCalls);
+	});
+
+	test.each(["2d", "3d"] as const)("draws a centered node larger than one near the edge in %s", (mode) => {
+		const off = widths(mountGraph({ mode, theme }, equalNodes));
+		const on = widths(mountGraph({ mode, theme, focusLens: { enabled: true } }, equalNodes));
+		expect(on.center).toBeGreaterThan(on.east * 1.5);
+		expect(on.center).toBeGreaterThan(off.center);
+		expect(on.east).toBeLessThan(off.east);
+	});
+
+	test.each(["2d", "3d"] as const)("picks by the drawn size in %s", (mode) => {
+		const off = mountGraph({ mode, theme }, equalNodes);
+		const drawn = widths(off).center;
+		const center = off.getNodeScreenPosition("center");
+		if (!center) throw new Error("expected the center node on screen");
+		// 1.5 times its own radius: outside the node as drawn without the lens, inside it with the lens.
+		const x = center.x + (drawn / 2) * 1.5;
+		expect(off.pick(x, center.y)).toBeNull();
+		const on = mountGraph({ mode, theme, focusLens: { enabled: true } }, equalNodes);
+		renderAndRead(on);
+		expect(on.pick(x, center.y)).toBe("center");
+	});
+
+	test("turning the lens off draws nodes at their own size again", () => {
+		const graph = mountGraph({ theme, focusLens: { enabled: true } }, equalNodes);
+		const lensed = widths(graph);
+		graph.setFocusLens({ enabled: false });
+		const plain = widths(graph);
+		expect(plain.center).toBeLessThan(lensed.center);
+		expect(plain.east).toBeGreaterThan(lensed.east);
+	});
+
+	test("a selected node never draws below its own size", () => {
+		const graph = mountGraph({ theme, focusLens: { enabled: true } }, equalNodes);
+		const lensed = widths(graph).east;
+		graph.setSelection(["east"]);
+		const selected = widths(graph).east;
+		expect(selected).toBeGreaterThan(lensed);
+		expect(graph.getFocusLensLabelAlpha("east")).toBe(1);
+	});
+});

@@ -83,6 +83,37 @@ overlay.setToolbar("person:ada");
 
 `setLabels()` still throws when the list exceeds `maxLabels`. Off-screen and missing nodes are safely hidden or ignored. Call `destroy()` with the graph lifecycle.
 
+## Focus lens
+
+The focus lens draws nodes near the center of the canvas larger and nodes toward its edge smaller, like the app grid on a watch. It works in 2D and 3D, and only drawn size changes: positions, edges and the camera stay as they are. It is off by default.
+
+```ts
+const graph = new Graphraum(container, { focusLens: { enabled: true } });
+
+graph.setFocusLens({ centerScale: 2.5, reach: 0.4 }); // omitted fields keep their values
+graph.setFocusLens({ enabled: false });
+```
+
+A node's size factor depends on its distance from the center of the canvas on screen, so in 3D it follows the camera, and the lighting and depth cues are untouched. The factor eases from `centerScale` (default `2`) at the center to `edgeScale` (default `0.75`) at `reach` (default `0.5`, a fraction of the shorter canvas side) and beyond. Each frame a node's size moves `easing` (default `0.35`) of the way to that target, so panning feels smooth; with `prefers-reduced-motion: reduce` it jumps to the target.
+
+- Picking uses the size a node is drawn at.
+- A hovered or selected node never draws smaller than its own size.
+- Edges meet node centers while the lens is on, because the outline of a node changes every frame.
+- In 2D, larger nodes draw on top of smaller ones.
+- Aggregated density tiers draw at their own size.
+
+`GraphraumOverlay` fades its labels with the lens: a label is transparent until the node's size factor passes `1 + (centerScale - 1) * labelThreshold` (default `0.45`) and fully opaque `(centerScale - 1) * labelRamp` (default `0.35`) above that, so only nodes near the center show a label. Hovered and selected nodes always show theirs. If you render your own labels, read `graph.getFocusLensLabelAlpha(nodeId)` from an `onViewChange` listener.
+
+The size math is a pure function you can reuse or test on its own:
+
+```ts
+import { focusLens } from "@yggy-tech/graphraum";
+
+focusLens(0, 800); // { scale: 2, labelAlpha: 1 }
+focusLens(400, 800); // { scale: 0.75, labelAlpha: 0 }
+focusLens(100, 400, { centerScale: 3, reach: 0.25 });
+```
+
 ## Density policy
 
 Color, shape, and size can remain visible across the graph. Titles use the budgeted overlay policy above (`autoLabels` or a host-owned `setLabels()` list). Full properties, actions, and rich HTML cards belong to a bounded focused or selected subset. This preserves both accessibility and the dense rendering path.

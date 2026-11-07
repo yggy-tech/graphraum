@@ -6,6 +6,8 @@ export {
 	trimEdgeEndpoints,
 } from "./edge-endpoint-attach";
 export { graphraumEdgePaths } from "./edge-styles";
+export type { FocusLensResult, ResolvedFocusLensOptions } from "./focus-lens";
+export { FOCUS_LENS_DEFAULTS, focusLens, focusLensLabelAlpha, focusLensScale } from "./focus-lens";
 export type {
 	ForceAnchors,
 	ForceLayoutRequest,
@@ -73,6 +75,7 @@ export type {
 	GraphraumEdgeStyle,
 	GraphraumEdgeVisual,
 	GraphraumFlyToOptions,
+	GraphraumFocusLensOptions,
 	GraphraumLabelCandidate,
 	GraphraumLayoutPositions,
 	GraphraumMode,

@@ -56,7 +56,7 @@ const classicLight = {
 	},
 } satisfies GraphraumStyle;
 
-/** Brand-free greys on a transparent canvas with a system font stack, so it sits on any host page. */
+/** Brand-free greys with blue hover and selection accents on a transparent canvas and a system font stack, so it sits on any host page. */
 const neutral = {
 	edge: { markerSize: 1 },
 	label: {

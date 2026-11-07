@@ -65,6 +65,19 @@ yggy's design decision "Node Forms" (options 1a, 1b and 1d) is the first real co
 4. Node style variants: reuses the per-node state attribute from 1 and the icon and glyph tints from 2a and 2b.
 5. Custom shader hook: last, only if 1, 2 and 4 leave gaps.
 
+## Decisions (2026-11-07, maintainer)
+
+| Question | Decision |
+| --- | --- |
+| Preset naming | `{ light, dark }` pairs per style family (for example `graphraumStyles.classic.dark`); the host picks the variant from its own colour scheme. No flat names. |
+| Icon atlas format | Alpha mask at 2x with mipmaps. GPU icons stay small (12 to 30 px), because zooming in hands over to host DOM cards. SDF or MSDF can be added later without an API change. |
+| Colour icons | Tinted only, one channel. Source page marks are a shape, not an icon. Full colour (logos) only on demand. |
+| Icon baseline | [Phosphor](https://phosphoricons.com) (MIT): graphraum stays icon-set neutral (the atlas takes SVG strings), and an optional `@yggy-tech/graphraum/icons` helper turns Phosphor SVGs into atlas entries. Icons are imported one by one so only used icons ship; nothing lands in the main entry. |
+| Card over a node | The card hides the GPU node under it. The node stays in the scene for picking, edge ends and layout; only its draw fades out (instance state, alpha 0) with the card's own fade timing. |
+| Cards in 3D | v1: 2D zoom tier only; in 3D only the selected node gets a card, so no occlusion tests are needed. |
+| GPU text storage | Decided from the 2b prototype numbers. Lean: one baked row per label (one fetch, fixed cost) if memory fits; GPU text is no longer urgent, since yggy shows text on hover and in cards through host DOM. |
+| Shader hook | Parked. If it ever ships, it ships as `unstable_shadeNode`, outside the semver promise, until two real hosts use it. |
+
 ---
 
 ## 1. Neutral defaults plus a style preset object
@@ -216,7 +229,7 @@ new Graphraum(container, { style: graphraumStylePresets.classicDark });
 ### Open questions
 
 1. Flip the default in the same release as the preset, or one release later behind a deprecation notice in `getDiagnostics()`? Recommendation: ship presets first, flip the default in the next minor with `!`.
-2. Presets as flat names (`classicDark`, `classicLight`) or `{ light, dark }` pairs with a `colorScheme` option? Flat names are simpler to type and tree-shake; pairs fit host dark-mode switches better.
+2. Decided: `{ light, dark }` pairs (see Decisions).
 3. Should `neutral` be transparent-background by default? It looks right on any host page but removes the guaranteed contrast of an opaque canvas.
 4. Is a halo mode worth a shader branch for hosts that never use it? If the measured main entry cost is too high, halos could be `./styles`-only via a shader define.
 
@@ -249,7 +262,7 @@ Performance: one `instanceIcon` float per node (index, -1 for none), one atlas t
 
 Tests and gates: pixel probes at a known icon texel and outside it in 2D, 3D flat and 3D lit; nodes without an icon probe identical to before; out-of-range index errors; `gpuDrawCalls === 2`; 10k and 50k nodes with icons within 5 percent GPU frame time of icons off, 2D and 3D, pixel ratio 1 and 2. Migration: additive.
 
-Open questions: alpha mask or SDF atlas as the default (SDF scales better across zoom, alpha is simpler for hosts); whether colour icons (RGBA, untinted) are needed for source page marks.
+Decided: alpha mask at 2x with mipmaps, tinted only, Phosphor as the baseline through an optional `./icons` helper (see Decisions).
 
 ### 2b. Chips on the GPU
 
@@ -424,7 +437,7 @@ Each card gets `--graphraum-node-screen-size` (px) and, with `scale: "fit"`, a `
 
 - **Per view change:** one pass over the already-computed visible node candidates (the same list the label budget uses), filtered by on-screen size, a partial selection of the top `maxVisible` (nth-element, not a full sort), then a diff against the current card set. Cost is O(visible candidates), no allocation per node beyond the output ids.
 - **Per card:** `render` is called once when a node enters the set and again only when its presentation object changes (the existing check in `updateEntry`). Transforms are batched: all reads first, then all writes in one animation frame, `contain: layout paint` on each card.
-- **GPU:** the node stays in the instanced pass underneath so picking, edge ends and depth keep working. `fade` hiding of the GPU node under a card is optional (see open questions) and, if used, is a per-node colour write, not a draw change.
+- **GPU:** the node stays in the instanced pass underneath so picking, edge ends and depth keep working. The GPU node under a card is hidden by a per-node state write (alpha 0, faded with the card), not a draw change.
 - **Budget:** 60 cards is the default because transform updates for 60 composited elements stay within a frame at 60 fps on mid-range laptops; the gate below verifies this and lets the number be changed with evidence.
 
 ### Bundle impact and entry
@@ -454,10 +467,10 @@ Additive. `renderRichNode`, `autoRichNodes` and `maxRichNodes` keep their meanin
 
 ### Open questions
 
-1. Should the GPU node be hidden under a card (avoids double edges and halo, costs a colour write) or left visible (card must be opaque)? Recommendation: leave visible, require opaque cards.
+1. Decided: the GPU node is hidden under a card, fading with the card (see Decisions).
 2. Event model for interactive cards: callback on the overlay, or let the host handle events and call `selectNode`? Recommendation: host handles, overlay stays dumb.
 3. Default threshold 96 px and budget 60: confirm on real hardware before documenting them as defaults.
-4. 3D occlusion: is "2D only for v1" acceptable?
+4. Decided: 2D zoom tier only; in 3D only the selected node gets a card.
 
 ---
 
@@ -603,7 +616,7 @@ Additive and opt-in. The input struct is versioned (`GRAPHRAUM_NODE_INPUT_VERSIO
 
 ### Open questions
 
-1. Is host GLSL acceptable as a supported surface for a library that wants a stable contract? The struct is the contract and must be frozen once released.
+1. Decided: parked; if shipped, as `unstable_shadeNode` outside semver until two real hosts use it.
 2. GLSL ES 3.00 only (WebGL2 is already required)? Confirm.
 3. Security: host GLSL is host code like host JS; no sandboxing is attempted. Document it, and keep user-supplied (end-user) shader text out of scope.
 

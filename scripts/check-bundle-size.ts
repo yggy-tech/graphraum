@@ -10,10 +10,12 @@ import { dirname, join } from "node:path";
 // 1 500 for the styles entry (#203): four presets as plain objects, kept out of the main bundle.
 // 4 500 for the layout-start entry (#193): pivot MDS, kept out of the main entry (3.3 KiB when added).
 // 56 000 since the published JS drops comments (the .d.ts keeps them): 52.8 KiB with the focus lens, style presets and pivot MDS start at that change.
+// 1 500 for the icons entry (#208): the atlas builder and the Phosphor helper, 1.2 KiB at that change.
 const BUDGETS = [
 	{ file: "dist/index.js", gzipBytes: 56_000 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },
+	{ file: "dist/icons.js", gzipBytes: 1_500 },
 ];
 
 const LOCAL_IMPORT = /\bfrom\s*["'](\.\/[^"']+\.js)["']/g;

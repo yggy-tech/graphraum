@@ -89,6 +89,11 @@ export interface GraphraumNodeGeometry {
 	 */
 	glow?: number;
 	height?: number;
+	/**
+	 * Index into the icon atlas set with `setIconAtlas`; undefined draws no icon. The icon is a
+	 * flat decal tinted over the fill and is drawn in the same pass as the node.
+	 */
+	icon?: number;
 	shape?: GraphraumNodeShape;
 	size?: number;
 	strokeColor?: GraphraumColor;
@@ -102,6 +107,8 @@ export interface GraphraumNodeUpdate {
 	color?: GraphraumColor | undefined;
 	glow?: number | undefined;
 	height?: number | undefined;
+	/** Index into the icon atlas, or undefined to remove the icon. */
+	icon?: number | undefined;
 	id: string;
 	position?: GraphraumPosition;
 	shape?: GraphraumNodeShape | undefined;
@@ -206,6 +213,11 @@ export interface GraphraumNodeVisual {
 	 */
 	glow?: number;
 	height?: number;
+	/**
+	 * Index into the icon atlas set with `setIconAtlas`; undefined draws no icon. The icon is a
+	 * flat decal tinted over the fill and is drawn in the same pass as the node.
+	 */
+	icon?: number;
 	shape?: GraphraumNodeShape;
 	size?: number;
 	strokeColor?: GraphraumColor;

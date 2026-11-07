@@ -5,6 +5,7 @@
 ```ts
 
 import { AbstractGraph } from 'graphology-types';
+import { Texture } from 'three';
 
 // @public
 export function attachPointOnOutline(center: GraphraumPosition, far: GraphraumPosition, outline: EndpointOutline, clearance?: number, mode?: GraphraumMode): GraphraumPosition;
@@ -219,6 +220,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     setEdgeSelection(edgeIds: Iterable<string>): void;
     setEdgeState(state: GraphraumEdgeState, edgeIds: Iterable<string>): void;
     setFocusLens(options: GraphraumFocusLensOptions): void;
+    setIconAtlas(atlas: GraphraumIconAtlas | null, options?: GraphraumIconOptions): void;
     // (undocumented)
     setMode(mode: GraphraumMode): void;
     setNodeDrag(options: GraphraumNodeDragOptions): void;
@@ -477,6 +479,23 @@ export interface GraphraumFocusLensOptions {
     reach?: number;
 }
 
+// @public
+export interface GraphraumIconAtlas {
+    readonly columns: number;
+    readonly count: number;
+    readonly padding: number;
+    // (undocumented)
+    readonly rows: number;
+    // (undocumented)
+    readonly texture: Texture;
+}
+
+// @public (undocumented)
+export interface GraphraumIconOptions {
+    color?: GraphraumColor;
+    scale?: number;
+}
+
 // @public (undocumented)
 export interface GraphraumLabelCandidate {
     // (undocumented)
@@ -547,6 +566,7 @@ export interface GraphraumNodeGeometry {
     glow?: number;
     // (undocumented)
     height?: number;
+    icon?: number;
     // (undocumented)
     id: string;
     // (undocumented)
@@ -580,6 +600,7 @@ export interface GraphraumNodeUpdate {
     glow?: number | undefined;
     // (undocumented)
     height?: number | undefined;
+    icon?: number | undefined;
     // (undocumented)
     id: string;
     // (undocumented)
@@ -603,6 +624,7 @@ export interface GraphraumNodeVisual {
     glow?: number;
     // (undocumented)
     height?: number;
+    icon?: number;
     // (undocumented)
     shape?: GraphraumNodeShape;
     // (undocumented)

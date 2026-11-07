@@ -86,11 +86,19 @@ import { createNodeDragSurface } from "./node-drag-surface";
 import { glowBlendModeFor, glowHaloRadius } from "./node-glow";
 import { type GlowNodeTarget, NodeGlowLayer } from "./node-glow-rendering";
 import {
+	assertIconAtlas,
+	assertIconScale,
+	assertNodeIconInAtlas,
+	type GraphraumIconAtlas,
+	type GraphraumIconOptions,
+} from "./node-icon";
+import {
 	allocateNodeInstanceColors,
 	configureNodeMaterial,
 	createNodeGeometry,
 	createNodeMaterial,
 	NODE_RENDER_ORDER,
+	setNodeIconAt,
 	setNodeLighting,
 	setNodeShapeAt,
 	setNodeStrokeAt,
@@ -193,6 +201,7 @@ interface MaterializedNode {
 
 /** The instanced attributes one node's slot is written into. */
 interface NodeInstanceTargets {
+	icon: InstancedBufferAttribute;
 	matrix: Matrix4;
 	shape: InstancedBufferAttribute;
 	strokeColor: InstancedBufferAttribute;
@@ -248,6 +257,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private nodePresentations = new Map<string, CompiledGraphraumPresentation>();
 	private edgePresentations = new Map<string, CompiledGraphraumPresentation>();
 	private spatialGrid2d = new SpatialGrid2D();
+	private iconSetup: { atlas: GraphraumIconAtlas; options: GraphraumIconOptions } | null = null;
 	private nodeMesh: InstancedMesh | null = null;
 	private nodePickMesh: InstancedMesh | null = null;
 	private edgeMesh: InstancedMesh | null = null;
@@ -415,6 +425,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	private mutateDataInPlace(merged: MergedGraphData<NodeAttributes, EdgeAttributes>) {
 		const compiled = compileGraph(merged, this.visuals);
+		this.assertIconsInAtlas(compiled);
 		this.data = {
 			edges: merged.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
 			nodes: merged.nodes.map((node, index) => ({
@@ -464,6 +475,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			}
 		}
 		const compiled = compileGraph({ nodes: [...patchNodes.values()], edges: addedEdges }, this.visuals);
+		this.assertIconsInAtlas(compiled);
 		const nodeVisuals = new Map([...patchNodes.keys()].map((id, index) => [id, compiled.nodeVisuals[index]]));
 
 		const nodeIds = this.nodeIds as string[];
@@ -587,6 +599,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		targets.shape.addUpdateRange(firstNodeSlot, addedNodeCount);
 		targets.shape.needsUpdate = true;
+		targets.icon.addUpdateRange(firstNodeSlot, addedNodeCount);
+		targets.icon.needsUpdate = true;
 		targets.strokeWidth.addUpdateRange(firstNodeSlot, addedNodeCount);
 		targets.strokeWidth.needsUpdate = true;
 		targets.strokeColor.addUpdateRange(firstNodeSlot * 3, addedNodeCount * 3);
@@ -636,6 +650,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private replaceData(data: GraphraumData<NodeAttributes, EdgeAttributes>, fitView: boolean) {
 		this.nodeDrag.cancel({ restore: false });
 		const compiled = compileGraph(data, this.visuals);
+		this.assertIconsInAtlas(compiled);
 		this.disposeGraphObjects();
 		this.data = {
 			edges: data.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
@@ -696,6 +711,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		if (updates.length === 0) return;
 		const objects = this.getGraphObjects("update nodes");
 		const prepared = prepareNodeUpdates(this.data.nodes, this.nodeIndices, updates);
+		if (this.iconSetup) {
+			for (const { iconChanged, next } of prepared) {
+				if (iconChanged) assertNodeIconInAtlas(next.id, next.icon, this.iconSetup.atlas.count);
+			}
+		}
 		this.applyPreparedNodeUpdates(prepared, objects);
 	}
 
@@ -721,6 +741,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const nodes = [...this.data.nodes];
 		const matrix = new Matrix4();
 		const nodeShape = nodeMesh.geometry.getAttribute("instanceShape") as InstancedBufferAttribute;
+		const nodeIcon = nodeMesh.geometry.getAttribute("instanceIcon") as InstancedBufferAttribute;
 		const nodeStrokeWidth = nodeMesh.geometry.getAttribute("instanceStrokeWidth") as InstancedBufferAttribute;
 		const nodeStrokeColor = nodeMesh.geometry.getAttribute("instanceStrokeColor") as InstancedBufferAttribute;
 		const viewportBounds = this.getViewportBounds2d();
@@ -761,6 +782,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			if (update.colorChanged && nodeSlot !== undefined) {
 				nodeMesh.setColorAt(nodeSlot, this.getNodeColor(update.next));
 				nodeMesh.instanceColor?.addUpdateRange(nodeSlot * 3, 3);
+			}
+			if (update.iconChanged && nodeSlot !== undefined) {
+				setNodeIconAt(nodeIcon, nodeSlot, update.next.icon);
+				nodeIcon.addUpdateRange(nodeSlot, 1);
 			}
 			if (update.shapeChanged && nodeSlot !== undefined) {
 				setNodeShapeAt(nodeShape, nodeSlot, update.next.shape);
@@ -815,6 +840,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			nodeMesh.instanceColor.needsUpdate = true;
 		}
 		if (prepared.some((update) => update.shapeChanged)) nodeShape.needsUpdate = true;
+		if (prepared.some((update) => update.iconChanged)) nodeIcon.needsUpdate = true;
 		if (glowChanged) this.syncGlow();
 		else if (prepared.some((update) => update.positionChanged || update.sizeChanged || update.colorChanged)) {
 			this.glowLayer.rewrite(this.describeGlowNode);
@@ -1020,12 +1046,43 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return this.scene3d;
 	}
 
+	/**
+	 * Draws a tinted icon inside each node that has an `icon` index, from one atlas, in the same
+	 * pass as the nodes (no extra draw call). Pass `null` to remove icons. The atlas comes from
+	 * `createIconAtlas` in `@yggy-tech/graphraum/icons` and stays owned by the caller, who disposes
+	 * its texture. Setting an atlas compiles the node shader once with the icon branch.
+	 */
+	setIconAtlas(atlas: GraphraumIconAtlas | null, options: GraphraumIconOptions = {}) {
+		if (this.destroyed) return;
+		if (atlas === null) {
+			this.iconSetup = null;
+		} else {
+			assertIconAtlas(atlas);
+			assertIconScale(options.scale);
+			for (const node of this.data.nodes) assertNodeIconInAtlas(node.id, node.icon, atlas.count);
+			this.iconSetup = { atlas, options: { ...options } };
+		}
+		this.applySceneDrawSetup();
+		this.requestRender();
+	}
+
+	private assertIconsInAtlas(compiled: {
+		nodeIds: readonly string[];
+		nodeVisuals: readonly Readonly<{ icon?: number }>[];
+	}) {
+		if (!this.iconSetup) return;
+		for (const [index, visual] of compiled.nodeVisuals.entries()) {
+			assertNodeIconInAtlas(compiled.nodeIds[index] ?? "", visual.icon, this.iconSetup.atlas.count);
+		}
+	}
+
 	private applySceneDrawSetup() {
 		const setup = resolveSceneDrawSetup(this.mode, this.scene3d);
 		if (this.nodeMesh && this.nodeMesh.material instanceof ShaderMaterial) {
 			configureNodeMaterial(this.nodeMesh.material, {
 				depth: setup.nodeDepth,
 				lensDepth: this.mode === "2d" && this.focusLens.enabled,
+				icons: this.iconSetup,
 				shading: setup.shading,
 				sphereImpostors: setup.sphereImpostors,
 			});
@@ -2269,6 +2326,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.nodeMesh.instanceColor?.clearUpdateRanges();
 		const targets = this.nodeInstanceTargets();
 		targets.shape.clearUpdateRanges();
+		targets.icon.clearUpdateRanges();
 		targets.strokeWidth.clearUpdateRanges();
 		targets.strokeColor.clearUpdateRanges();
 		for (const [slot, materialized] of materializedNodes.entries()) {
@@ -2289,6 +2347,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		targets.shape.addUpdateRange(0, materializedNodes.length);
 		targets.shape.needsUpdate = true;
+		targets.icon.addUpdateRange(0, materializedNodes.length);
+		targets.icon.needsUpdate = true;
 		targets.strokeWidth.addUpdateRange(0, materializedNodes.length);
 		targets.strokeWidth.needsUpdate = true;
 		targets.strokeColor.addUpdateRange(0, materializedNodes.length * 3);
@@ -2355,6 +2415,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private nodeInstanceTargets(): NodeInstanceTargets {
 		const geometry = (this.nodeMesh as InstancedMesh).geometry;
 		return {
+			icon: geometry.getAttribute("instanceIcon") as InstancedBufferAttribute,
 			matrix: new Matrix4(),
 			shape: geometry.getAttribute("instanceShape") as InstancedBufferAttribute,
 			strokeColor: geometry.getAttribute("instanceStrokeColor") as InstancedBufferAttribute,
@@ -2364,7 +2425,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	/** Writes one node's matrix, pick matrix, color, shape and stroke into `slot`. */
 	private writeNodeInstance(
-		{ matrix, shape, strokeColor, strokeWidth }: NodeInstanceTargets,
+		{ icon, matrix, shape, strokeColor, strokeWidth }: NodeInstanceTargets,
 		slot: number,
 		materialized: MaterializedNode,
 		node: GraphraumNode<NodeAttributes>,
@@ -2380,6 +2441,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		(this.nodePickMesh as InstancedMesh).setMatrixAt(slot, matrix);
 		(this.nodeMesh as InstancedMesh).setColorAt(slot, this.getNodeColor(node));
 		setNodeShapeAt(shape, slot, node.shape);
+		setNodeIconAt(icon, slot, node.icon);
 		setNodeStrokeAt(strokeWidth, strokeColor, slot, resolveNodeStroke(node, this.theme, this.extras.node.strokeWidth));
 	}
 

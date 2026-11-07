@@ -171,3 +171,35 @@ function runNodeAction(nodeId: string, actionId: string) {
 ```
 
 Do not put arbitrary HTML, component instances, closures, or mutable domain objects into presentation metadata. Properties accept only `string`, `number`, `boolean`, or `null`; numeric values must be finite. Empty labels and duplicate property or action IDs fail during `setData()` with the entity ID in the error.
+
+## Icons
+
+A node can carry a small icon, such as a type symbol, drawn inside it in the same pass as the node. graphraum stays icon-set neutral: you hand it SVG strings (or decoded images) and it packs them into one atlas texture. The atlas builder lives in the optional `@yggy-tech/graphraum/icons` entry, so it stays out of the main bundle.
+
+```ts
+import { Graphraum } from "@yggy-tech/graphraum";
+import { createIconAtlas, phosphorIcon } from "@yggy-tech/graphraum/icons";
+import buildings from "@phosphor-icons/core/assets/regular/buildings.svg?raw";
+import user from "@phosphor-icons/core/assets/regular/user.svg?raw";
+
+// Index in this array is the node's `icon`. Rasterised once, at 2x, with mipmaps.
+const atlas = await createIconAtlas([phosphorIcon(buildings), phosphorIcon(user)]);
+
+const graph = new Graphraum(container);
+graph.setData({
+  nodes: [
+    { id: "acme", icon: 0, position: { x: 0, y: 0 }, size: 10 },
+    { id: "ada", icon: 1, position: { x: 30, y: 0 }, size: 10 },
+    { id: "unknown", position: { x: 60, y: 0 }, size: 10 },
+  ],
+  edges: [],
+});
+graph.setIconAtlas(atlas, { color: "#ffffff", scale: 0.6 });
+```
+
+- **Index, not name.** `icon` is an index into the atlas, set on the node, in a visual mapper, or with `updateNodes()`. A node without `icon` draws as before. A negative, fractional or out of range index fails with the node ID and the atlas size.
+- **Tint.** The atlas is a mask, so the icon takes the colour you pass. Leave `color` out and each icon turns light on dark fills and dark on light fills. Use `"#ffffff"` for white icons on filled circles.
+- **Size.** `scale` is the icon's half extent as a fraction of the node's half height, `0.6` by default. Atlas cells are 32 CSS pixels rasterised at 2x by default; set `size` in `createIconAtlas()` to stay sharp for larger icons. Icons between 12 and 30 pixels are the target.
+- **Shading and 3D.** The icon is a flat decal over the lit fill, so lit and toon shading do not change it, and in 3D it faces the camera with the node.
+- **Cost.** Icons add no draw call. The graph keeps its two batched draws and the atlas is one extra texture lookup per node pixel.
+- **Icon set.** `phosphorIcon()` prepares raw Phosphor SVG files for rasterising; any other SVG string works directly. graphraum bundles no icon set. Call `atlas.dispose()` when no graph uses the atlas.

@@ -1,5 +1,14 @@
-import { Color, InstancedBufferAttribute, type InstancedMesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
+import {
+	Color,
+	InstancedBufferAttribute,
+	type InstancedMesh,
+	PlaneGeometry,
+	ShaderMaterial,
+	Vector3,
+	Vector4,
+} from "three";
 
+import { DEFAULT_ICON_SCALE, type GraphraumIconAtlas, type GraphraumIconOptions } from "./node-icon";
 import { encodeNodeShape } from "./node-shapes";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
 import type { GraphraumColor, GraphraumNodeShape, GraphraumShading } from "./types";
@@ -17,6 +26,11 @@ varying vec2 nodePoint;
 varying float nodeShape;
 varying float nodeStrokeWidth;
 varying vec3 nodeStrokeColor;
+#ifdef GRAPHRAUM_ICONS
+attribute float instanceIcon;
+varying float nodeIcon;
+varying float nodeAspect;
+#endif
 #ifdef GRAPHRAUM_SPHERE_IMPOSTOR
 varying vec3 nodeViewCenter;
 varying float nodeRadius;
@@ -32,6 +46,10 @@ void main() {
 	vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
 	float scaleX = length(instanceMatrix[0].xyz) * instanceLens;
 	float scaleY = length(instanceMatrix[1].xyz) * instanceLens;
+#ifdef GRAPHRAUM_ICONS
+	nodeIcon = instanceIcon;
+	nodeAspect = scaleX / scaleY;
+#endif
 #ifdef GRAPHRAUM_SPHERE_IMPOSTOR
 	nodeViewCenter = center.xyz;
 	nodeRadius = max(scaleX, scaleY);
@@ -63,6 +81,15 @@ varying vec2 nodePoint;
 varying float nodeShape;
 varying float nodeStrokeWidth;
 varying vec3 nodeStrokeColor;
+#ifdef GRAPHRAUM_ICONS
+uniform sampler2D graphraumIconAtlas;
+// columns, rows, half-extent of an icon cell in half-heights, unused
+uniform vec4 graphraumIconGrid;
+// Icon tint; negative means light or dark by the fill's luminance.
+uniform vec3 graphraumIconTint;
+varying float nodeIcon;
+varying float nodeAspect;
+#endif
 
 // Apothem of a regular hexagon whose pointy left/right vertices reach x = ±1 (matches node-shapes.ts).
 const float HEXAGON_APOTHEM = 0.8660254037844386;
@@ -178,6 +205,19 @@ void main() {
 		float strokeToFill = smoothstep(0.0, fwidth(innerEdge), innerEdge);
 		fillColor = mix(nodeStrokeColor, fillColor, strokeToFill);
 	}
+#ifdef GRAPHRAUM_ICONS
+	// Flat decal over the lit fill. Sampled unconditionally so the mip level stays defined.
+	vec2 iconUv = nodePoint * vec2(nodeAspect, 1.0) / graphraumIconGrid.z * 0.5 + 0.5;
+	vec2 iconInside = step(vec2(0.0), iconUv) * step(iconUv, vec2(1.0));
+	float iconRow = floor(max(nodeIcon, 0.0) / graphraumIconGrid.x);
+	vec2 iconCell = vec2(max(nodeIcon, 0.0) - iconRow * graphraumIconGrid.x, iconRow);
+	vec2 iconLocal = clamp(vec2(iconUv.x, 1.0 - iconUv.y), 0.0, 1.0);
+	float iconInk = texture2D(graphraumIconAtlas, (iconCell + iconLocal) / graphraumIconGrid.xy).a;
+	iconInk *= iconInside.x * iconInside.y * step(-0.5, nodeIcon);
+	float iconLuminance = dot(fillColor, vec3(0.299, 0.587, 0.114));
+	vec3 iconColor = graphraumIconTint.x >= 0.0 ? graphraumIconTint : vec3(iconLuminance > 0.4 ? 0.02 : 0.97);
+	fillColor = mix(fillColor, iconColor, iconInk);
+#endif
 	gl_FragColor = vec4(fillColor, outerAlpha);
 	${OUTPUT_COLOR_SPACE_FRAGMENT}
 }
@@ -188,6 +228,7 @@ export function createNodeGeometry(capacity: number) {
 	geometry.setAttribute("instanceShape", new InstancedBufferAttribute(new Float32Array(capacity), 1));
 	// The focus lens size factor; 1 draws the node at its own size.
 	geometry.setAttribute("instanceLens", new InstancedBufferAttribute(new Float32Array(capacity).fill(1), 1));
+	geometry.setAttribute("instanceIcon", new InstancedBufferAttribute(new Float32Array(capacity).fill(-1), 1));
 	geometry.setAttribute("instanceStrokeWidth", new InstancedBufferAttribute(new Float32Array(capacity), 1));
 	geometry.setAttribute("instanceStrokeColor", new InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
 	return geometry;
@@ -212,6 +253,9 @@ export function createNodeMaterial(depthTest: boolean) {
 			graphraumSunColor: { value: new Color(0, 0, 0) },
 			graphraumSkyColor: { value: new Color(1, 1, 1) },
 			graphraumGroundColor: { value: new Color(1, 1, 1) },
+			graphraumIconAtlas: { value: null },
+			graphraumIconGrid: { value: new Vector4(1, 1, 1, 0) },
+			graphraumIconTint: { value: new Vector3(-1, -1, -1) },
 		},
 		vertexShader,
 	});
@@ -227,11 +271,14 @@ const SHADING_DEFINE_VALUES: Record<GraphraumShading, string | null> = { flat: n
 
 /** Shader define that orders 2D nodes by their focus lens size, bigger on top. */
 export const LENS_DEPTH_DEFINE = "GRAPHRAUM_LENS_DEPTH";
+/** Shader define that samples the icon atlas; absent, nodes draw no icons and bind no texture. */
+export const ICONS_DEFINE = "GRAPHRAUM_ICONS";
 
 export interface NodeMaterialSetup {
 	depth: boolean;
 	/** Draw bigger lens-scaled nodes on top in 2D by giving the billboards a depth. */
 	lensDepth?: boolean;
+	icons: { atlas: GraphraumIconAtlas; options: GraphraumIconOptions } | null;
 	shading: GraphraumShading;
 	sphereImpostors: boolean;
 }
@@ -239,7 +286,7 @@ export interface NodeMaterialSetup {
 /** Applies depth, the sphere impostor and the shading defines; recompiles only when a define changes. */
 export function configureNodeMaterial(
 	material: ShaderMaterial,
-	{ depth, lensDepth = false, shading, sphereImpostors }: NodeMaterialSetup,
+	{ depth, lensDepth = false, icons, shading, sphereImpostors }: NodeMaterialSetup,
 ) {
 	material.depthTest = depth || lensDepth;
 	material.depthWrite = depth || lensDepth;
@@ -248,9 +295,12 @@ export function configureNodeMaterial(
 	else delete defines[SPHERE_IMPOSTOR_DEFINE];
 	if (lensDepth && !depth) defines[LENS_DEPTH_DEFINE] = "";
 	else delete defines[LENS_DEPTH_DEFINE];
+	if (icons) defines[ICONS_DEFINE] = "";
+	else delete defines[ICONS_DEFINE];
 	const shadingValue = SHADING_DEFINE_VALUES[shading];
 	if (shadingValue === null) delete defines[SHADING_DEFINE];
 	else defines[SHADING_DEFINE] = shadingValue;
+	setNodeIcons(material, icons);
 	const previous = material.defines ?? {};
 	const changed =
 		Object.keys(defines).length !== Object.keys(previous).length ||
@@ -258,6 +308,17 @@ export function configureNodeMaterial(
 	if (!changed) return;
 	material.defines = defines;
 	material.needsUpdate = true;
+}
+
+function setNodeIcons(material: ShaderMaterial, icons: NodeMaterialSetup["icons"]) {
+	if (!icons) return;
+	const { atlas, options } = icons;
+	const { uniforms } = material;
+	const cellHalf = (options.scale ?? DEFAULT_ICON_SCALE) / (1 - 2 * atlas.padding);
+	(uniforms.graphraumIconGrid?.value as Vector4 | undefined)?.set(atlas.columns, atlas.rows, cellHalf, 0);
+	const tint = options.color === undefined ? null : new Color(options.color);
+	(uniforms.graphraumIconTint?.value as Vector3 | undefined)?.set(tint?.r ?? -1, tint?.g ?? -1, tint?.b ?? -1);
+	if (uniforms.graphraumIconAtlas) uniforms.graphraumIconAtlas.value = atlas.texture;
 }
 
 export interface NodeLighting {
@@ -282,6 +343,10 @@ export function setNodeShapeAt(
 	shape: GraphraumNodeShape | undefined,
 ) {
 	attribute.setX(index, encodeNodeShape(shape));
+}
+
+export function setNodeIconAt(attribute: InstancedBufferAttribute, index: number, icon: number | undefined) {
+	attribute.setX(index, icon ?? -1);
 }
 
 export interface NodeStrokeInput {

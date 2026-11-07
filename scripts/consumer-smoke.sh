@@ -22,6 +22,8 @@ const styles = await import('@yggy-tech/graphraum/styles');
 if (!styles.graphraumStylePresets.classicDark) throw new Error('styles export missing');
 const layoutStart = await import('@yggy-tech/graphraum/layout-start');
 if (typeof layoutStart.pivotMdsPositions !== 'function') throw new Error('layout-start export missing');
+const icons = await import('@yggy-tech/graphraum/icons');
+if (typeof icons.createIconAtlas !== 'function' || typeof icons.phosphorIcon !== 'function') throw new Error('icons export missing');
 "
 
 cat > consumer.ts <<'TS'
@@ -29,6 +31,7 @@ import { computeForcePositions, Graphraum, type GraphraumData } from "@yggy-tech
 import { measureLayoutStability } from "@yggy-tech/graphraum/diagnostics";
 import { graphraumStylePresets } from "@yggy-tech/graphraum/styles";
 import { pivotMdsPositions } from "@yggy-tech/graphraum/layout-start";
+import { createIconAtlas, phosphorIcon } from "@yggy-tech/graphraum/icons";
 
 const data: GraphraumData = {
 	nodes: [{ id: "a", position: { x: 0, y: 0 } }],
@@ -38,6 +41,8 @@ export function mount(element: HTMLElement) {
 	const graph = new Graphraum(element, { mode: "3d", style: graphraumStylePresets.neutral });
 	graph.setData(data);
 	void measureLayoutStability;
+	void createIconAtlas(["<svg/>"]).then((atlas) => graph.setIconAtlas(atlas, { color: "#fff", scale: 0.6 }));
+	void phosphorIcon;
 	const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount: 1 };
 	return computeForcePositions({ ...request, initialPositions: pivotMdsPositions(request) });
 }

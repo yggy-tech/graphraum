@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-07
 **Status:** Approved for planning (direction approved by the maintainer; API sketches are proposals)
-**Issues:** [#203](https://github.com/yggy-tech/graphraum/issues/203), [#204](https://github.com/yggy-tech/graphraum/issues/204), [#205](https://github.com/yggy-tech/graphraum/issues/205), [#206](https://github.com/yggy-tech/graphraum/issues/206), [#207](https://github.com/yggy-tech/graphraum/issues/207)
+**Issues:** [#208](https://github.com/yggy-tech/graphraum/issues/208), [#203](https://github.com/yggy-tech/graphraum/issues/203), [#204](https://github.com/yggy-tech/graphraum/issues/204), [#205](https://github.com/yggy-tech/graphraum/issues/205), [#206](https://github.com/yggy-tech/graphraum/issues/206), [#207](https://github.com/yggy-tech/graphraum/issues/207)
 
 ---
 
@@ -16,6 +16,10 @@ graphraum looks like yggy. The default theme is yggy's green palette, the node s
 4. **Rich HTML is capped for focus only.** `renderRichNode` is limited to 24 focused cards (`maxRichNodes`); it cannot take over when the user zooms in on a few dozen nodes.
 5. **Per-node styling is per-node data.** Restyling "all nodes of kind X" means rewriting every instance. There is no named style.
 6. **No escape hatch.** A host that needs a look the style contract cannot express has no way to change the node shader.
+
+## First consumer
+
+yggy's design decision "Node Forms" (options 1a, 1b and 1d) is the first real consumer and sets the order: base nodes are round entities with a type icon inside every node and small page marks for sources; the labelled chip appears only on hover; cards appear when zoomed in. This needs, in order: style presets (1), the icon slot (2a), host DOM on hover and on zoom (3), and only then GPU text chips (2b), which are an improvement for dense labelled views rather than a blocker.
 
 ## Goals
 
@@ -56,9 +60,9 @@ graphraum looks like yggy. The default theme is yggy's green palette, the node s
 ## Delivery order and why
 
 1. Neutral defaults plus a style preset object: the contract everything else hangs off. Zero render cost.
-2. Chips on the GPU: the largest user-visible gap and the riskiest, so it gets a measured prototype before commitment.
-3. Zoom-based host DOM rendering: independent of 2 in code, but 2 decides whether it is needed at the zoom levels chips cover.
-4. Node style variants: reuses the per-node state attribute and the style table plumbing from 1 and the glyph tint from 2.
+2. 2a, the icon slot (a type icon in every node, cheap and needed by the first consumer), then 2b, text chips on the GPU: the riskiest part, so it gets a measured prototype before commitment.
+3. Host DOM on hover and on zoom: the hover chip and the zoom cards yggy needs; independent of 2 in code, and it reduces how much 2b has to carry.
+4. Node style variants: reuses the per-node state attribute from 1 and the icon and glyph tints from 2a and 2b.
 5. Custom shader hook: last, only if 1, 2 and 4 leave gaps.
 
 ---
@@ -218,7 +222,37 @@ new Graphraum(container, { style: graphraumStylePresets.classicDark });
 
 ---
 
-## 2. Chips on the GPU
+## 2. Icons and chips on the GPU
+
+Two slices: 2a the icon slot (ships first, small, needed by yggy's round typed nodes) and 2b GPU text chips (prototype first). They share the `./text` entry's atlas plumbing but 2a can ship without any glyph code.
+
+### 2a. Icon slot
+
+`iconIndex` on `GraphraumNodeVisual`, `GraphraumNodeGeometry` and `GraphraumNodeUpdate`, plus a host-filled icon atlas:
+
+```ts
+interface GraphraumNodeVisual {
+	/** Index into the icon atlas. Omitted or -1 draws no icon. */
+	iconIndex?: number;
+	iconColor?: GraphraumColor;
+}
+interface GraphraumOptions { icons?: GraphraumIconAtlas }
+
+// "@yggy-tech/graphraum/text"
+export function loadIconAtlas(source: { image: string | ImageBitmap | HTMLCanvasElement; grid: readonly [columns: number, rows: number]; sdf?: boolean }): Promise<GraphraumIconAtlas>;
+export function createIconAtlas(canvas: HTMLCanvasElement | OffscreenCanvas, grid: readonly [number, number]): GraphraumIconAtlas; // host draws its own icons
+```
+
+The icon is a monochrome mask (alpha, or an SDF for crisp scaling) tinted by `iconColor` (default: the contrast colour of the fill). It is scaled to a fraction of the node radius (`style.node.iconScale`, default 0.55) and centred in the shape's inscribed box.
+
+Performance: one `instanceIcon` float per node (index, -1 for none), one atlas texture, one extra texture sample in the node fragment shader, only for fragments inside the icon box (a uniform-cost branch on `instanceIcon >= 0`). Per frame: one texture binding. No new draw call. Lit and toon: the icon is composited after shading and the stroke, unlit, so it stays readable on a sphere; sphere impostor depth is not affected. Depth of field blurs it with the rest of the frame. Picking and endpoint attach are unchanged (shape only). Main entry: the attribute, one define and one sampler (+0.2 KiB target); atlas helpers live in `./text`.
+
+Tests and gates: pixel probes at a known icon texel and outside it in 2D, 3D flat and 3D lit; nodes without an icon probe identical to before; out-of-range index errors; `gpuDrawCalls === 2`; 10k and 50k nodes with icons within 5 percent GPU frame time of icons off, 2D and 3D, pixel ratio 1 and 2. Migration: additive.
+
+Open questions: alpha mask or SDF atlas as the default (SDF scales better across zoom, alpha is simpler for hosts); whether colour icons (RGBA, untinted) are needed for source page marks.
+
+### 2b. Chips on the GPU
+
 
 ### Problem
 
@@ -226,7 +260,7 @@ See problem 3. Hosts want node-as-chip: a pill or rounded rectangle as wide as i
 
 ### Public API sketch
 
-Main entry (small hook, types only for the chip fields):
+Main entry (small hook, types only for the chip fields; `iconIndex` is covered by 2a):
 
 ```ts
 interface GraphraumNodeVisual {
@@ -337,7 +371,22 @@ Purely additive. Nodes without `text` render as today. `pill` and `rounded` node
 
 ---
 
-## 3. Zoom-based switch to host DOM rendering
+## 3. Host DOM rendering on hover and on zoom
+
+Two tiers, both through the overlay and both reusing the same card plumbing:
+
+- **Hover tier:** one host element for the hovered node (a chip with the label, as in yggy's "labelled chip on hover"). Always bounded to one card (plus the selected nodes if the host asks), independent of zoom.
+- **Zoom tier:** budgeted cards for the nodes that are large on screen, as described below.
+
+```ts
+interface GraphraumOverlayOptions {
+	/** Host element for the hovered node, at any zoom. Rendered through `renderHoverNode`. */
+	hoverTier?: { enabled: boolean; delayMs?: number /* default 80 */; anchor?: "above" | "center" };
+	renderHoverNode?: (node: GraphraumOverlayNode) => HTMLElement | null;
+}
+```
+
+`richNodesByZoom` below is the zoom tier. A node that is in both tiers shows its zoom card only. The hover tier replaces the DOM-label need that GPU text chips would otherwise cover for yggy.
 
 ### Problem
 
@@ -395,6 +444,7 @@ Main entry; the overlay is already there. Target at most +0.4 KiB gzip (selectio
 
 - Unit (`overlay-budget.test.ts` style): selection by size with hysteresis, budget cut, priority modes, stable ids across small zoom changes (no flicker).
 - Browser: zoom a fixture so N nodes exceed the threshold; assert card count equals `min(N, maxVisible)`, cards are positioned within 1 px of the node's screen position, the GPU node is still present (pixel probe under a transparent card), and `gpuDrawCalls === 2`.
+- Hover tier: hovering a node renders exactly one host element within `delayMs`, moving to another node swaps it, leaving removes it; never exceeds one element regardless of zoom; works with the zoom tier active.
 - Benchmark gate: pan and zoom with 60 cards over a 10k-node fixture; main-thread frame time from the overlay update under 2 ms at p95 in headless Chromium, and no layout thrash (a single read phase, a single write phase, asserted by counting `getBoundingClientRect`-class reads in a test double).
 - Bundle gate: main within budget.
 
@@ -561,15 +611,16 @@ Additive and opt-in. The input struct is versioned (`GRAPHRAUM_NODE_INPUT_VERSIO
 
 ## Delivery
 
-One slice per approach, in this order. Each slice is its own PR against `main` that links its issue, includes tests and the gates above, updates `etc/graphraum.api.md` (`bun run api:update`) and the docs guide (`docs/src/content/docs/guide/theme.mdx` for slice 1, a new guide page for slice 2).
+Six slices (approach 2 is split into 2a and 2b), in this order, which follows yggy's Node Forms decision. Each slice is its own PR against `main` that links its issue, includes tests and the gates above, updates `etc/graphraum.api.md` (`bun run api:update`) and the docs guide (`docs/src/content/docs/guide/theme.mdx` for slice 1, a new guide page for slice 2).
 
 | # | Slice | Issue | Entry | Blocked by |
 | --- | --- | --- | --- | --- |
 | 1 | Neutral defaults and style presets | [#203](https://github.com/yggy-tech/graphraum/issues/203) | main, `./styles` | none |
-| 2 | Chips on the GPU (prototype first) | [#204](https://github.com/yggy-tech/graphraum/issues/204) | main hook, `./text` | 1 |
-| 3 | Zoom-based host DOM rendering | [#205](https://github.com/yggy-tech/graphraum/issues/205) | main (overlay) | 1 |
-| 4 | Node style variants | [#206](https://github.com/yggy-tech/graphraum/issues/206) | main | 1, soft dependency on 2 |
-| 5 | Custom shader hook | [#207](https://github.com/yggy-tech/graphraum/issues/207) | `./shader` | 1, 2, 4, and only if gaps remain |
+| 2a | Icon slot (iconIndex, icon atlas) | [#208](https://github.com/yggy-tech/graphraum/issues/208) | main hook, `./text` | 1 |
+| 3 | Host DOM on hover and on zoom | [#205](https://github.com/yggy-tech/graphraum/issues/205) | main (overlay) | 1 |
+| 2b | GPU text chips (prototype first) | [#204](https://github.com/yggy-tech/graphraum/issues/204) | main hook, `./text` | 1, 2a |
+| 4 | Node style variants | [#206](https://github.com/yggy-tech/graphraum/issues/206) | main | 1, soft dependency on 2a and 2b |
+| 5 | Custom shader hook | [#207](https://github.com/yggy-tech/graphraum/issues/207) | `./shader` | 1, 2a, 2b, 4, and only if gaps remain |
 
 Slice 1 is split into two merges if needed to protect the budget: first the types, resolver, `instanceState`, halo branch and CSS variables with the default unchanged; then the default flip with `!`.
 

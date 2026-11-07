@@ -55,8 +55,12 @@ export class SpatialGrid2D {
 		this.maxRadius = Math.max(this.maxRadius, nodeOccupancyRadius(node));
 	}
 
-	pick(x: number, y: number): number | null {
-		const cellRadius = Math.ceil(this.maxRadius / this.cellSize);
+	/**
+	 * The node under a world point. `scales` (indexed like the nodes, 0 for none) and `maxScale` widen
+	 * every hit area to the size a node is drawn at, for a renderer that scales nodes per frame.
+	 */
+	pick(x: number, y: number, scales?: Float32Array, maxScale = 1): number | null {
+		const cellRadius = Math.ceil((this.maxRadius * Math.max(maxScale, 1)) / this.cellSize);
 		const centerX = this.coordinate(x);
 		const centerY = this.coordinate(y);
 		let nearestIndex: number | null = null;
@@ -67,7 +71,10 @@ export class SpatialGrid2D {
 				for (const index of this.cells.get(this.key(cellX, cellY)) ?? []) {
 					const node = this.nodes[index];
 					if (!node) continue;
-					const { height, width } = nodeAxes(node);
+					const axes = nodeAxes(node);
+					const scale = (scales?.[index] ?? 0) || 1;
+					const width = axes.width * scale;
+					const height = axes.height * scale;
 					const offsetX = node.position.x - x;
 					const offsetY = node.position.y - y;
 					const distance = offsetX ** 2 + offsetY ** 2;

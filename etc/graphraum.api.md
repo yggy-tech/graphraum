@@ -64,6 +64,24 @@ export interface EndpointOutline {
 }
 
 // @public
+export const FOCUS_LENS_DEFAULTS: ResolvedFocusLensOptions;
+
+// @public
+export function focusLens(distance: number, viewportMin: number, options?: GraphraumFocusLensOptions): FocusLensResult;
+
+// @public
+export function focusLensLabelAlpha(scale: number, options: ResolvedFocusLensOptions): number;
+
+// @public
+export interface FocusLensResult {
+    labelAlpha: number;
+    scale: number;
+}
+
+// @public
+export function focusLensScale(distance: number, viewportMin: number, options: ResolvedFocusLensOptions): number;
+
+// @public
 export const FORCE_LAYOUT_STYLES: readonly ["classic", "edge-t"];
 
 // @public
@@ -164,6 +182,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     getDiagnostics(): GraphraumDiagnostics;
     // (undocumented)
     getEdgePresentation(edgeId: string): CompiledGraphraumPresentation | null;
+    getFocusLens(): ResolvedFocusLensOptions;
+    getFocusLensLabelAlpha(nodeId: string): number;
     // (undocumented)
     getHoveredNodeIds(): readonly string[];
     getLabelCandidates(): GraphraumLabelCandidate[];
@@ -197,6 +217,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     setDepthOfField(options: GraphraumDepthOfFieldOptions, update?: GraphraumDepthOfFieldUpdate): Promise<boolean>;
     setEdgeSelection(edgeIds: Iterable<string>): void;
     setEdgeState(state: GraphraumEdgeState, edgeIds: Iterable<string>): void;
+    setFocusLens(options: GraphraumFocusLensOptions): void;
     // (undocumented)
     setMode(mode: GraphraumMode): void;
     setNodeDrag(options: GraphraumNodeDragOptions): void;
@@ -442,6 +463,17 @@ export interface GraphraumFlyToOptions {
     nodeIds: readonly string[];
 }
 
+// @public
+export interface GraphraumFocusLensOptions {
+    centerScale?: number;
+    easing?: number;
+    edgeScale?: number;
+    enabled?: boolean;
+    labelRamp?: number;
+    labelThreshold?: number;
+    reach?: number;
+}
+
 // @public (undocumented)
 export interface GraphraumLabelCandidate {
     // (undocumented)
@@ -573,6 +605,7 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
     // (undocumented)
     antialias?: boolean;
     depthOfField?: GraphraumDepthOfFieldOptions;
+    focusLens?: GraphraumFocusLensOptions;
     // (undocumented)
     maxPixelRatio?: number;
     // (undocumented)
@@ -899,6 +932,24 @@ export function orderFocusNodeIds(input: {
     hoveredIds: readonly string[];
     neighborIds: readonly string[];
 }): string[];
+
+// @public
+export interface ResolvedFocusLensOptions {
+    // (undocumented)
+    readonly centerScale: number;
+    // (undocumented)
+    readonly easing: number;
+    // (undocumented)
+    readonly edgeScale: number;
+    // (undocumented)
+    readonly enabled: boolean;
+    // (undocumented)
+    readonly labelRamp: number;
+    // (undocumented)
+    readonly labelThreshold: number;
+    // (undocumented)
+    readonly reach: number;
+}
 
 // @public
 export interface ResolvedGraphraumSceneOptions {

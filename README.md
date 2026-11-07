@@ -100,6 +100,7 @@ graph.applyLayout({ nodeIds: ["ada", "engine", "notes"], positions });
 - **Your layout or ours.** Pass any positions, stream them with `applyLayout()`, or use the force layout helpers with clusters and per-edge springs.
 - **Typed visual mapping.** Map your own node and edge attributes to colour, size, shape, stroke, glow, dash, markers and curves with `defineVisuals()`.
 - **HTML where it matters.** Labels, a toolbar and rich cards for a small focused set, budgeted so the dense graph stays on the GPU.
+- **Focus lens.** Opt in, in 2D or 3D, and nodes near the center of the canvas draw larger while nodes toward its edge draw smaller, with labels only on the large ones. Positions never move. `focusLens: { enabled: true }`, or `setFocusLens()` later; size, reach and easing are options.
 - **Themes.** Light and dark presets, partial overrides, solid, transparent or patterned backgrounds.
 - **graphology ready.** `bindGraphology()` keeps a graphology graph and the renderer in sync.
 

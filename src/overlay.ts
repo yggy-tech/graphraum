@@ -6,6 +6,8 @@ import type { CompiledGraphraumPresentation, GraphraumOverlayNode, GraphraumOver
 type OverlayEntry = {
 	element: HTMLElement;
 	presentation: CompiledGraphraumPresentation | null;
+	/** True while the focus lens holds this label's opacity, so it is restored once the lens lets go. */
+	lensFaded?: boolean;
 };
 
 type LabelPolicy = "manual" | "auto" | "focus";
@@ -235,6 +237,7 @@ export class GraphraumOverlay<NodeAttributes = undefined, EdgeAttributes = undef
 		if (!position?.visible) return;
 		const anchor = kind === "rich" ? "translate(-50%, 12px)" : "translate(-50%, -100%)";
 		entry.element.style.transform = `translate(${position.x}px, ${position.y}px) ${anchor}`;
+		if (kind === "label") this.applyLensOpacity(entry, nodeId);
 		const presentation = this.graph.getNodePresentation(nodeId);
 		if (presentation === entry.presentation || !render) return;
 		const replacement = render({ id: nodeId, presentation });
@@ -262,6 +265,18 @@ export class GraphraumOverlay<NodeAttributes = undefined, EdgeAttributes = undef
 		entry.element.replaceWith(replacement);
 		entry.element = replacement;
 		entry.presentation = presentation;
+	}
+
+	/** Fades a label with the focus lens; touches the opacity only while the lens holds it. */
+	private applyLensOpacity(entry: OverlayEntry, nodeId: string) {
+		const alpha = this.graph.getFocusLensLabelAlpha(nodeId);
+		if (alpha < 1) {
+			entry.element.style.opacity = String(alpha);
+			entry.lensFaded = true;
+		} else if (entry.lensFaded) {
+			entry.element.style.opacity = "";
+			entry.lensFaded = false;
+		}
 	}
 
 	private applyClassName(element: HTMLElement, className: string) {

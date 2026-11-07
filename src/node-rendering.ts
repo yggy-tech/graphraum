@@ -9,6 +9,7 @@ import type { GraphraumColor, GraphraumNodeShape, GraphraumShading } from "./typ
 // fails shader validate with "instanceColor : redefinition".
 const vertexShader = `
 attribute float instanceShape;
+attribute float instanceLens;
 attribute float instanceStrokeWidth;
 attribute vec3 instanceStrokeColor;
 varying vec3 nodeColor;
@@ -29,14 +30,18 @@ void main() {
 	nodeStrokeColor = instanceStrokeColor;
 
 	vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-	float scaleX = length(instanceMatrix[0].xyz);
-	float scaleY = length(instanceMatrix[1].xyz);
+	float scaleX = length(instanceMatrix[0].xyz) * instanceLens;
+	float scaleY = length(instanceMatrix[1].xyz) * instanceLens;
 #ifdef GRAPHRAUM_SPHERE_IMPOSTOR
 	nodeViewCenter = center.xyz;
 	nodeRadius = max(scaleX, scaleY);
 #endif
 	center.xy += position.xy * vec2(scaleX, scaleY);
 	gl_Position = projectionMatrix * center;
+#ifdef GRAPHRAUM_LENS_DEPTH
+	// 2D has no depth of its own: with the lens on, bigger nodes sit nearer so they draw on top.
+	gl_Position.z = (0.5 - clamp(instanceLens, 0.0, 4.0) * 0.1) * gl_Position.w;
+#endif
 }
 `;
 
@@ -181,6 +186,8 @@ void main() {
 export function createNodeGeometry(capacity: number) {
 	const geometry = new PlaneGeometry(2, 2);
 	geometry.setAttribute("instanceShape", new InstancedBufferAttribute(new Float32Array(capacity), 1));
+	// The focus lens size factor; 1 draws the node at its own size.
+	geometry.setAttribute("instanceLens", new InstancedBufferAttribute(new Float32Array(capacity).fill(1), 1));
 	geometry.setAttribute("instanceStrokeWidth", new InstancedBufferAttribute(new Float32Array(capacity), 1));
 	geometry.setAttribute("instanceStrokeColor", new InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
 	return geometry;
@@ -218,8 +225,13 @@ export const SHADING_DEFINE = "GRAPHRAUM_SHADING";
 
 const SHADING_DEFINE_VALUES: Record<GraphraumShading, string | null> = { flat: null, lit: "1", toon: "2" };
 
+/** Shader define that orders 2D nodes by their focus lens size, bigger on top. */
+export const LENS_DEPTH_DEFINE = "GRAPHRAUM_LENS_DEPTH";
+
 export interface NodeMaterialSetup {
 	depth: boolean;
+	/** Draw bigger lens-scaled nodes on top in 2D by giving the billboards a depth. */
+	lensDepth?: boolean;
 	shading: GraphraumShading;
 	sphereImpostors: boolean;
 }
@@ -227,13 +239,15 @@ export interface NodeMaterialSetup {
 /** Applies depth, the sphere impostor and the shading defines; recompiles only when a define changes. */
 export function configureNodeMaterial(
 	material: ShaderMaterial,
-	{ depth, shading, sphereImpostors }: NodeMaterialSetup,
+	{ depth, lensDepth = false, shading, sphereImpostors }: NodeMaterialSetup,
 ) {
-	material.depthTest = depth;
-	material.depthWrite = depth;
+	material.depthTest = depth || lensDepth;
+	material.depthWrite = depth || lensDepth;
 	const defines: Record<string, unknown> = { ...(material.defines ?? {}) };
 	if (sphereImpostors) defines[SPHERE_IMPOSTOR_DEFINE] = "";
 	else delete defines[SPHERE_IMPOSTOR_DEFINE];
+	if (lensDepth && !depth) defines[LENS_DEPTH_DEFINE] = "";
+	else delete defines[LENS_DEPTH_DEFINE];
 	const shadingValue = SHADING_DEFINE_VALUES[shading];
 	if (shadingValue === null) delete defines[SHADING_DEFINE];
 	else defines[SHADING_DEFINE] = shadingValue;

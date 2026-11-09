@@ -54,7 +54,7 @@ graph.updateNodes([{ id: "alert:42", glow: 0.8 }]);
 
 The extra draw call is a bounded trade-off: GPU halo work is capped at 256 instances regardless of graph size. CPU work is not capped in the same way: each viewport update sorts every visible glowing node to pick the top 256, and changing `glow` rescans the node list. Keep `glow` sparse; it is an emphasis tool, not a styling default for every node. Its GPU cost has not yet been measured in a real browser; the local benchmark lab (`bun run dev`) has a **Glowing nodes** control for that measurement.
 
-Edges have two host states. `setEdgeSelection(ids)` paints `theme.selectedEdge`; `setEdgeState("dimmed", ids)` recedes edges to `theme.dimmedEdge` at `theme.dimmedEdgeOpacity` (Turf-tinted and faint, but still readable as structure). Selection wins when an edge is in both sets. Both are color changes inside the existing edge batch, so they add no draw calls either.
+Edges have two host states. `setEdgeSelection(ids)` paints `theme.selectedEdge`; `setEdgeState("dimmed", ids)` recedes edges to `theme.dimmedEdge` at `theme.dimmedEdgeOpacity` (Turf-tinted and faint, but still readable as structure). Selection wins when an edge is in both sets. Both are color changes inside the existing edge batch, so they add no draw calls either. `setEdgeColors(map)` paints edges in your own colours the same way, below selection and dimming.
 
 ## Override without forking
 

@@ -134,6 +134,7 @@ interface GraphraumEdgeVisual {
   <div><code>setSelection(nodeIds)</code><p>Applies the selected-node theme color without mutating source graph data. Missing and off-screen IDs are safe.</p></div>
   <div><code>setEdgeSelection(edgeIds)</code><p>Highlights edges with <code>theme.selectedEdge</code>. Only the edges whose selection changed are repainted, so per-hover calls stay cheap on large graphs. Unknown IDs are ignored.</p></div>
   <div><code>setEdgeState("dimmed", edgeIds)</code><p>Recedes edges with <code>theme.dimmedEdge</code> and <code>theme.dimmedEdgeOpacity</code>, mirroring <code>setNodeState("dimmed", ids)</code>. A selected edge stays selected. Unknown IDs are ignored and removed edges drop out of the state.</p></div>
+  <div><code>setEdgeColors(colors)</code><p>Paints edges in host colours from a map or entries of edge ID to colour, for example one colour per relation around a focused node. Each call replaces the previous set; an empty map clears it. Selection and dimming still win. It repaints in place without a recompile. Unknown IDs are ignored and removed edges drop out.</p></div>
   <div><code>getNodePresentation(id)</code><p>Returns the compiled title, subtitle, properties, and action descriptors for a node, or <code>null</code>.</p></div>
   <div><code>getEdgePresentation(id)</code><p>Returns the compiled presentation for an edge, or <code>null</code>.</p></div>
   <div><code>render()</code><p>Schedules one render on the next animation frame. Repeated calls in the same frame are coalesced.</p></div>

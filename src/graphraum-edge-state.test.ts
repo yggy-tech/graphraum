@@ -188,3 +188,35 @@ describe("incremental edge selection and dimming", () => {
 		expect(color.updateRanges).toContainEqual({ start: 0, count: mesh.count * 4 });
 	});
 });
+
+describe("host edge colours", () => {
+	test("setEdgeColors repaints in place and clearing restores the base visuals", () => {
+		const graph = createGraph();
+		graph.setData(mixedFixture(10, 12, 5));
+		const before = edgeBuffers(graph);
+		const materialize = vi.spyOn(internals(graph), "materializeViewport");
+		graph.setEdgeColors(new Map([["e1", "#ff0000"]]));
+		expect(materialize).not.toHaveBeenCalled();
+		for (const [red, green, blue] of edgeColorSlots(graph, 1)) expect([red, green, blue]).toEqual([1, 0, 0]);
+		expect(graph.getDiagnostics().coloredEdges).toBe(1);
+		graph.setEdgeColors([]);
+		expect(edgeBuffers(graph)).toEqual(before);
+		expect(graph.getDiagnostics().coloredEdges).toBe(0);
+	});
+
+	test("ignores unknown ids, lets selection win and prunes removed edges", () => {
+		const graph = createGraph();
+		graph.setData(mixedFixture(10, 12, 5));
+		graph.setEdgeColors([
+			["e1", "#ff0000"],
+			["e2", "#ff0000"],
+			["missing", "#ff0000"],
+		]);
+		expect(graph.getDiagnostics().coloredEdges).toBe(2);
+		graph.setTheme({ selectedEdge: "#00ff00" });
+		graph.setEdgeSelection(["e1"]);
+		for (const [red, green, blue] of edgeColorSlots(graph, 1)) expect([red, green, blue]).toEqual([0, 1, 0]);
+		graph.applyDataPatch({ removedEdgeIds: ["e2"] });
+		expect(graph.getDiagnostics().coloredEdges).toBe(1);
+	});
+});

@@ -117,6 +117,7 @@ import type {
 	GraphraumAutoOrbitOptions,
 	GraphraumBackground,
 	GraphraumCameraState,
+	GraphraumColor,
 	GraphraumData,
 	GraphraumDataPatch,
 	GraphraumDepthOfFieldOptions,
@@ -270,6 +271,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private selectedNodeIds = new Set<string>();
 	private selectedEdgeIds = new Set<string>();
 	private dimmedEdgeIds = new Set<string>();
+	private edgeColors = new Map<string, GraphraumColor>();
 	private edgeIndexCache: { edges: readonly unknown[]; indices: Map<string, number> } = {
 		edges: [],
 		indices: new Map(),
@@ -909,6 +911,21 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.repaintEdgeStates(changed);
 	}
 
+	/**
+	 * Paints edges in host colours without changing source graph data, for example one colour per
+	 * relation around a focused node. Replaces the previous set; an empty map clears it. Selection and
+	 * dimming still win. A repaint in place: no recompile and no extra draw call. Unknown IDs are ignored.
+	 */
+	setEdgeColors(colors: ReadonlyMap<string, GraphraumColor> | Iterable<readonly [string, GraphraumColor]>) {
+		const indices = this.edgeIndicesById();
+		const next = new Map<string, GraphraumColor>();
+		for (const [id, color] of colors) if (indices.has(id)) next.set(id, color);
+		const changed = [...this.edgeColors.keys()].filter((id) => next.get(id) !== this.edgeColors.get(id));
+		for (const id of next.keys()) if (!this.edgeColors.has(id)) changed.push(id);
+		this.edgeColors = next;
+		this.repaintEdgeStates(changed);
+	}
+
 	private knownEdgeIds(edgeIds: Iterable<string>) {
 		const indices = this.edgeIndicesById();
 		return new Set([...edgeIds].filter((id) => indices.has(id)));
@@ -946,6 +963,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				if (this.selectedEdgeIds.has(id)) return "selected";
 				return this.dimmedEdgeIds.has(id) ? "dimmed" : null;
 			},
+			colorOf: (edgeIndex) => {
+				if (this.edgeColors.size === 0) return null;
+				const id = this.data.edges[edgeIndex]?.id;
+				return id === undefined ? null : (this.edgeColors.get(id) ?? null);
+			},
 		};
 	}
 
@@ -965,6 +987,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const indices = this.edgeIndicesById();
 		this.selectedEdgeIds = new Set([...this.selectedEdgeIds].filter((id) => indices.has(id)));
 		this.dimmedEdgeIds = new Set([...this.dimmedEdgeIds].filter((id) => indices.has(id)));
+		this.edgeColors = new Map([...this.edgeColors].filter(([id]) => indices.has(id)));
 	}
 
 	/** Applies an application-owned visual state without changing source graph data. */
@@ -1453,6 +1476,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			gpuTextures: this.renderer.info.memory.textures,
 			lodLevel: resolveLodLevel(this.densityLodActive, this.visibleEdgeCandidateCount, this.visibleEdgeCount),
 			pickingStrategy: this.mode === "2d" ? "spatial-grid-2d" : "raycaster-3d",
+			coloredEdges: this.edgeColors.size,
 			dimmedEdges: this.dimmedEdgeIds.size,
 			selectedEdges: this.selectedEdgeIds.size,
 			selectedNodes: this.selectedNodeIds.size,

@@ -264,6 +264,8 @@ export interface CompiledGraphraumPresentation extends GraphraumPresentation {
 }
 
 export interface GraphraumScreenPosition {
+	/** The node's drawn radius in CSS pixels, with perspective and the focus lens applied. */
+	radius: number;
 	visible: boolean;
 	x: number;
 	y: number;

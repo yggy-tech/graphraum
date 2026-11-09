@@ -1328,10 +1328,21 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const index = this.nodeIndices.get(nodeId);
 		const node = index === undefined ? undefined : this.data.nodes[index];
 		if (!node) return null;
-		const projected = new Vector3(node.position.x, node.position.y, node.position.z ?? 0).project(this.camera);
+		const center = new Vector3(node.position.x, node.position.y, node.position.z ?? 0);
+		const projected = center.clone().project(this.camera);
 		const width = this.renderer.domElement.clientWidth;
 		const height = this.renderer.domElement.clientHeight;
+		// The drawn radius: one node radius along the camera's up axis, projected like the centre.
+		const axes = resolveNodeAxes({ height: node.height, nodeId: node.id, size: node.size, width: node.width });
+		const rim = center
+			.add(
+				new Vector3(0, Math.max(axes.width, axes.height) * this.lensScaleOf(index as number), 0).applyQuaternion(
+					this.camera.quaternion,
+				),
+			)
+			.project(this.camera);
 		return {
+			radius: Math.hypot(((rim.x - projected.x) * width) / 2, ((rim.y - projected.y) * height) / 2),
 			visible:
 				projected.x >= -1 &&
 				projected.x <= 1 &&

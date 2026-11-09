@@ -796,6 +796,7 @@ export const graphraumScenes: {
 
 // @public (undocumented)
 export interface GraphraumScreenPosition {
+    radius: number;
     // (undocumented)
     visible: boolean;
     // (undocumented)

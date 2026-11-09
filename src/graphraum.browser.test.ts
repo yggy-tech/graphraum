@@ -172,6 +172,15 @@ describe("pixels", () => {
 		if (!hub?.visible) throw new Error("expected the hub on screen");
 		expect(colorDistance(frame.at(hub.x, hub.y), hexToRgb(NODE))).toBeLessThanOrEqual(6);
 	});
+	test.each(["2d", "3d"] as const)("reports the radius the node is drawn with in %s", (mode) => {
+		const graph = mountGraph({ mode, theme, scene: graphraumScenes.flat }, crossing);
+		const frame = renderAndRead(graph);
+		const hub = graph.getNodeScreenPosition("hub");
+		if (!hub?.visible) throw new Error("expected the hub on screen");
+		expect(hub.radius).toBeGreaterThan(8);
+		expect(colorDistance(frame.at(hub.x, hub.y - hub.radius * 0.85), hexToRgb(NODE))).toBeLessThanOrEqual(6);
+		expect(colorDistance(frame.at(hub.x, hub.y - hub.radius * 1.2), hexToRgb(BACKGROUND))).toBeLessThanOrEqual(3);
+	});
 });
 
 describe("focus lens", () => {

@@ -67,6 +67,17 @@ const overlay = graph.createOverlay({
 
 Off-screen nodes stay out of budgeted sets. Manual `setLabels()` still works under `auto` / `focus` until the next view or focus change overwrites the list. Export `selectBudgetedLabelIds`, `selectFocusLabelIds`, `orderFocusNodeIds`, `boundOverlayIds`, and `selectRichNodeIds` for the same policies outside the overlay.
 
+### Place your own HTML beside a node
+
+`getNodeScreenPosition(id)` returns where a node is drawn, in CSS pixels from the canvas's top left: `x`, `y`, `visible`, and `radius`, the node's drawn radius with perspective and the focus lens applied. Use `radius` to set a card or label just clear of the node's rim; in 3D a near node is drawn much bigger than the zoom at the canvas centre suggests.
+
+```ts
+const position = graph.getNodeScreenPosition("person:ada");
+if (position?.visible) {
+  card.style.transform = `translate(${position.x}px, ${position.y - position.radius - 8}px) translate(-50%, -100%)`;
+}
+```
+
 ### Manual labels
 
 ```ts

@@ -1119,6 +1119,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		if (this.edgeMesh && this.edgeMesh.material instanceof ShaderMaterial) {
 			this.edgeMesh.material.depthTest = setup.edgeDepthTest;
+			const sphereEnds = this.edgeMesh.material.uniforms.sphereEnds;
+			if (sphereEnds) sphereEnds.value = setup.sphereImpostors ? 1 : 0;
 			this.edgeMesh.renderOrder = setup.edgeRenderOrder;
 		}
 	}

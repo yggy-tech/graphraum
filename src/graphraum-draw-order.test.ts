@@ -98,6 +98,17 @@ describe("edges that share depth with nodes", () => {
 		expectSharedDepth(graph);
 	});
 
+	test("edge ends follow the spheres: on with impostors in 3D, off for flat discs and in 2D", () => {
+		const graph = hub("3d", { scene: { edgeDepth: "scene" } });
+		const sphereEnds = () => (meshes(graph).edges.material as ShaderMaterial).uniforms.sphereEnds?.value;
+		expect(sphereEnds()).toBe(1);
+		graph.setMode("2d");
+		expect(sphereEnds()).toBe(0);
+		graph.setMode("3d");
+		graph.setScene({ edgeDepth: "behind-nodes", shading: "flat" });
+		expect(sphereEnds()).toBe(0);
+	});
+
 	test("switches at runtime with setScene and keeps the option across setData", () => {
 		const graph = hub("3d");
 		expectEdgesUnderNodes(graph, "3d");

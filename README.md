@@ -91,6 +91,26 @@ graph.applyLayout({ nodeIds: ["ada", "engine", "notes"], positions });
     <td><b>Shapes, arrows, curves, labels.</b> Seven node shapes with strokes, solid, dashed and dotted edges, straight or curved, with arrowheads. Labels and cards are your own HTML on a bounded overlay.</td>
     <td><b>2D and 3D on one graph.</b> Switch with <code>setMode()</code> and keep the data, selection and styles. Orbit, auto-orbit, fly-to, glowing hubs and saved camera views come with it.</td>
   </tr>
+  <tr>
+    <td colspan="2"><img src="./docs/public/readme/shading.png" alt="The same cluster three times in 3D: flat discs, lit spheres and toon-shaded spheres"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><b>Flat, lit or toon.</b> In 3D, circles can become sphere impostors shaded by a sun, and edges pass in front of and behind them by depth. Still one draw call for all nodes: the spheres are drawn in the node shader, not as meshes.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./docs/public/readme/icons.png" alt="A lit 3D knowledge graph with type icons for people, companies, documents, places and topics inside the nodes, and labels"></td>
+    <td width="50%"><img src="./docs/public/readme/lens.png" alt="A 2D clustered graph where nodes near the center are drawn larger and nodes toward the edge smaller"></td>
+  </tr>
+  <tr>
+    <td><b>Type icons.</b> Hand <code>createIconAtlas()</code> any SVGs and set <code>icon</code> on a node. The icons are an alpha mask drawn inside the node in the same pass, so they add no draw call.</td>
+    <td><b>Focus lens.</b> Nodes near the center of the canvas draw larger and nodes toward the edge smaller, and overlay labels fade in only near the center. It follows the camera as you pan and orbit.</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="./docs/public/readme/styles.png" alt="One graph four times in the style presets blueprint, classicDark, classicLight and neutral"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><b>Style presets.</b> One style object sets colours, strokes, arrowheads and label typography. <code>@yggy-tech/graphraum/styles</code> ships <code>blueprint</code>, <code>classicDark</code>, <code>classicLight</code> and <code>neutral</code>, without adding to the main bundle.</td>
+  </tr>
 </table>
 
 ## Features

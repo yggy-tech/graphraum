@@ -1,5 +1,6 @@
 // Scenes for the README images. Open with `bun run dev:showcase` and `?scene=<id>`, then capture the
-// viewport at 1600 x 900 (hero 1600 x 640). Everything is seeded, so every run draws the same graph.
+// viewport at 1600 x 900 (hero 1600 x 640, shading 1600 x 600). Everything is seeded, so every run draws
+// the same graph. Scenes: hero, focus, labels, scale, lit, shading, icons, lens, styles.
 import {
 	computeForcePositions,
 	Graphraum,
@@ -7,12 +8,26 @@ import {
 	type GraphraumEdge,
 	type GraphraumNode,
 	type GraphraumNodeShape,
+	graphraumScenes,
 } from "../../src";
+import { createIconAtlas } from "../../src/icons";
+import { graphraumStylePresets } from "../../src/styles";
 
-type SceneId = "hero" | "labels" | "focus" | "scale";
+type SceneId = "hero" | "labels" | "focus" | "scale" | "lit" | "shading" | "icons" | "lens" | "styles";
 
 const PALETTE = ["#8b7bff", "#3fd0b8", "#ffb347", "#ff6f91", "#5fb4ff", "#c4e05a", "#f78c4b", "#b07cf0"];
 const SHAPES: GraphraumNodeShape[] = ["circle", "circle", "circle", "diamond", "hexagon", "square", "triangle"];
+
+/** Simple stroked glyphs drawn for the showcase; any SVG string works. */
+const glyph = (body: string) =>
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const ICONS = {
+	person: glyph('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
+	company: glyph('<path d="M4 21V5l8-3v19M12 9h8v12M7 8h2M7 12h2M7 16h2M15 13h2M15 17h2M2 21h20"/>'),
+	document: glyph('<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5M9 13h7M9 17h7"/>'),
+	place: glyph('<path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+	topic: glyph('<path d="M20 12 12 20l-9-9V3h8z"/><circle cx="7.5" cy="7.5" r="1.5"/>'),
+} as const;
 
 const params = new URLSearchParams(location.search);
 const tuned = (name: string, fallback: number) => Number(params.get(name) ?? fallback);
@@ -227,6 +242,151 @@ if (scene === "hero" || scene === "focus") {
 			renderLabel: ({ id }) => Object.assign(document.createElement("span"), { textContent: id }),
 		})
 		.setLabels(names);
+} else if (scene === "lit" || scene === "shading") {
+	// Sphere impostors: circles shaded by a sun, with edges passing in front of and behind them by depth.
+	// The side-by-side strip shows one cluster per cell, so the spheres are large enough to see the light.
+	const graph = clusteredGraph(tuned("nodes", scene === "lit" ? 420 : 90), scene === "lit" ? 4 : 1, 5);
+	const positions = forceLayout(graph, 3);
+	const shadings = scene === "lit" ? (["lit"] as const) : (["flat", "lit", "toon"] as const);
+	if (shadings.length > 1) {
+		container.style.display = "grid";
+		container.style.gridTemplateColumns = `repeat(${shadings.length}, 1fr)`;
+		container.style.gap = "2px";
+	}
+	for (const shading of shadings) {
+		const cell: HTMLElement = shadings.length > 1 ? document.createElement("div") : container;
+		if (cell !== container) {
+			cell.style.position = "relative";
+			cell.append(Object.assign(document.createElement("span"), { className: "tag", textContent: shading }));
+			container.append(cell);
+		}
+		const data = toData(graph, positions, { edgeOpacity: tuned("edges", 0.6), glowHubs: false });
+		for (const node of data.nodes) {
+			node.shape = "circle";
+			node.size = (node.size ?? 3) * tuned("grow", scene === "lit" ? 2.2 : 3);
+		}
+		const view = new Graphraum(cell, {
+			antialias: true,
+			mode: "3d",
+			scene: { ...graphraumScenes[shading], sun: { azimuth: tuned("azimuth", 35), elevation: tuned("elevation", 45) } },
+			theme: dark,
+		});
+		view.setData(data);
+	}
+} else if (scene === "icons") {
+	// Type icons: an alpha-mask atlas drawn inside the nodes in the same pass, lit in 3D.
+	const kinds = ["person", "company", "document", "place", "topic"] as const;
+	const named: [string, (typeof kinds)[number]][] = [
+		["Ada Lovelace", "person"],
+		["Charles Babbage", "person"],
+		["Mary Somerville", "person"],
+		["Royal Society", "company"],
+		["Analytical Engine", "topic"],
+		["Notes G", "document"],
+		["Sketch of the Engine", "document"],
+		["London", "place"],
+		["Difference Engine", "topic"],
+		["Bernoulli numbers", "topic"],
+		["Turin", "place"],
+		["Jacquard & Co.", "company"],
+	];
+	const random = seeded(9);
+	const extra = tuned("extra", 70);
+	const nodeCount = named.length + extra;
+	const pairs: number[] = [0, 1, 0, 2, 0, 5, 1, 4, 1, 8, 1, 3, 2, 3, 0, 9, 5, 4, 6, 4, 6, 10, 1, 7, 0, 7, 4, 11, 5, 9];
+	for (let index = named.length; index < nodeCount; index += 1)
+		pairs.push(index, Math.floor(random() ** 1.4 * named.length));
+	const positions = computeForcePositions({
+		dimensions: 3,
+		edges: new Uint32Array(pairs),
+		iterations: tuned("iter", 500),
+		nodeCount,
+		settings: {
+			centerAttraction: 0.002,
+			damping: 0.82,
+			linkDistance: tuned("link", 46),
+			repulsion: tuned("repulsion", 6_000),
+			springStrength: 0.02,
+		},
+	});
+	const kindOf = (index: number) => named[index]?.[1] ?? kinds[Math.floor(random() * kinds.length)] ?? "topic";
+	const nodes: GraphraumNode[] = Array.from({ length: nodeCount }, (_, index) => {
+		const kind = kindOf(index);
+		return {
+			id: named[index]?.[0] ?? `fact ${index}`,
+			position: { x: positions[index * 3] ?? 0, y: positions[index * 3 + 1] ?? 0, z: positions[index * 3 + 2] ?? 0 },
+			color: PALETTE[kinds.indexOf(kind)] ?? "#5fb4ff",
+			icon: kinds.indexOf(kind),
+			shape: "circle",
+			size: index < named.length ? 9 : 4.5,
+		};
+	});
+	const edges: GraphraumEdge[] = [];
+	for (let pair = 0; pair < pairs.length; pair += 2)
+		edges.push({
+			id: `e${pair}`,
+			source: nodes[pairs[pair] ?? 0]?.id ?? "",
+			target: nodes[pairs[pair + 1] ?? 0]?.id ?? "",
+			opacity: pair / 2 < 15 ? 0.8 : 0.35,
+		});
+	const view = new Graphraum(container, { antialias: true, mode: "3d", scene: graphraumScenes.lit, theme: dark });
+	view.setData({ edges, nodes });
+	view.setIconAtlas(
+		await createIconAtlas(
+			kinds.map((kind) => ICONS[kind]),
+			{ size: 64 },
+		),
+		{ color: "#ffffff" },
+	);
+	view
+		.createOverlay({
+			labelClassName: "label",
+			labelPolicy: "manual",
+			maxLabels: named.length,
+			renderLabel: ({ id }) => Object.assign(document.createElement("span"), { textContent: id }),
+		})
+		.setLabels(named.map(([name]) => name));
+} else if (scene === "lens") {
+	// Focus lens: nodes near the centre of the canvas draw larger, nodes toward the edge smaller.
+	const graph = clusteredGraph(tuned("nodes", 1_400), 8, 13);
+	const positions = forceLayout(graph, 2);
+	const data = toData(graph, positions, { edgeOpacity: tuned("edges", 0.35), glowHubs: false });
+	for (const node of data.nodes) node.shape = "circle";
+	const view = new Graphraum(container, {
+		antialias: true,
+		focusLens: { enabled: true, centerScale: tuned("scale", 2.6), edgeScale: 0.6, reach: 0.45 },
+		mode: "2d",
+		theme: dark,
+	});
+	view.setData(data);
+} else if (scene === "styles") {
+	// The four style presets on the same graph, in a 2 x 2 grid.
+	container.style.display = "grid";
+	container.style.gridTemplateColumns = "1fr 1fr";
+	container.style.gridTemplateRows = "1fr 1fr";
+	container.style.gap = "2px";
+	const graph = clusteredGraph(tuned("nodes", 220), 4, 21);
+	const positions = forceLayout(graph, 2);
+	for (const [name, style] of Object.entries(graphraumStylePresets)) {
+		const cell = document.createElement("div");
+		cell.style.position = "relative";
+		const tag = Object.assign(document.createElement("span"), { className: "tag", textContent: name });
+		cell.append(tag);
+		container.append(cell);
+		const data = toData(graph, positions, { edgeOpacity: 0.5, glowHubs: false });
+		for (const node of data.nodes) {
+			node.color = undefined;
+			node.shape = "circle";
+			node.size = (node.size ?? 3) * tuned("grow", 2.6);
+		}
+		for (const edge of data.edges) {
+			edge.color = undefined;
+			edge.opacity = undefined;
+		}
+		const view = new Graphraum(cell, { antialias: true, mode: "2d", style });
+		view.setData(data);
+		view.setSelection(["n1"]);
+	}
 } else {
 	// Layout is an input: a hand-rolled spiral galaxy, 100,000 nodes and 100,000 edges.
 	const random = seeded(11);

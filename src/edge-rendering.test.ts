@@ -5,6 +5,8 @@ import {
 	createEdgeGeometry,
 	createEdgeMaterial,
 	markerApexInView,
+	markerOnSphere,
+	trimSphereSegment,
 	trimViewSegment,
 	writeEdgeMarkerInstance,
 	writeEdgeSegmentInstance,
@@ -220,5 +222,22 @@ describe("view-space edge ends", () => {
 		});
 		expect([trim.getX(0), trim.getY(0), trim.getX(1), trim.getY(1)]).toEqual([2, 3, 3, 0]);
 		geometry.dispose();
+	});
+});
+
+describe("sphere edge ends", () => {
+	test("trims along the 3D edge, so an end towards the camera lands on the sphere's front", () => {
+		const [a, b] = trimSphereSegment({ x: 0, y: 0, z: -100 }, { x: 0, y: 0, z: 0 }, 10, 5);
+		expect(a).toEqual({ x: 0, y: 0, z: -90 });
+		expect(b).toEqual({ x: 0, y: 0, z: -5 });
+		expect(trimSphereSegment({ x: 0, y: 0, z: 0 }, { x: 3, y: 4, z: 0 }, 3, 3)).toEqual([null, null]);
+	});
+
+	test("lays the arrowhead along the edge in depth, so it shortens on screen as the edge does", () => {
+		const { apex, base } = markerOnSphere({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 10 }, 2, 3);
+		expect(apex).toEqual({ x: 0, y: 0, z: -2 });
+		expect(base).toEqual({ x: 0, y: 0, z: -5 });
+		const side = markerOnSphere({ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, 2, 3);
+		expect(side.base.x - side.apex.x).toBe(-3);
 	});
 });

@@ -5,6 +5,11 @@ import type { EdgePaint } from "./edge-state";
 import { encodeEdgeStyle } from "./edge-styles";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
 
+/**
+ * `sphereEnds` is 1 while nodes draw as sphere impostors: trimmed ends then move along the edge in
+ * 3D onto the sphere surface (`trimSphereSegment`), and arrowheads run back along the edge in depth
+ * (`markerOnSphere`), so both foreshorten and sort by depth like the edge. 0 keeps flat disc ends.
+ */
 const vertexShader = `
 attribute float instanceKind;
 attribute vec3 instanceEndA;
@@ -13,6 +18,7 @@ attribute vec4 instanceColor;
 attribute float instanceWidth;
 attribute float instanceStyle;
 attribute vec2 instanceTrim;
+uniform float sphereEnds;
 
 varying vec4 edgeColor;
 varying float edgeKind;
@@ -36,17 +42,30 @@ void main() {
 		vec2 delta = viewB.xy - viewA.xy;
 		float len = length(delta);
 		vec2 dir = len > 0.0001 ? delta / len : vec2(1.0, 0.0);
-		// 3D boundary ends (see trimViewSegment): stop on the camera-facing outline. A trimmed end
-		// keeps its node's depth, where the billboard is, so it meets the rim from every view.
+		// 3D boundary ends: spheres trim in 3D (sphereEnds); discs stop on the outline at the
+		// node's depth, where the billboard is (see trimViewSegment).
 		if (instanceTrim.x + instanceTrim.y > 0.0) {
-			if (len - instanceTrim.x - instanceTrim.y <= 0.0) {
-				gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // hidden behind its nodes: clip it away
-				return;
+			if (sphereEnds > 0.5) {
+				vec3 travel = viewB.xyz - viewA.xyz;
+				float span = length(travel);
+				if (span - instanceTrim.x - instanceTrim.y <= 0.0) {
+					gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+					return;
+				}
+				vec3 along = travel / span;
+				viewA.xyz += along * instanceTrim.x;
+				viewB.xyz -= along * instanceTrim.y;
+			} else {
+				if (len - instanceTrim.x - instanceTrim.y <= 0.0) {
+					gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // hidden behind its nodes: clip it away
+					return;
+				}
+				viewA.xy += dir * instanceTrim.x;
+				viewB.xy -= dir * instanceTrim.y;
 			}
-			viewA.xy += dir * instanceTrim.x;
-			viewB.xy -= dir * instanceTrim.y;
 			delta = viewB.xy - viewA.xy;
 			len = length(delta);
+			dir = len > 0.0001 ? delta / len : vec2(1.0, 0.0);
 		}
 		vec2 perp = vec2(-dir.y, dir.x);
 		vec2 mid = (viewA.xy + viewB.xy) * 0.5;
@@ -62,10 +81,19 @@ void main() {
 		vec2 dir = dirLen > 0.0001 ? dirVec / dirLen : vec2(1.0, 0.0);
 		vec2 perp = vec2(-dir.y, dir.x);
 		float t = position.x + 0.5;
-		// 3D boundary ends pull the apex back onto the camera-facing outline (see markerApexInView).
-		vec2 apex = viewA.xy - dir * instanceTrim.x;
-		vec2 offset = dir * instanceWidth * (t - 1.0) + perp * position.y * instanceWidth;
-		viewPosition = vec4(apex + offset, viewA.z, 1.0);
+		if (sphereEnds > 0.5) {
+			vec3 travel = viewB.xyz - viewA.xyz;
+			float span = length(travel);
+			vec3 along = span > 0.0001 ? travel / span : vec3(dir, 0.0);
+			vec3 apex3 = viewA.xyz - along * instanceTrim.x;
+			vec3 head = apex3 + along * instanceWidth * (t - 1.0);
+			viewPosition = vec4(head + vec3(perp * position.y * instanceWidth, 0.0), 1.0);
+		} else {
+			// 3D boundary ends pull the apex back onto the camera-facing outline (see markerApexInView).
+			vec2 apex = viewA.xy - dir * instanceTrim.x;
+			vec2 offset = dir * instanceWidth * (t - 1.0) + perp * position.y * instanceWidth;
+			viewPosition = vec4(apex + offset, viewA.z, 1.0);
+		}
 	}
 
 	gl_Position = projectionMatrix * viewPosition;
@@ -139,6 +167,42 @@ export function trimViewSegment(
 	];
 }
 
+/**
+ * Reference for the shader's sphere ends: moves each view-space end toward the other by its trim
+ * along the 3D edge, onto the sphere surface. Returns `[null, null]` when the trims meet.
+ */
+export function trimSphereSegment(
+	a: ViewPoint,
+	b: ViewPoint,
+	trimA: number,
+	trimB: number,
+): [ViewPoint, ViewPoint] | [null, null] {
+	const span = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+	if (span - trimA - trimB <= 0) return [null, null];
+	const along = { x: (b.x - a.x) / span, y: (b.y - a.y) / span, z: (b.z - a.z) / span };
+	return [
+		{ x: a.x + along.x * trimA, y: a.y + along.y * trimA, z: a.z + along.z * trimA },
+		{ x: b.x - along.x * trimB, y: b.y - along.y * trimB, z: b.z - along.z * trimB },
+	];
+}
+
+/**
+ * Reference for the shader's sphere arrowhead: the apex `trim` back from `tip` along the 3D edge
+ * (onto the surface) and the base centre `length` further back, so the head foreshortens with the edge.
+ */
+export function markerOnSphere(
+	tip: ViewPoint,
+	ahead: ViewPoint,
+	trim: number,
+	length: number,
+): { apex: ViewPoint; base: ViewPoint } {
+	const span = Math.hypot(ahead.x - tip.x, ahead.y - tip.y, ahead.z - tip.z);
+	if (span < 1e-4) return { apex: { ...tip }, base: { ...tip } };
+	const along = { x: (ahead.x - tip.x) / span, y: (ahead.y - tip.y) / span, z: (ahead.z - tip.z) / span };
+	const apex = { x: tip.x - along.x * trim, y: tip.y - along.y * trim, z: tip.z - along.z * trim };
+	return { apex, base: { x: apex.x - along.x * length, y: apex.y - along.y * length, z: apex.z - along.z * length } };
+}
+
 /** Reference for the shader's marker apex: `trim` back from `tip` toward `previous`, at the tip's depth. */
 export function markerApexInView(tip: ViewPoint, previous: ViewPoint, trim: number): ViewPoint {
 	const length = Math.hypot(tip.x - previous.x, tip.y - previous.y);
@@ -177,6 +241,7 @@ export const EDGE_SCENE_RENDER_ORDER = 2;
 
 export function createEdgeMaterial(): ShaderMaterial {
 	return new ShaderMaterial({
+		uniforms: { sphereEnds: { value: 0 } },
 		depthTest: false,
 		depthWrite: false,
 		fragmentShader,

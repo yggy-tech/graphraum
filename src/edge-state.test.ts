@@ -54,3 +54,21 @@ describe("changedIds", () => {
 		expect(changedIds(new Set(["a"]), new Set(["a"]))).toEqual([]);
 	});
 });
+
+describe("resolveEdgePaint host colours", () => {
+	const colored = (state: EdgePaintState): EdgeStateStyling => ({
+		...styling({ 0: state }),
+		colorOf: (edgeIndex) => (edgeIndex === 0 ? "#e8a33d" : null),
+	});
+
+	test("a host colour replaces the edge colour and keeps its opacity", () => {
+		const visual = { color: "#6d5bd0", opacity: 0.3 };
+		expect(resolveEdgePaint(0, visual, defaults, "detail", colored(null))).toEqual({ color: "#e8a33d", opacity: 0.3 });
+		expect(resolveEdgePaint(1, visual, defaults, "detail", colored(null))).toEqual(visual);
+	});
+
+	test("selection and dimming win over a host colour", () => {
+		expect(resolveEdgePaint(0, {}, defaults, "detail", colored("selected")).color).toBe("#fcfffc");
+		expect(resolveEdgePaint(0, {}, defaults, "detail", colored("dimmed")).color).toBe("#315a51");
+	});
+});

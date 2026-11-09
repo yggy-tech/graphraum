@@ -217,6 +217,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     setCameraState(state: GraphraumCameraState): void;
     setData(data: GraphraumData<NodeAttributes, EdgeAttributes>, options?: GraphraumSetDataOptions): void;
     setDepthOfField(options: GraphraumDepthOfFieldOptions, update?: GraphraumDepthOfFieldUpdate): Promise<boolean>;
+    setEdgeColors(colors: ReadonlyMap<string, GraphraumColor> | Iterable<readonly [string, GraphraumColor]>): void;
     setEdgeSelection(edgeIds: Iterable<string>): void;
     setEdgeState(state: GraphraumEdgeState, edgeIds: Iterable<string>): void;
     setFocusLens(options: GraphraumFocusLensOptions): void;
@@ -346,6 +347,7 @@ export interface GraphraumDiagnostics {
     aggregatedNodeClusters: number;
     // (undocumented)
     autoOrbit: GraphraumAutoOrbitStatus;
+    coloredEdges: number;
     // (undocumented)
     cpuFrameMilliseconds: number;
     // (undocumented)

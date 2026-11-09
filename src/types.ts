@@ -573,6 +573,8 @@ export interface GraphraumDiagnostics {
 	gpuTextures: number;
 	lodLevel: "density" | "detail" | "overview";
 	pickingStrategy: "raycaster-3d" | "spatial-grid-2d";
+	/** Edges painted in a host colour by `setEdgeColors`. */
+	coloredEdges: number;
 	dimmedEdges: number;
 	selectedEdges: number;
 	selectedNodes: number;

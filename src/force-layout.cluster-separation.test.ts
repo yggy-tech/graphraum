@@ -83,6 +83,25 @@ function separationsOf(share: number, seed: number, layout: Layout) {
 	return { graph, separations: clusterSeparations(graph, positions) };
 }
 
+describe("gap around a small cluster (#192)", () => {
+	// Mean over the seeds of the 2% cluster's gap over the other clusters' gap. Before the fix: 4.0
+	// (classic) and 12.3 (edge-t); an equal-density layout gives 1.
+	test.each([
+		["classic on", 3.2],
+		["edge-t on", 10.5],
+	] as const)(
+		"%s keeps it under %d times the gap of the large clusters",
+		(layout, limit) => {
+			const ratios = SEEDS.map((seed) => {
+				const [minority, ...rest] = separationsOf(0.02, seed, layout).separations;
+				return (minority?.gap ?? 0) / mean(rest.map((row) => row.gap));
+			});
+			expect(mean(ratios)).toBeLessThan(limit);
+		},
+		30_000,
+	);
+});
+
 type Metric = "gap" | "purity" | "visualSeparation";
 const pick = (rows: ClusterSeparation[], metric: Metric) => rows.map((row) => row[metric]);
 

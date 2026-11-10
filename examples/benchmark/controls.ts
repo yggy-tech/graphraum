@@ -1,4 +1,5 @@
-import { DEFAULT_FORCE_SETTINGS, FORCE_LAYOUT_STYLES, graphraumTheme } from "../../src";
+import { graphraumTheme } from "../../src";
+import { DEFAULT_FORCE_SETTINGS, FORCE_LAYOUT_STYLES } from "../../src/layout";
 import { Checkbox, Color, Field, Input, Section, Select, Slider } from "./ui";
 
 const shapes = [

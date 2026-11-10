@@ -20,6 +20,8 @@ const diagnostics = await import('@yggy-tech/graphraum/diagnostics');
 if (typeof diagnostics.measureLayoutStability !== 'function') throw new Error('diagnostics export missing');
 const styles = await import('@yggy-tech/graphraum/styles');
 if (!styles.graphraumStylePresets.classicDark) throw new Error('styles export missing');
+const layout = await import('@yggy-tech/graphraum/layout');
+if (typeof layout.computeForcePositions !== 'function') throw new Error('layout export missing');
 const layoutStart = await import('@yggy-tech/graphraum/layout-start');
 if (typeof layoutStart.pivotMdsPositions !== 'function') throw new Error('layout-start export missing');
 const icons = await import('@yggy-tech/graphraum/icons');
@@ -27,7 +29,8 @@ if (typeof icons.createIconAtlas !== 'function' || typeof icons.phosphorIcon !==
 "
 
 cat > consumer.ts <<'TS'
-import { computeForcePositions, Graphraum, type GraphraumData } from "@yggy-tech/graphraum";
+import { Graphraum, type GraphraumData } from "@yggy-tech/graphraum";
+import { computeForcePositions } from "@yggy-tech/graphraum/layout";
 import { measureLayoutStability } from "@yggy-tech/graphraum/diagnostics";
 import { graphraumStylePresets } from "@yggy-tech/graphraum/styles";
 import { pivotMdsPositions } from "@yggy-tech/graphraum/layout-start";

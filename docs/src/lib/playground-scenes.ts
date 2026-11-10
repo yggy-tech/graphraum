@@ -151,7 +151,8 @@ const sceneCodeById: Record<PlaygroundSceneId, string> = {
 	fraud: demoCode("accounts, devices, payment methods, merchants", ["Payment method"], ["Device"]),
 	knowledge: demoCode("people, places, concepts, sources", ["Place"], ["Concept", "Field"]),
 	software: demoCode("applications, services, gateways, data stores", ["Service", "Database"], ["Gateway"]),
-	stress: `import { Graphraum, createForceSimulation } from "@yggy-tech/graphraum";
+	stress: `import { Graphraum } from "@yggy-tech/graphraum";
+import { createForceSimulation } from "@yggy-tech/graphraum/layout";
 
 const graph = new Graphraum(container, { mode: "2d", maxPixelRatio: 1 });
 graph.setData({ nodes, edges }); // 100,000 nodes, 300,000 edges

@@ -8,21 +8,6 @@ export {
 export { graphraumEdgePaths } from "./edge-styles";
 export type { FocusLensResult, ResolvedFocusLensOptions } from "./focus-lens";
 export { FOCUS_LENS_DEFAULTS, focusLens, focusLensLabelAlpha, focusLensScale } from "./focus-lens";
-export type {
-	ForceAnchors,
-	ForceLayoutRequest,
-	ForceLayoutStyle,
-	ForceSettings,
-	ForceSimulation,
-} from "./force-layout";
-export {
-	computeClusteredForcePositions,
-	computeForcePositions,
-	createForceSimulation,
-	DEFAULT_FORCE_SETTINGS,
-	FORCE_LAYOUT_STYLES,
-	forceIterationCount,
-} from "./force-layout";
 export type { GraphologyEdgeAttributes, GraphologyNodeAttributes, GraphologyRenderer } from "./graphology";
 export { bindGraphology } from "./graphology";
 export { Graphraum } from "./graphraum";

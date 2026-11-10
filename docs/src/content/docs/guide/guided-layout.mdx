@@ -12,7 +12,7 @@ If your nodes come with embeddings, you can steer the force layout with them. gr
 | k nearest neighbours | extra entries in `edges` with weak `springStrengths` |
 
 ```ts
-import { createForceSimulation, DEFAULT_FORCE_SETTINGS } from "graphraum";
+import { createForceSimulation, DEFAULT_FORCE_SETTINGS } from "@yggy-tech/graphraum/layout";
 
 // Your own code: 3D projection, cluster ids, and neighbour pairs from the embeddings.
 const { projection, clusterIds, neighbourPairs } = analyse(embeddings);

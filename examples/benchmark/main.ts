@@ -1,7 +1,5 @@
 import {
 	defineVisuals,
-	FORCE_LAYOUT_STYLES,
-	type ForceSettings,
 	Graphraum,
 	type GraphraumEdgeDepth,
 	type GraphraumEdgeMarker,
@@ -14,6 +12,7 @@ import {
 	type GraphraumOverlay,
 	type GraphraumShading,
 } from "../../src";
+import { FORCE_LAYOUT_STYLES, type ForceSettings } from "../../src/layout";
 import { renderControls } from "./controls";
 import {
 	createFixture,

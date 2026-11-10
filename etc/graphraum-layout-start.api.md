@@ -23,6 +23,14 @@ export interface PivotMdsRequest {
     nodeCount: number;
 }
 
+// @public
+export function placeNewNodes(request: PlaceNewNodesRequest, positions: Float32Array): Float32Array;
+
+// @public
+export interface PlaceNewNodesRequest extends PivotMdsRequest {
+    clusters?: Uint32Array;
+}
+
 // (No @packageDocumentation comment for this package)
 
 ```

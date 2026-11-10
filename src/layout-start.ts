@@ -267,3 +267,81 @@ export function pivotMdsPositions(request: PivotMdsRequest, options: PivotMdsOpt
 	for (let index = 0; index < positions.length; index += 1) positions[index] *= linkDistance;
 	return positions;
 }
+
+/** What {@link placeNewNodes} needs from a force layout request. */
+export interface PlaceNewNodesRequest extends PivotMdsRequest {
+	/** Cluster per node; a new node without placed neighbours starts at its cluster's mean. */
+	clusters?: Uint32Array;
+}
+
+/** An offset of 0.3 to 0.7 link distances in a pseudo-random direction, so new nodes can separate. */
+function offsetOf(node: number, dimensions: number, linkDistance: number) {
+	const unit = (salt: number) => {
+		const value = Math.sin((node + 1) * 12.9898 + salt * 78.233) * 43758.5453;
+		return value - Math.floor(value);
+	};
+	const angle = unit(1) * Math.PI * 2;
+	const radius = linkDistance * (0.3 + 0.4 * unit(2));
+	const z = dimensions === 3 ? unit(3) * 2 - 1 : 0;
+	const plane = Math.sqrt(1 - z * z) * radius;
+	return [Math.cos(angle) * plane, Math.sin(angle) * plane, z * radius];
+}
+
+/**
+ * `initialPositions` for `warmStart`: copies `positions` (XYZ per node, NaN = new node) and places every
+ * new node near the mean of its placed neighbours, in passes so a new chain grows outward from the old
+ * graph. A new node without a placed neighbour goes near its cluster's mean, else near the centre of the
+ * placed nodes. Deterministic. Use the layout's `linkDistance`.
+ *
+ * ```ts
+ * computeForcePositions({ ...request, initialPositions: placeNewNodes(request, previous), warmStart: true });
+ * ```
+ */
+export function placeNewNodes(request: PlaceNewNodesRequest, positions: Float32Array): Float32Array {
+	const { clusters, dimensions, edges, nodeCount } = request;
+	const linkDistance = request.linkDistance ?? DEFAULT_LINK_DISTANCE;
+	if (positions.length !== nodeCount * 3) throw new Error("Positions must contain nodeCount * 3 values.");
+	if (edges.length % 2 !== 0) throw new Error("Edges must contain source/target pairs.");
+	const result = Float32Array.from(positions);
+	const placed = Uint8Array.from({ length: nodeCount }, (_, node) => (Number.isNaN(result[node * 3]) ? 0 : 1));
+	const groups = clusters ? clusters.reduce((most, group) => Math.max(most, group + 1), 0) : 0;
+	// One slot per node for the neighbour passes, then one per cluster plus one for the centre.
+	const sums = new Float64Array(Math.max(nodeCount, groups + 1) * 3);
+	const sizes = new Uint32Array(sums.length / 3);
+	const add = (slot: number, node: number) => {
+		for (let axis = 0; axis < dimensions; axis += 1) sums[slot * 3 + axis] += result[node * 3 + axis] ?? 0;
+		sizes[slot] += 1;
+	};
+	const put = (node: number, slot: number) => {
+		const offset = offsetOf(node, dimensions, linkDistance);
+		for (let axis = 0; axis < 3; axis += 1) {
+			result[node * 3 + axis] =
+				axis < dimensions ? (sums[slot * 3 + axis] ?? 0) / (sizes[slot] || 1) + (offset[axis] ?? 0) : 0;
+		}
+		placed[node] = 1;
+	};
+	for (let pass = 0; pass < 8; pass += 1) {
+		sums.fill(0);
+		sizes.fill(0);
+		for (let index = 0; index < edges.length; index += 2) {
+			const a = edges[index] ?? 0;
+			const b = edges[index + 1] ?? 0;
+			if (a < nodeCount && b < nodeCount && placed[a] !== placed[b]) add(placed[a] ? b : a, placed[a] ? a : b);
+		}
+		if (!sizes.some(Boolean)) break;
+		for (let node = 0; node < nodeCount; node += 1) if (sizes[node]) put(node, node);
+	}
+	sums.fill(0);
+	sizes.fill(0);
+	for (let node = 0; node < nodeCount; node += 1) {
+		if (!placed[node]) continue;
+		add(groups, node);
+		if (clusters) add(clusters[node] ?? 0, node);
+	}
+	for (let node = 0; node < nodeCount; node += 1) {
+		if (placed[node]) continue;
+		const group = clusters?.[node] ?? groups;
+		put(node, sizes[group] ? group : groups);
+	}
+	return result;
+}

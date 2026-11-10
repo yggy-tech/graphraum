@@ -115,6 +115,41 @@ simulation.addNodes(2, undefined, new Uint32Array([1, 2]));
 
 `addNodes(count, initial?, clusters?)` requires `clusters` (length `count`) when the simulation was created with clusters, and throws when it was created without them. Nodes added without `initial` positions start at the default seed and are drawn into their cluster by the pull.
 
+### Keeping positions when the graph changes
+
+A graph that gains or loses nodes should not start over. Keep the previous positions (NaN for nodes that are new; drop the entry of a removed node and remap the indices), place the new nodes with `placeNewNodes()` from `@yggy-tech/graphraum/layout-start`, and pass the result as `initialPositions` with `warmStart: true`:
+
+```ts
+import { computeForcePositions } from "@yggy-tech/graphraum";
+import { placeNewNodes } from "@yggy-tech/graphraum/layout-start";
+
+const request = { dimensions: 2, edges, nodeCount };
+const next = computeForcePositions({
+  ...request,
+  // Old positions by node index, NaN for new nodes; new nodes land next to their neighbours.
+  initialPositions: placeNewNodes(request, previous),
+  warmStart: true,
+});
+```
+
+`placeNewNodes()` starts a new node a fraction of a link distance from the mean of its placed neighbours, so a new chain grows outward from the old graph. A new node without neighbours starts near the mean of its cluster (pass `clusters` in the request), or near the centre. Pass `linkDistance` if you changed it. With `warmStart`, nodes that have a start keep it, and a node without one (you skipped `placeNewNodes()`) keeps the default start or its anchor seed; anchors never pull a placed node back. `computeForcePositions()` then settles in 6 steps from an alpha of 0.05 instead of running the full schedule, so known nodes barely move. With `createForceSimulation()`, step with an alpha of 0.05 or lower. It works with both layout styles and with `clusters` and `anchors`.
+
+On a graph with 5% more nodes the median settled node moved 0.18 link distances with both styles at 100,000 nodes and 300,000 edges. Placing and settling took 82 ms (`"classic"`, 142 ms from scratch) and 122 ms (`"edge-t"`, 1,600 ms from scratch).
+
+### Large graphs and the worker
+
+Run `computeForcePositions()` and `createForceSimulation()` in a worker and send positions back in transferable batches with `graph.applyLayout()`. The first batch can be drawn while the rest are still arriving, and the main thread only copies buffers. The Prove run in the playground times startup, transfer, compute and the first useful frame separately. At 100,000 nodes and 300,000 edges the `"classic"` layout took 0.5 ms to start the worker, 17 ms to hand over the edges and 120 ms to compute in a worker (headless Chromium with software WebGL, one run), so the layout is not what limits a large graph; drawing it is.
+
+A precomputed layout from your server is the better choice when:
+
+- many people open the same graph, so one layout is computed once and cached instead of in every browser;
+- the graph is too large for a phone or a low-power laptop, or you use `"edge-t"`, whose one-shot layout runs eight times as many steps;
+- the graph changes rarely, and positions must be the same for everyone and between visits;
+- the layout needs something the browser lacks, such as embeddings (`anchors`), a different algorithm, or hours of compute;
+- the page has to draw the first frame with no layout wait at all.
+
+Compute in the browser when the graph is built per user, changes often, or is small. Both can be mixed: load the server layout as `initialPositions` with `warmStart: true`, so edits settle locally instead of waiting for the server.
+
 ### Unfolding long chains
 
 A random start knots a long thin structure (a process chain, a version history, a timeline), and local forces cannot undo a fold that spans the whole graph. Pass your own start with `initialPositions`, and let `@yggy-tech/graphraum/layout-start` compute one from graph distances:

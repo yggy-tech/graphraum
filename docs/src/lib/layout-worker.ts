@@ -9,12 +9,15 @@ type LayoutRequest = {
 	clusters?: Uint32Array;
 	dimensions: 2 | 3;
 	edges?: Uint32Array;
+	/** Start positions (NaN = new node); with `warmStart` the layout settles instead of starting over. */
+	initialPositions?: Float32Array;
 	iterations?: number;
 	layout: LayoutName;
 	maxFps: number;
 	nodeCount: number;
 	run: number;
 	settings: ForceSettings;
+	warmStart?: boolean;
 };
 
 type LayoutWorkerMessage = ({ type: "start" } & LayoutRequest) | { run: number; type: "next" };
@@ -44,14 +47,16 @@ function startLiveLayout(request: LayoutRequest) {
 		clusters: request.clusters,
 		dimensions: request.dimensions,
 		edges: request.edges ?? new Uint32Array(),
+		initialPositions: request.initialPositions,
 		nodeCount: request.nodeCount,
 		settings: request.settings,
+		warmStart: request.warmStart,
 	});
 	const state: NonNullable<typeof activeLayout> = { nextStart: 0, request };
 	activeLayout = state;
 	const tick = () => {
 		if (activeLayout !== state) return;
-		simulation.step(0.35);
+		simulation.step(request.warmStart ? 0.05 : 0.35);
 		const positions = simulation.positions.slice();
 		workerScope.postMessage({ end: request.nodeCount, positions, run: request.run, type: "positions" }, [
 			positions.buffer,
@@ -119,9 +124,11 @@ workerScope.addEventListener("message", ({ data }) => {
 				clusters: data.clusters,
 				dimensions: data.dimensions,
 				edges: data.edges ?? new Uint32Array(),
+				initialPositions: data.initialPositions,
 				iterations: data.iterations,
 				nodeCount: data.nodeCount,
 				settings: data.settings,
+				warmStart: data.warmStart,
 			});
 			if (data.clusters) normalizeExtent(spreadClusters(positions, data.clusters), data.nodeCount);
 			computeMilliseconds = performance.now() - computeStartedAt;

@@ -110,6 +110,7 @@ export interface ForceLayoutRequest {
     // (undocumented)
     settings?: ForceSettings;
     springStrengths?: Float32Array;
+    warmStart?: boolean;
 }
 
 // @public

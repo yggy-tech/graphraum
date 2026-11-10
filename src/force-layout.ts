@@ -48,6 +48,16 @@ export interface ForceLayoutRequest {
 	 * with `addNodes()` use the default start.
 	 */
 	initialPositions?: Float32Array;
+	/**
+	 * `initialPositions` is a layout that already settled, for example before nodes or edges were added
+	 * or removed. A node with a start keeps it (anchors seed only the nodes without one); a node
+	 * without one (NaN) keeps the default start, and `placeNewNodes()` from
+	 * `@yggy-tech/graphraum/layout-start` puts it next to its neighbours first, which is better.
+	 * `computeForcePositions()` then settles from alpha 0.05 in 6 steps instead
+	 * of the usual schedule, so known nodes move only a little. A simulation should step with an
+	 * alpha of 0.05 or lower. For a removed node, drop its start and remap the indices.
+	 */
+	warmStart?: boolean;
 	settings?: ForceSettings;
 	/**
 	 * Optional spring strength per edge (`edges.length / 2` values).
@@ -210,13 +220,9 @@ export const FORCE_LAYOUT_STYLE_PRESETS: Readonly<Record<ForceLayoutStyle, Force
  */
 const MAX_EDGE_T_DRAWS_PER_NODE = 32;
 
-function clampLinkDistance(value: number): number {
-	return Math.max(1, Math.min(500, value));
-}
+const clampLinkDistance = (value: number) => Math.max(1, Math.min(500, value));
 
-function clampSpringStrength(value: number): number {
-	return Math.max(0.0001, Math.min(0.05, value));
-}
+const clampSpringStrength = (value: number) => Math.max(0.0001, Math.min(0.05, value));
 
 function normalizePerEdgeArray(
 	name: "linkDistances" | "springStrengths",
@@ -228,11 +234,7 @@ function normalizePerEdgeArray(
 	if (values.length !== edgeCount) {
 		throw new Error(`${name} length (${values.length}) must equal edge count (${edgeCount}).`);
 	}
-	const normalized = new Float32Array(edgeCount);
-	for (let index = 0; index < edgeCount; index += 1) {
-		normalized[index] = clamp(values[index] ?? 0);
-	}
-	return normalized;
+	return Float32Array.from(values, (value) => clamp(value));
 }
 
 export function forceIterationCount(nodeCount: number) {
@@ -243,7 +245,7 @@ function resolveForceIterations(nodeCount: number, layoutStyle: ForceLayoutStyle
 	const style = FORCE_LAYOUT_STYLE_PRESETS[layoutStyle];
 	if (iterations === undefined) return forceIterationCount(nodeCount) * style.iterationScale;
 	if (!Number.isSafeInteger(iterations) || iterations < 1) {
-		throw new Error("Force iterations must be a positive integer.");
+		throw new Error("Iterations must be a positive integer.");
 	}
 	return Math.min(style.maxIterations, iterations);
 }
@@ -283,7 +285,7 @@ function applyInitialPositions(positions: Float32Array, request: ForceLayoutRequ
 	}
 	for (const value of start) {
 		if (value === Number.POSITIVE_INFINITY || value === Number.NEGATIVE_INFINITY) {
-			throw new Error("Initial positions must not contain Infinity; use NaN to keep the default start.");
+			throw new Error("Initial positions must not contain Infinity; use NaN for the default start.");
 		}
 	}
 	for (let node = 0; node < nodeCount; node += 1) {
@@ -413,7 +415,7 @@ function assertAnchorPositions(positions: Float32Array, nodeCount: number, dimen
 	for (let index = 0; index < positions.length; index += 1) {
 		const value = positions[index] ?? 0;
 		if (!Number.isNaN(value) && !Number.isFinite(value)) {
-			throw new Error(`Anchor positions must be finite or NaN (to skip a node); found ${value} at index ${index}.`);
+			throw new Error(`Anchor positions must be finite or NaN (no anchor); found ${value} at index ${index}.`);
 		}
 	}
 }
@@ -558,7 +560,7 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 	let settings = normalizeForceSettings(request.settings);
 	let nodeCount = request.nodeCount;
 	let edges = new Uint32Array(request.edges);
-	if (edges.length % 2 !== 0) throw new Error("Force edges must contain source/target pairs.");
+	if (edges.length % 2 !== 0) throw new Error("Edges must contain source/target pairs.");
 	let degrees = degreesOf(edges, nodeCount);
 	const edgeCount = edges.length / 2;
 	let linkDistances = normalizePerEdgeArray("linkDistances", request.linkDistances, edgeCount, clampLinkDistance);
@@ -575,11 +577,13 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		clusters = new Uint32Array(request.clusters);
 	}
 	let positions = clusters ? clusteredInitialPositions({ ...request, clusters }) : initialPositions(request);
-	if (request.initialPositions) applyInitialPositions(positions, request, request.initialPositions);
 	let anchorState: AnchorState | null = request.anchors
 		? createAnchorState(request, request.anchors, settings.linkDistance)
 		: null;
-	if (anchorState) seedAtAnchors(positions, anchorState, settings.anchorStrength);
+	// A warm start goes on top of the anchor seeds, so placed nodes stay where they were.
+	if (request.warmStart && anchorState) seedAtAnchors(positions, anchorState, settings.anchorStrength);
+	if (request.initialPositions) applyInitialPositions(positions, request, request.initialPositions);
+	if (!request.warmStart && anchorState) seedAtAnchors(positions, anchorState, settings.anchorStrength);
 	let velocities = new Float32Array(positions.length);
 	let forces = new Float32Array(positions.length);
 	let iteration = 0;
@@ -698,9 +702,9 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			return positions;
 		},
 		addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array, addedAnchors?: ForceAnchors) {
-			if (!Number.isSafeInteger(count) || count < 1) throw new Error("Node count must be a positive integer.");
+			if (!Number.isSafeInteger(count) || count < 1) throw new Error("Count must be a positive integer.");
 			if (initial && initial.length !== count * 3) {
-				throw new Error("Initial positions must contain one XYZ triplet per added node.");
+				throw new Error("Initial positions need one XYZ triplet per added node.");
 			}
 			if (clusters && !addedClusters) {
 				throw new Error("This simulation was created with clusters: addNodes() requires a clusters array.");
@@ -746,7 +750,6 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			const nextVelocities = new Float32Array(nextPositions.length);
 			nextVelocities.set(velocities);
 			const nextForces = new Float32Array(nextPositions.length);
-			nextForces.set(forces);
 			if (initial) nextPositions.set(initial, positions.length);
 			else {
 				const added = initialPositions({ dimensions: request.dimensions, nodeCount: count });
@@ -781,9 +784,9 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			return start;
 		},
 		addEdges(nextEdges: Uint32Array) {
-			if (nextEdges.length % 2 !== 0) throw new Error("Force edges must contain source/target pairs.");
+			if (nextEdges.length % 2 !== 0) throw new Error("Edges must contain source/target pairs.");
 			for (const index of nextEdges) {
-				if (index >= nodeCount) throw new Error(`Force edge references missing node index: ${index}`);
+				if (index >= nodeCount) throw new Error(`Edge references missing node: ${index}`);
 			}
 			const addedEdgeCount = nextEdges.length / 2;
 			const merged = new Uint32Array(edges.length + nextEdges.length);
@@ -900,8 +903,13 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 
 export function computeForcePositions(request: ForceLayoutRequest) {
 	const simulation = createForceSimulation(request);
-	const iterations = resolveForceIterations(request.nodeCount, simulation.settings.layoutStyle, request.iterations);
-	for (let iteration = 0; iteration < iterations; iteration += 1) simulation.step(1 - iteration / iterations);
+	const full = resolveForceIterations(request.nodeCount, simulation.settings.layoutStyle, request.iterations);
+	const warm = request.warmStart;
+	// A warm start settles from alpha 0.05, in 6 steps, so placed nodes barely move.
+	const iterations = warm ? 6 : full;
+	for (let iteration = 0; iteration < iterations; iteration += 1) {
+		simulation.step((warm ? 0.05 : 1) * (1 - iteration / iterations));
+	}
 	return simulation.positions;
 }
 

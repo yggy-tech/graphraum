@@ -41,7 +41,8 @@ npm install @yggy-tech/graphraum
 ```
 
 ```ts
-import { computeForcePositions, Graphraum } from "@yggy-tech/graphraum";
+import { Graphraum } from "@yggy-tech/graphraum";
+import { computeForcePositions } from "@yggy-tech/graphraum/layout";
 
 const graph = new Graphraum(document.querySelector<HTMLElement>("#graph")!, { mode: "3d" });
 

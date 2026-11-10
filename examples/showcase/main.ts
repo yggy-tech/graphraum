@@ -2,7 +2,6 @@
 // viewport at 1600 x 900 (hero 1600 x 640, shading 1600 x 600). Everything is seeded, so every run draws
 // the same graph. Scenes: hero, focus, labels, scale, lit, shading, icons, lens, styles.
 import {
-	computeForcePositions,
 	Graphraum,
 	type GraphraumData,
 	type GraphraumEdge,
@@ -11,6 +10,7 @@ import {
 	graphraumScenes,
 } from "../../src";
 import { createIconAtlas } from "../../src/icons";
+import { computeForcePositions } from "../../src/layout";
 import { graphraumStylePresets } from "../../src/styles";
 
 type SceneId = "hero" | "labels" | "focus" | "scale" | "lit" | "shading" | "icons" | "lens" | "styles";

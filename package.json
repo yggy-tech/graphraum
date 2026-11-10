@@ -29,6 +29,10 @@
 			"types": "./dist/styles.d.ts",
 			"import": "./dist/styles.js"
 		},
+		"./layout": {
+			"types": "./dist/layout.d.ts",
+			"import": "./dist/layout.js"
+		},
 		"./layout-start": {
 			"types": "./dist/layout-start.d.ts",
 			"import": "./dist/layout-start.js"
@@ -39,8 +43,8 @@
 		}
 	},
 	"scripts": {
-		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json && api-extractor run -c api-extractor.styles.json && api-extractor run -c api-extractor.layout-start.json && api-extractor run -c api-extractor.icons.json",
-		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json && api-extractor run --local -c api-extractor.styles.json && api-extractor run --local -c api-extractor.layout-start.json && api-extractor run --local -c api-extractor.icons.json",
+		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json && api-extractor run -c api-extractor.styles.json && api-extractor run -c api-extractor.layout.json && api-extractor run -c api-extractor.layout-start.json && api-extractor run -c api-extractor.icons.json",
+		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json && api-extractor run --local -c api-extractor.styles.json && api-extractor run --local -c api-extractor.layout.json && api-extractor run --local -c api-extractor.layout-start.json && api-extractor run --local -c api-extractor.icons.json",
 		"build": "tsdown",
 		"check": "biome check . && tsc --noEmit",
 		"check:package": "publint && attw --pack . --profile esm-only && bun scripts/check-bundle-size.ts",

@@ -281,7 +281,7 @@ function applyInitialPositions(positions: Float32Array, request: ForceLayoutRequ
 		throw new Error(`Initial positions (${start.length} values) must be nodeCount * 3 (${nodeCount * 3}).`);
 	}
 	if (start.some((value) => Math.abs(value) === Infinity)) {
-		throw new Error("Initial positions must not contain Infinity; use NaN for the default start.");
+		throw new Error("Initial positions must not contain Infinity.");
 	}
 	for (let node = 0; node < nodeCount; node += 1) {
 		const offset = node * 3;
@@ -413,7 +413,7 @@ function assertAnchorPositions(positions: Float32Array, nodeCount: number, dimen
 	}
 	for (let index = 0; index < positions.length; index += 1) {
 		const value = positions[index] ?? 0;
-		if (!Number.isNaN(value) && !Number.isFinite(value)) {
+		if (Math.abs(value) === Infinity) {
 			throw new Error(`Anchor positions must be finite or NaN (no anchor); found ${value} at index ${index}.`);
 		}
 	}
@@ -702,7 +702,7 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array, addedAnchors?: ForceAnchors) {
 			if (!Number.isSafeInteger(count) || count < 1) throw new Error("Count must be a positive integer.");
 			if (initial && initial.length !== count * 3) {
-				throw new Error("Initial positions need one XYZ triplet per added node.");
+				throw new Error("Initial positions must be count * 3.");
 			}
 			if (clusters && !addedClusters) {
 				throw new Error("This simulation was created with clusters: addNodes() requires a clusters array.");

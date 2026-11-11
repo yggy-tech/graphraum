@@ -265,3 +265,63 @@ describe("focus lens", () => {
 		expect(graph.getFocusLensLabelAlpha("east")).toBe(1);
 	});
 });
+
+describe("edge budget keeps important edges and skips sub-pixel ones", () => {
+	const ring = (count: number, radius: number, offset = 0) =>
+		Array.from({ length: count }, (_, index) => {
+			const angle = ((index + offset) / count) * Math.PI * 2;
+			return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+		});
+
+	/** A hub with 40 long spokes, 40 long plain edges and 40 edges 0.05 units long. */
+	function budgetGraph(): GraphraumData {
+		const nodes = [{ id: "hub", position: { x: 0, y: 0 }, size: 2 }];
+		const edges: { id: string; source: string; target: string }[] = [];
+		for (const [index, position] of ring(40, 100).entries()) {
+			nodes.push({ id: `leaf-${index}`, position, size: 2 });
+			edges.push({ id: `spoke-${index}`, source: "hub", target: `leaf-${index}` });
+		}
+		for (const [index, position] of ring(40, 60, 0.5).entries()) {
+			nodes.push({ id: `p-${index}`, position, size: 1 });
+			nodes.push({ id: `q-${index}`, position: { x: position.x + 40, y: position.y }, size: 1 });
+			edges.push({ id: `long-${index}`, source: `p-${index}`, target: `q-${index}` });
+			nodes.push({ id: `a-${index}`, position: { x: position.x, y: position.y + 5 }, size: 1 });
+			nodes.push({ id: `b-${index}`, position: { x: position.x + 0.05, y: position.y + 5 }, size: 1 });
+			edges.push({ id: `tiny-${index}`, source: `a-${index}`, target: `b-${index}` });
+		}
+		return { edges, nodes };
+	}
+
+	function drawnEdgeIds(graph: ReturnType<typeof mountGraph>) {
+		const internals = graph as unknown as {
+			data: GraphraumData;
+			visibleEdgeSlots: Map<number, number>;
+		};
+		return [...internals.visibleEdgeSlots.keys()].map((index) => internals.data.edges[index]?.id ?? "");
+	}
+
+	test("draws the hub edges first and reports the sub-pixel skips in 2D", () => {
+		const graph = mountGraph({ maxVisibleEdges: 20 }, budgetGraph());
+		renderAndRead(graph);
+		const diagnostics = graph.getDiagnostics();
+		expect(diagnostics.lodLevel).toBe("overview");
+		expect(diagnostics.visibleEdges).toBe(20);
+		expect(diagnostics.subPixelEdgesSkipped).toBe(40);
+		expect(drawnEdgeIds(graph).every((id) => id.startsWith("spoke-"))).toBe(true);
+	});
+
+	test("a selected node pulls its edges in even when they score low", () => {
+		const graph = mountGraph({ maxVisibleEdges: 20 }, budgetGraph());
+		expect(drawnEdgeIds(graph)).not.toContain("long-3");
+		graph.setNodeState("selected", ["p-3"]);
+		expect(drawnEdgeIds(graph)).toContain("long-3");
+		graph.setNodeState("selected", ["a-3"]);
+		expect(drawnEdgeIds(graph)).toContain("tiny-3");
+	});
+
+	test("3D keeps the importance order and skips nothing", () => {
+		const graph = mountGraph({ maxVisibleEdges: 20, mode: "3d" }, budgetGraph());
+		expect(graph.getDiagnostics().subPixelEdgesSkipped).toBe(0);
+		expect(drawnEdgeIds(graph).every((id) => id.startsWith("spoke-"))).toBe(true);
+	});
+});

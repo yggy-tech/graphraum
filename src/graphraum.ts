@@ -149,7 +149,14 @@ import type {
 	GraphraumVisualMapper,
 	ResolvedGraphraumSceneOptions,
 } from "./types";
-import { applyEdgeBudget, collectIncidentEdges, resolveLodLevel, shouldUseDensityLod } from "./viewport-lod";
+import {
+	applyEdgeBudget,
+	collectIncidentEdges,
+	dropSubPixelEdges,
+	endpointDegreeScore,
+	resolveLodLevel,
+	shouldUseDensityLod,
+} from "./viewport-lod";
 
 /** Importance boost so selected nodes stay labeled when autoLabels budgets the overlay. */
 const SELECTED_LABEL_IMPORTANCE_BOOST = 1000;
@@ -218,6 +225,9 @@ interface GpuTimer {
 function disposeMaterial(material: Material | Material[]) {
 	for (const item of Array.isArray(material) ? material : [material]) item.dispose();
 }
+
+/** Overview edges shorter than this many CSS pixels on screen are not drawn. */
+const SUB_PIXEL_EDGE_PIXELS = 0.75;
 
 /** One warning per page when a context cannot run depth of field; diagnostics report it per instance. */
 let warnedDepthOfFieldUnsupported = false;
@@ -293,6 +303,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private visibleEdgeCount = 0;
 	private visibleEdgeMarkerCount = 0;
 	private visibleEdgeCandidateCount = 0;
+	private subPixelEdgesSkipped = 0;
 	private edgeSegmentCapacity = 0;
 	private mode: GraphraumMode;
 	private frameRequest: number | null = null;
@@ -897,6 +908,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const changed = changedIds(this.selectedEdgeIds, next);
 		this.selectedEdgeIds = next;
 		this.repaintEdgeStates(changed);
+		// Over the edge budget a selected edge is pinned, so a changed selection repacks.
+		if (changed.length > 0 && this.edgeBudgetActive()) this.materializeViewport();
+	}
+
+	private edgeBudgetActive() {
+		return this.visibleEdgeCandidateCount > this.visibleEdgeCount;
 	}
 
 	/**
@@ -1006,8 +1023,30 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.depthOfFieldFocus.retarget(durationMs, resolveEasing(easing));
 		}
 		this.applySelectionColors(changedNodeIds);
+		if (
+			this.nodeStateRepinsEdges(
+				state,
+				[...changedNodeIds].filter((id) => nextSelection.has(id)),
+			)
+		) {
+			this.materializeViewport();
+		}
 		this.requestRender();
 		if (state === "selected" || state === "hovered") this.notifyFocusChange();
+	}
+
+	/**
+	 * Selected and focused nodes pin their edges, so over the edge budget a change repacks. Hover
+	 * changes constantly, so it repacks only for a hovered node with an edge the last frame left out.
+	 */
+	private nodeStateRepinsEdges(state: GraphraumNodeState, enteredNodeIds: readonly string[]): boolean {
+		if (state === "dimmed" || !this.edgeBudgetActive()) return false;
+		if (state !== "hovered") return true;
+		return enteredNodeIds.some((id) => {
+			const nodeIndex = this.nodeIndices.get(id);
+			const incident = nodeIndex === undefined ? [] : (this.incidentEdgeIndices[nodeIndex] ?? []);
+			return incident.some((edgeIndex) => !this.visibleEdgeSlots.has(edgeIndex));
+		});
 	}
 
 	/** One-hop neighbor node ids via incident edges (undirected adjacency). */
@@ -1493,6 +1532,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			dimmedEdges: this.dimmedEdgeIds.size,
 			selectedEdges: this.selectedEdgeIds.size,
 			selectedNodes: this.selectedNodeIds.size,
+			subPixelEdgesSkipped: this.subPixelEdgesSkipped,
 			totalEdges: this.data.edges.length,
 			totalNodes: this.data.nodes.length,
 			visibleEdgeCandidates: this.visibleEdgeCandidateCount,
@@ -2355,7 +2395,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const edgeCandidates = bounds
 			? collectIncidentEdges(visibleNodeIndices, this.incidentEdgeIndices)
 			: this.data.edges.map((_, index) => index);
-		const visibleEdgeIndices = applyEdgeBudget(edgeCandidates, this.maxVisibleEdges);
+		const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates);
 		this.visibleNodeSlots = new Map();
 		this.visibleNodeIndices = visibleNodeIndices;
 		this.nodeMesh.instanceMatrix.clearUpdateRanges();
@@ -2430,10 +2470,60 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.visibleNodeCandidateCount = visibleNodeCandidates.length;
 		this.visibleNodeCount = materializedNodes.length;
 		this.visibleEdgeCandidateCount = edgeCandidates.length;
+		this.subPixelEdgesSkipped = skippedSubPixel;
 		this.visibleEdgeSegmentCount = segmentCount;
 		this.visibleEdgeCount = distinctEdgeCount;
 		this.visibleEdgeMarkerCount = packed.markers.length;
 		this.syncGlow();
+	}
+
+	/**
+	 * Fits the incident edges to the budget. Over the budget, 2D first drops edges shorter than
+	 * `SUB_PIXEL_EDGE_PIXELS` on screen (the focus lens moves endpoints, so it keeps them), then keeps
+	 * pinned edges and the highest endpoint degree. 3D does not repack on orbit, so it has no screen
+	 * length to cut by.
+	 */
+	private budgetEdges(edgeCandidates: readonly number[]) {
+		if (edgeCandidates.length <= this.maxVisibleEdges) {
+			return { skippedSubPixel: 0, visibleEdgeIndices: edgeCandidates };
+		}
+		const pinned = this.pinnedEdgeIndices();
+		const cut =
+			this.mode === "2d" && !this.lensApplied
+				? dropSubPixelEdges(
+						edgeCandidates,
+						this.canonicalEdgePositions,
+						this.worldUnitsPerPixel(),
+						SUB_PIXEL_EDGE_PIXELS,
+						pinned,
+					)
+				: { kept: edgeCandidates, skipped: 0 };
+		return {
+			skippedSubPixel: cut.skipped,
+			visibleEdgeIndices: applyEdgeBudget(cut.kept, this.maxVisibleEdges, {
+				pinned,
+				score: endpointDegreeScore(this.edgeNodeIndices, this.incidentEdgeIndices),
+			}),
+		};
+	}
+
+	/** Selected edges and every edge of a selected, focused or hovered node: never culled or budgeted away. */
+	private pinnedEdgeIndices(): ReadonlySet<number> {
+		const pinned = new Set<number>();
+		const edgeIndices = this.edgeIndicesById();
+		for (const id of this.selectedEdgeIds) {
+			const edgeIndex = edgeIndices.get(id);
+			if (edgeIndex !== undefined) pinned.add(edgeIndex);
+		}
+		for (const ids of [this.selectedNodeIds, this.focusedNodeIds, this.hoveredNodeIds]) {
+			for (const id of ids) {
+				const nodeIndex = this.nodeIndices.get(id);
+				for (const edgeIndex of nodeIndex === undefined ? [] : (this.incidentEdgeIndices[nodeIndex] ?? [])) {
+					pinned.add(edgeIndex);
+				}
+			}
+		}
+		return pinned;
 	}
 
 	/** A node drawn at its own position and size, which is every node outside the density tier. */

@@ -580,6 +580,8 @@ export interface GraphraumDiagnostics {
 	dimmedEdges: number;
 	selectedEdges: number;
 	selectedNodes: number;
+	/** Overview edges left out because they cover under a pixel on screen (2D; 0 in 3D and under the budget). */
+	subPixelEdgesSkipped: number;
 	totalEdges: number;
 	totalNodes: number;
 	visibleEdgeCandidates: number;

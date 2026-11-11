@@ -205,7 +205,10 @@ describe("edge state equivalence under random interleavings", () => {
 				kinds.add(operation.kind);
 				const before = materialize.mock.calls.length;
 				operation.apply(graph);
-				if (operation.kind === "state") expect(materialize.mock.calls.length, `step ${step}`).toBe(before);
+				// Over the edge budget, selecting an edge the budget left out repacks to pin it.
+				if (operation.kind === "state" && config.tier !== "overview") {
+					expect(materialize.mock.calls.length, `step ${step}`).toBe(before);
+				}
 				operation.apply(twin);
 				internals(twin).materializeViewport();
 

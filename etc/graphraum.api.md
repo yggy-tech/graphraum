@@ -294,6 +294,7 @@ export interface GraphraumDiagnostics {
     // (undocumented)
     selectedNodes: number;
     shading: GraphraumShading;
+    subPixelEdgesSkipped: number;
     // (undocumented)
     totalEdges: number;
     // (undocumented)

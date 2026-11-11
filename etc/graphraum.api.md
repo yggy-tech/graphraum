@@ -144,6 +144,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     setEdgeState(state: GraphraumEdgeState, edgeIds: Iterable<string>): void;
     setFocusLens(options: GraphraumFocusLensOptions): void;
     setIconAtlas(atlas: GraphraumIconAtlas | null, options?: GraphraumIconOptions): void;
+    setInteractionQuality(options: GraphraumInteractionQualityOptions): void;
     // (undocumented)
     setMode(mode: GraphraumMode): void;
     setNodeDrag(options: GraphraumNodeDragOptions): void;
@@ -285,6 +286,7 @@ export interface GraphraumDiagnostics {
     gpuGeometries: number;
     // (undocumented)
     gpuTextures: number;
+    interactionQuality: GraphraumInteractionQuality;
     // (undocumented)
     lodLevel: "density" | "detail" | "overview";
     // (undocumented)
@@ -419,6 +421,16 @@ export interface GraphraumIconAtlas {
 export interface GraphraumIconOptions {
     color?: GraphraumColor;
     scale?: number;
+}
+
+// @public
+export type GraphraumInteractionQuality = "full" | "minimal" | "reduced";
+
+// @public
+export interface GraphraumInteractionQualityOptions {
+    enabled?: boolean;
+    idleMs?: number;
+    targetFrameMs?: number;
 }
 
 // @public (undocumented)
@@ -568,6 +580,7 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
     antialias?: boolean;
     depthOfField?: GraphraumDepthOfFieldOptions;
     focusLens?: GraphraumFocusLensOptions;
+    interactionQuality?: GraphraumInteractionQualityOptions;
     // (undocumented)
     maxPixelRatio?: number;
     // (undocumented)

@@ -105,6 +105,23 @@ graph.setAutoOrbit(false);
 
 While the orbit is active graphraum runs a frame loop instead of rendering only on change. Each active frame rotates the camera, renders once, and calls `onViewChange` listeners so overlays can follow. It does not repack node or edge instances: in 3D they do not depend on the camera angle, so there is no per-frame CPU repacking or buffer re-upload that grows with graph size. The GPU draw still scales with what is drawn. Paused and disabled orbits run no loop. graphraum does not read `prefers-reduced-motion`; check it before enabling the orbit, as above. `getDiagnostics().autoOrbit` reports `"off"`, `"active"` or `"paused"`.
 
+## Keep the camera smooth
+
+Large graphs can drop frames while the camera moves. Turn on interaction quality and graphraum draws less while you orbit, pan or zoom, then draws everything again once the camera rests.
+
+```ts
+const graph = new Graphraum(container, { interactionQuality: { enabled: true } });
+
+graph.setInteractionQuality({ targetFrameMs: 16, idleMs: 250 });
+graph.setInteractionQuality({ enabled: false });
+```
+
+It is off by default. While the camera moves, graphraum times each frame. After three frames in a row slower than `targetFrameMs` (default `25`, with 20 percent of slack) it steps one tier down. There are two lower tiers, `"reduced"` and `"minimal"`: the render pixel ratio drops to 75 and then 50 percent of the normal one, and the visible edge budget drops to half and then a quarter of `maxVisibleEdges`. In 2D the visible node budget drops the same way, so a crowded view shows density clusters sooner. In 3D every node stays, because cutting the node list would make nodes vanish instead of thinning out. After `idleMs` (default `200`) without a camera change, full quality returns in one frame.
+
+The tier only goes down while the camera moves and only goes up at rest, so it cannot flicker between tiers. A graph that keeps its frame time never leaves `"full"`, which includes an auto-orbit that runs fast enough. Your data is never changed and no draw call is added. `getDiagnostics().interactionQuality` reports `"full"`, `"reduced"` or `"minimal"`.
+
+The budgets scale `maxVisibleEdges` and `maxVisibleNodes`, so a graph that is well below them loses nothing but resolution. Slow input also counts: a wheel that ticks less often than `targetFrameMs` can look like slow frames, so raise `targetFrameMs` if you see the tier drop on small graphs.
+
 ## Depth of field
 
 In 3D, depth of field keeps the selected nodes sharp and blurs the rest of the graph with its distance from them, in front and behind, so a selection stands out without dimming anything:

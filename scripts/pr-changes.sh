@@ -13,7 +13,7 @@ matches '^\.github/' && workflows=true
 
 code=false
 if [ "$workflows" = true ] ||
-	matches '^(src|examples|scripts|etc)/' ||
+	matches '^(src|examples|bench|scripts|etc)/' ||
 	matches '^(package\.json|bun\.lock|tsconfig[^/]*\.json|tsdown\.config\.[^/]+|vite[^/]*\.config\.[^/]+|vitest[^/]*\.config\.[^/]+|api-extractor\.json|biome\.json)$'; then
 	code=true
 fi

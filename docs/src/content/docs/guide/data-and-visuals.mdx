@@ -110,6 +110,25 @@ Edge width, dash styles, direction markers, and path kinds (`straight`, `quadrat
 
 Follow the design and benchmark acceptance criteria in [the node and edge visual translation issue](https://github.com/yggy-tech/graphraum/issues/30).
 
+## Blend colours in a node
+
+A node can show up to three colours at once. Give it a `color` and a `blend` of up to two more, each with a `weight` between 0 and 1. The blend colours become soft radial blobs inside the shape, as large as their weight, and `color` takes what is left.
+
+```ts
+{
+  id: "group:42",
+  position: { x: 0, y: 0 },
+  size: 18,
+  color: "#8b7bff",
+  blend: [
+    { color: "#3fd0b8", weight: 0.3 },
+    { color: "#ffb347", weight: 0.2 },
+  ],
+}
+```
+
+It is drawn in the same pass as the node and costs no draw call. `blend` is a snapshot field set through `setData()` and `applyDataPatch()`. [Cluster LOD](/guide/cluster-lod/) uses it to show the mix of colours inside a group.
+
 ## Render detail only when needed
 
 Use graphraum's picking result to fetch immutable, serializable presentation data. Render it in your own React, Vue, Svelte, or plain HTML surface.

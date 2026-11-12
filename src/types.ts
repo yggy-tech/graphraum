@@ -79,9 +79,21 @@ type GraphraumAttributes<Attributes> = [Attributes] extends [undefined]
 	? { attributes?: never }
 	: { attributes: Attributes };
 
+/** One extra colour of a blended node fill. */
+export interface GraphraumNodeBlend {
+	color: GraphraumColor;
+	/** Share of the fill, 0..1. The node's own `color` takes what the blend colours leave. */
+	weight: number;
+}
+
 export interface GraphraumNodeGeometry {
 	id: string;
 	position: GraphraumPosition;
+	/**
+	 * Up to two more colours blended into the fill with `color` as soft radial blobs, each as large as its
+	 * `weight`. Drawn in the same pass as the node and costs no draw call.
+	 */
+	blend?: readonly GraphraumNodeBlend[];
 	color?: GraphraumColor;
 	/**
 	 * Opt-in soft halo in 0..1 (default 0, none). Glowing nodes add one batched draw call;

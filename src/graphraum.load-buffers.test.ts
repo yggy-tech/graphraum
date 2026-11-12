@@ -86,8 +86,8 @@ function bufferHashes(mode: "2d" | "3d") {
 
 describe("buffers after setData", () => {
 	test.each([
-		["2d", { edges: "c91019bc", nodePick: "7846f06e", nodes: "2adba4be" }],
-		["3d", { edges: "a05dec98", nodePick: "14a1ad5e", nodes: "56f2ce5e" }],
+		["2d", { edges: "c91019bc", nodePick: "7846f06e", nodes: "b950a4be" }],
+		["3d", { edges: "a05dec98", nodePick: "14a1ad5e", nodes: "c287ce5e" }],
 	] as const)("are byte-identical to the recorded layout (%s)", (mode, expected) => {
 		expect(bufferHashes(mode)).toEqual(expected);
 	});

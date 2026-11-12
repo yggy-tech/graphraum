@@ -1,9 +1,9 @@
 import { createFixture } from "../docs/src/lib/benchmark";
 import { measureProgressiveForceLayout } from "../docs/src/lib/layout-benchmark";
 import { Graphraum, type GraphraumData, type GraphraumMode, type GraphraumThemeName } from "../src";
-import { attachClusterLod, buildClusterTree } from "../src/lod";
+import { attachClusterLod, buildClusterTree, nodeColorKeys } from "../src/lod";
 import { MAX_PIXEL_RATIO, nextFrame, sampleFrames } from "./measure";
-import { LOD_SCALING_SIZES, SCALING_SIZES, scalingCaseId } from "./scaling";
+import { LOD_INSTANT_SIZES, LOD_SCALING_SIZES, SCALING_SIZES, scalingCaseId } from "./scaling";
 import type { CaseDescriptor, CaseRunResult } from "./types";
 
 export interface BenchCase {
@@ -391,14 +391,18 @@ function scalingLayoutCase(nodes: number, algorithm: "classic" | "multilevel" = 
 }
 
 /** Cluster LOD ladder case: build the tree, attach it to a fresh graph, then drive the camera as the plain cases do. */
-function lodScalingCase(series: "lodpan2d" | "lodorbit3d", nodes: number): BenchCase {
-	const mode: GraphraumMode = series === "lodpan2d" ? "2d" : "3d";
+function lodScalingCase(
+	series: "lodinstant2d" | "lodinstant3d" | "lodorbit3d" | "lodpan2d",
+	nodes: number,
+	animated: boolean,
+): BenchCase {
+	const mode: GraphraumMode = series.endsWith("2d") ? "2d" : "3d";
 	const base = scalingDescriptor(
 		series,
 		nodes,
 		mode,
-		`Cluster LOD (4000 nodes, 8000 edges budget, 10 px threshold) over the same fixture as the plain ladder. ${mode === "2d" ? "Camera pans at a quarter of the fitted height." : "The camera orbits the target by setCameraState()."} Each frame's step includes the cut and the data swap.`,
-		mode === "2d" ? "2D pan, cluster LOD" : "3D orbit, cluster LOD",
+		`Cluster LOD (4000 nodes, 8000 edges budget, 10 px threshold, colour blends and count labels on, ${animated ? "split and merge animation on" : "animation off"}) over the same fixture as the plain ladder. ${mode === "2d" ? "Camera pans at a quarter of the fitted height." : "The camera orbits the target by setCameraState()."} Each frame's step includes the cut and the data swap.`,
+		`${mode === "2d" ? "2D pan" : "3D orbit"}, cluster LOD${animated ? "" : ", no animation"}`,
 	);
 	return {
 		descriptor: base,
@@ -418,13 +422,18 @@ function lodScalingCase(series: "lodpan2d" | "lodorbit3d", nodes: number): Bench
 				edges[edge * 2] = edge % nodes;
 				edges[edge * 2 + 1] = (edge * 97 + 13) % nodes;
 			}
-			const tree = buildClusterTree({ dimensions, edges, positions });
+			const tree = buildClusterTree({ colors: nodeColorKeys(data.nodes), dimensions, edges, positions });
 			const treeBuildMs = performance.now() - treeStartedAt;
 			const constructionStartedAt = performance.now();
 			const graph = new Graphraum(container, { maxPixelRatio: MAX_PIXEL_RATIO, mode });
 			const constructMs = performance.now() - constructionStartedAt;
 			const attachStartedAt = performance.now();
-			const lod = attachClusterLod(graph, tree, { data, element: container });
+			const lod = attachClusterLod(graph, tree, {
+				data,
+				element: container,
+				prefersReducedMotion: () => false,
+				transitionMilliseconds: animated ? 200 : 0,
+			});
 			const attachMs = performance.now() - attachStartedAt;
 			const firstFrameStartedAt = performance.now();
 			await nextFrame();
@@ -455,10 +464,16 @@ function lodScalingCase(series: "lodpan2d" | "lodorbit3d", nodes: number): Bench
 	};
 }
 
-const lodCases: readonly BenchCase[] = LOD_SCALING_SIZES.flatMap((nodes) => [
-	lodScalingCase("lodpan2d", nodes),
-	lodScalingCase("lodorbit3d", nodes),
-]);
+const lodCases: readonly BenchCase[] = [
+	...LOD_SCALING_SIZES.flatMap((nodes) => [
+		lodScalingCase("lodpan2d", nodes, true),
+		lodScalingCase("lodorbit3d", nodes, true),
+	]),
+	...LOD_INSTANT_SIZES.flatMap((nodes) => [
+		lodScalingCase("lodinstant2d", nodes, false),
+		lodScalingCase("lodinstant3d", nodes, false),
+	]),
+];
 
 const scalingCases: readonly BenchCase[] = SCALING_SIZES.flatMap((nodes) => [
 	scalingFrameCase("pan2d", "2d", "2D pan", "Camera pans at a quarter of the fitted height.", nodes, panDriver),

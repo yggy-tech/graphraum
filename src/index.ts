@@ -69,6 +69,7 @@ export type {
 	GraphraumLayoutPositions,
 	GraphraumMode,
 	GraphraumNode,
+	GraphraumNodeBlend,
 	GraphraumNodeDragEvent,
 	GraphraumNodeDragOptions,
 	GraphraumNodeDragPhase,

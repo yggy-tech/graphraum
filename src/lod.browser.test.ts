@@ -4,7 +4,11 @@ import { attachClusterLod, buildClusterTree, type ClusterLodHandle } from "./lod
 import { mountGraph, unmountGraphs } from "./test-support/browser-harness";
 import type { GraphraumData, GraphraumMode } from "./types";
 
-afterEach(() => unmountGraphs());
+const attached: ClusterLodHandle[] = [];
+afterEach(() => {
+	for (const lod of attached.splice(0)) lod.detach();
+	unmountGraphs();
+});
 
 const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 
@@ -24,7 +28,7 @@ function grid(count: number): GraphraumData {
 	};
 }
 
-function attach(mode: GraphraumMode, count: number): { graph: Graphraum; lod: ClusterLodHandle } {
+function attach(mode: GraphraumMode, count: number, maxDrawnNodes = 800): { graph: Graphraum; lod: ClusterLodHandle } {
 	const data = grid(count);
 	const dimensions = mode === "2d" ? 2 : 3;
 	const tree = buildClusterTree({
@@ -39,10 +43,48 @@ function attach(mode: GraphraumMode, count: number): { graph: Graphraum; lod: Cl
 		data,
 		element: document.body.lastElementChild as HTMLElement,
 		maxDrawnEdges: 1500,
-		maxDrawnNodes: 800,
+		maxDrawnNodes,
 	});
+	attached.push(lod);
 	return { graph, lod };
 }
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("labels, click to zoom and animation in a real browser", () => {
+	test("aggregates show compact counts, and a click zooms in on one", async () => {
+		const { graph, lod } = attach("2d", 60_000, 9);
+		await nextFrame();
+		await nextFrame();
+		const labels = [...(document.body.lastElementChild as HTMLElement).querySelectorAll<HTMLElement>("span")].filter(
+			(label) => !label.hidden,
+		);
+		expect(labels.length).toBeGreaterThan(0);
+		for (const label of labels) expect(label.textContent).toMatch(/^\d+(\.\d)?[kM]?$/);
+		const container = document.body.lastElementChild as HTMLElement;
+		const before = graph.getCameraState();
+		if (before.mode !== "2d") throw new Error("expected 2D");
+		// Find an aggregate on screen and click its centre.
+		let clicked = false;
+		for (let x = 20; x < 380 && !clicked; x += 17) {
+			for (let y = 20; y < 280 && !clicked; y += 17) {
+				const id = graph.pick(x, y);
+				if (id && lod.resolve(id)?.kind === "cluster") {
+					container.dispatchEvent(new PointerEvent("pointerdown", { clientX: x, clientY: y }));
+					container.dispatchEvent(new MouseEvent("click", { clientX: x, clientY: y }));
+					clicked = true;
+				}
+			}
+		}
+		expect(clicked).toBe(true);
+		for (let waited = 0; waited < 4000 && (waited < 600 || lod.getDiagnostics().transitioning); waited += 50)
+			await wait(50);
+		const after = graph.getCameraState();
+		if (after.mode !== "2d") throw new Error("expected 2D");
+		expect(after.visibleHeight).toBeLessThan(before.visibleHeight / 2);
+		expect(lod.getDiagnostics().transitioning).toBe(false);
+	});
+});
 
 describe.each(["2d", "3d"] as const)("cluster LOD in %s", (mode) => {
 	test("draws a bounded number of nodes for a graph far over the budget and keeps two draw calls", async () => {

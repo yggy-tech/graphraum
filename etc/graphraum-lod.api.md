@@ -41,6 +41,8 @@ export interface ClusterGlyphInfo {
         z: number;
     };
     // (undocumented)
+    cluster: number;
+    // (undocumented)
     count: number;
     // (undocumented)
     depth: number;
@@ -55,22 +57,39 @@ export interface ClusterLodDiagnostics {
     drawnEdges: number;
     drawnNodes: number;
     droppedEdges: number;
+    transitioning: boolean;
 }
 
 // @public
 export interface ClusterLodGraph {
+    // Warning: (ae-forgotten-export) The symbol "GraphraumDataPatch" needs to be exported by the entry point lod.d.ts
+    //
+    // (undocumented)
+    applyDataPatch(patch: GraphraumDataPatch): void;
     // Warning: (ae-forgotten-export) The symbol "GraphraumCameraState" needs to be exported by the entry point lod.d.ts
     //
     // (undocumented)
     getCameraState(): GraphraumCameraState;
+    // Warning: (ae-forgotten-export) The symbol "LabelPosition" needs to be exported by the entry point lod.d.ts
+    //
+    // (undocumented)
+    getNodeScreenPosition(nodeId: string): LabelPosition | null;
     // (undocumented)
     onViewChange(listener: () => void): () => void;
+    // (undocumented)
+    pick(clientX: number, clientY: number): string | null;
+    // (undocumented)
+    setCameraState(state: GraphraumCameraState): void;
     // Warning: (ae-forgotten-export) The symbol "GraphraumData" needs to be exported by the entry point lod.d.ts
     //
     // (undocumented)
     setData(data: GraphraumData, options?: {
         fit?: boolean;
     }): void;
+    // Warning: (ae-forgotten-export) The symbol "GraphraumNodeUpdate" needs to be exported by the entry point lod.d.ts
+    //
+    // (undocumented)
+    updateNodes(updates: readonly GraphraumNodeUpdate[]): void;
 }
 
 // @public (undocumented)
@@ -82,6 +101,7 @@ export interface ClusterLodHandle {
     members(cluster: number): Uint32Array;
     refresh(): void;
     resolve(id: string): ClusterLodHit | null;
+    zoomToCluster(cluster: number): Promise<boolean>;
 }
 
 // @public
@@ -97,14 +117,21 @@ export type ClusterLodHit = {
 // @public (undocumented)
 export interface ClusterLodOptions extends ClusterCutOptions {
     // Warning: (ae-forgotten-export) The symbol "GraphraumEdgeVisual" needs to be exported by the entry point lod.d.ts
-    aggregateEdgeStyle?: (weight: number, relativeWeight: number) => GraphraumEdgeVisual;
+    aggregateEdgeStyle?: (weight: number, strength: number) => GraphraumEdgeVisual;
     // Warning: (ae-forgotten-export) The symbol "GraphraumNodeVisual" needs to be exported by the entry point lod.d.ts
     aggregateStyle?: (info: ClusterGlyphInfo) => GraphraumNodeVisual;
+    clickToZoom?: boolean;
     data: GraphraumData;
     element: HTMLElement;
     fit?: boolean;
     idPrefix?: string;
+    labels?: boolean;
+    onClusterClick?: (cluster: number, count: number) => void;
     onCut?: (diagnostics: ClusterLodDiagnostics) => void;
+    prefersReducedMotion?: () => boolean;
+    schedule?: (callback: (nowMilliseconds: number) => void) => () => void;
+    transitionMilliseconds?: number;
+    zoomMilliseconds?: number;
 }
 
 // @public
@@ -125,6 +152,9 @@ export interface ClusterTree {
     childStart: Uint32Array;
     // (undocumented)
     clusterCount: number;
+    colorCount: Uint32Array | null;
+    // (undocumented)
+    colorKey: Uint32Array | null;
     // (undocumented)
     depth: Uint8Array;
     // (undocumented)
@@ -151,6 +181,7 @@ export interface ClusterTree {
 
 // @public
 export interface ClusterTreeInput {
+    colors?: Uint32Array;
     dimensions: 2 | 3;
     edges?: Uint32Array;
     leafSize?: number;
@@ -196,6 +227,21 @@ export function createClusterCutter(tree: ClusterTree): (view: ClusterView, cutO
 //
 // @public (undocumented)
 export function createProjector(view: ClusterView, cullMargin: number): Projector;
+
+// @public
+export function formatCount(count: number): string;
+
+// @public
+export function labelFits(text: string, radiusPixels: number): boolean;
+
+// @public
+export function nodeColorKeys(nodes: readonly {
+    color?: GraphraumColor;
+}[]): Uint32Array;
+
+// Warnings were encountered during analysis:
+//
+// dist/lod.d.ts:151:3 - (ae-forgotten-export) The symbol "GraphraumColor" needs to be exported by the entry point lod.d.ts
 
 // (No @packageDocumentation comment for this package)
 

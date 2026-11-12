@@ -59,6 +59,7 @@
 		"check": "biome check . && tsc --noEmit",
 		"check:package": "publint && attw --pack . --profile esm-only && bun scripts/check-bundle-size.ts",
 		"dev": "vite examples/benchmark",
+		"dev:lod": "vite examples/cluster-lod",
 		"dev:showcase": "vite examples/showcase",
 		"docs:build": "bun run --cwd docs build",
 		"docs:archive": "bun run docs/scripts/build-release-archives.ts",

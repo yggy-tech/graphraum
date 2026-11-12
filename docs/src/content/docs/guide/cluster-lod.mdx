@@ -9,22 +9,25 @@ It lives in its own entry, so apps that do not use it pay nothing:
 
 ```ts
 import { Graphraum } from "@yggy-tech/graphraum";
-import { attachClusterLod, buildClusterTree } from "@yggy-tech/graphraum/lod";
+import { attachClusterLod, buildClusterTree, nodeColorKeys } from "@yggy-tech/graphraum/lod";
 
 const dimensions = 3;
 const tree = buildClusterTree({
   dimensions,
   edges, // Uint32Array, two node indices per edge
   positions, // Float32Array, x y z per node
+  colors: nodeColorKeys(data.nodes), // optional, for the colour blend of the glyphs
 });
 
 const graph = new Graphraum(container, { mode: "3d" });
 const lod = attachClusterLod(graph, tree, { data, element: container });
 
-lod.detach(); // stops following the camera
+lod.detach(); // stops following the camera; call it before graph.destroy()
 ```
 
 `data` is the full `GraphraumData` you built the tree from: node `i` has the position `i` of the tree, and edge `k` is the pair `k`. graphraum draws only the cut, so never call `setData()` yourself while the layer is attached.
+
+To see it, run `bun run dev:lod` in the repository: 200,000 coloured blobs, `?n=500000` for more, `?mode=3d` for 3D, `?animate=0` to switch the animation off.
 
 ## When to use it
 
@@ -46,7 +49,20 @@ self.onmessage = ({ data: input }) => {
 };
 ```
 
-Tree options: `leafSize` (default 16) is how many nodes a leaf may hold before it splits, and `maxNeighbors` (default 32) caps the aggregated edges kept per cluster, heaviest first. `weights` gives one number per edge (default 1). A tree holds at most 8,388,608 nodes.
+Tree options: `colors` is one `0xRRGGBB` number per node (`nodeColorKeys(data.nodes)` reads hex colours); each cluster then keeps its three most common colours. `leafSize` (default 16) is how many nodes a leaf may hold before it splits, and `maxNeighbors` (default 32) caps the aggregated edges kept per cluster, heaviest first. `weights` gives one number per edge (default 1). A tree holds at most 8,388,608 nodes.
+
+## What a glyph shows
+
+- **Size.** A glyph is clearly bigger than a single node and grows with the square root of its member count, up to the size of its region.
+- **Count.** A compact label (950, 1.2k, 34k, 1.2M) is drawn over the glyph. It is hidden while the glyph is too small to hold it, and for groups under 8 nodes. The label is white with a dark halo, so it reads on light and dark themes.
+- **Colour.** With `colors` set on the tree, a glyph blends the colours of its members as soft blobs, one per dominant colour (the top three by share). A colour that holds 80 percent or more is shown alone, and colours under 8 percent are left out. See [Blend colours in a node](/guide/data-and-visuals/#blend-colours-in-a-node).
+- **Edges.** Width and opacity grow with the logarithm of the aggregated weight.
+
+## Animation
+
+When the cut changes, a cluster that splits shrinks away while its children grow from its position out to theirs, and children that merge travel into their parent while it grows. It takes 200 ms (`transitionMilliseconds`, 0 for none). Nodes have no per-node opacity, so the fade is a change of size, not of transparency. Under `prefers-reduced-motion: reduce` every change swaps at once, and the zoom after a click jumps. While an animation runs, a newer camera position waits for it and is applied right after, so a fast zoom shows a chain of short animations. Changes that only add or drop elements, as a pan does, swap at once.
+
+Each swap goes through `applyDataPatch()`, which names only the nodes and edges that arrived or left, so a cut change does not rebuild the graph's buffers.
 
 ## Options
 
@@ -56,8 +72,14 @@ Tree options: `leafSize` (default 16) is how many nodes a leaf may hold before i
 | `maxDrawnNodes` | 4000 | Clusters plus real nodes in one cut. The cut never passes it, whatever the graph size. |
 | `maxDrawnEdges` | 8000 | Edges drawn. Edges between real nodes keep half the budget, so detail survives next to heavy aggregates. |
 | `cullMargin` | 0.1 | Share of the viewport kept around it, so clusters just off screen are ready when you pan. |
-| `aggregateStyle` | size by count | Return `size`, `color` and the like for a glyph from its `count`, `radius` and `depth`. |
-| `aggregateEdgeStyle` | width and opacity by weight | Return an edge style from the weight and its share of the heaviest drawn edge. |
+| `aggregateStyle` | size by count, colour blend | Return `size`, `color`, `blend` and the like for a glyph from its `count`, `radius` and `depth`. |
+| `aggregateEdgeStyle` | width and opacity by weight | Return an edge style from the weight and a 0..1 strength. |
+| `labels` | `true` | Count labels on glyphs. |
+| `clickToZoom` | `true` | Click a glyph to zoom in on it. |
+| `onClusterClick` | none | Called with the cluster and its count when a glyph is clicked. |
+| `transitionMilliseconds` | 200 | Length of the split and merge animation. |
+| `zoomMilliseconds` | 450 | Length of the zoom after a click. |
+| `prefersReducedMotion` | the system setting | Return true to skip all animation. |
 | `idPrefix` | `cluster:` | Prefix of aggregate ids, so they never collide with yours. |
 | `fit` | `true` | Fit the camera to the first cut. |
 
@@ -65,14 +87,14 @@ The cut is chosen best first: the cluster that looks biggest on screen is opened
 
 ## Picking and zoom
 
-Aggregates are ordinary nodes to graphraum, so `pick()`, `pickHit()`, hover and selection report them with ids like `cluster:123`. Ask the layer what an id means:
+Aggregates are ordinary nodes to graphraum, so `pick()`, `pickHit()`, hover and selection report them with ids like `cluster:123`. Clicking a glyph zooms the camera in on its cluster (`zoomToCluster()`, 450 ms), which opens it; a drag that ends on a glyph does not count as a click, and a click on a real node does nothing extra, so your own selection code keeps working. Ask the layer what an id means:
 
 ```ts
 const id = graph.pick(event.clientX, event.clientY);
 const hit = id ? lod.resolve(id) : null;
 if (hit?.kind === "cluster") {
   lod.members(hit.cluster); // node indices of the cluster, as a Uint32Array
-  graph.setCameraState(lod.frameCluster(hit.cluster)); // zoom in; the cluster opens
+  graph.setCameraState(lod.frameCluster(hit.cluster)); // or frame it yourself
 }
 ```
 
@@ -80,15 +102,16 @@ if (hit?.kind === "cluster") {
 
 ## Diagnostics
 
-`lod.getDiagnostics()` (and the `onCut` option) reports `drawnAggregates`, `drawnNodes`, `drawnEdges`, `droppedEdges`, `cutDepth` and `cutMilliseconds`. `graph.getDiagnostics()` counts what graphraum was given, which is the cut.
+`lod.getDiagnostics()` (and the `onCut` option) reports `drawnAggregates`, `drawnNodes`, `drawnEdges`, `droppedEdges`, `cutDepth`, `cutMilliseconds` and `transitioning`. `graph.getDiagnostics()` counts what graphraum was given, which is the cut.
 
 ## Limits
 
-- Every cut hands a new snapshot to `setData()`, which costs time in the size of the cut, not the graph. A pan that changes the cut every frame spends a few milliseconds per frame; lower `maxDrawnNodes` on slow devices.
+- Every cut change costs time in the size of the cut, not the graph. A pan that changes the cut every frame spends a few milliseconds per frame; lower `maxDrawnNodes` on slow devices.
 - Edges to clusters outside the view are not drawn, so edges stop near the screen edge.
 - Selection by id survives a cut for real nodes; an aggregate that stops being drawn loses its selection.
+- The colour summary of a cluster above the leaves merges the top colours of its children, so its shares are approximate.
 - Node drag, the focus lens and labels see the cut, not your full graph. Real nodes keep their own data; aggregates have no labels.
 - Nodes with identical positions cannot be split, so a very large pile at one point stays one aggregate.
 - With `maxNeighbors` smaller than the real number of neighbours, light aggregate edges can be missing.
 - The 3D cut assumes the camera graphraum creates: a 45 degree field of view with y up.
-- How aggregates look is provisional. Style them with `aggregateStyle` and `aggregateEdgeStyle`.
+- How aggregates look is still being tuned. Style them with `aggregateStyle` and `aggregateEdgeStyle`.

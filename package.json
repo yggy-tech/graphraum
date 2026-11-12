@@ -41,14 +41,18 @@
 			"types": "./dist/lod.d.ts",
 			"import": "./dist/lod.js"
 		},
+		"./layout-multilevel": {
+			"types": "./dist/layout-multilevel.d.ts",
+			"import": "./dist/layout-multilevel.js"
+		},
 		"./icons": {
 			"types": "./dist/icons.d.ts",
 			"import": "./dist/icons.js"
 		}
 	},
 	"scripts": {
-		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json && api-extractor run -c api-extractor.styles.json && api-extractor run -c api-extractor.layout.json && api-extractor run -c api-extractor.layout-start.json && api-extractor run -c api-extractor.lod.json && api-extractor run -c api-extractor.icons.json",
-		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json && api-extractor run --local -c api-extractor.styles.json && api-extractor run --local -c api-extractor.layout.json && api-extractor run --local -c api-extractor.layout-start.json && api-extractor run --local -c api-extractor.lod.json && api-extractor run --local -c api-extractor.icons.json",
+		"api:check": "api-extractor run && api-extractor run -c api-extractor.diagnostics.json && api-extractor run -c api-extractor.styles.json && api-extractor run -c api-extractor.layout.json && api-extractor run -c api-extractor.layout-start.json && api-extractor run -c api-extractor.lod.json && api-extractor run -c api-extractor.layout-multilevel.json && api-extractor run -c api-extractor.icons.json",
+		"api:update": "api-extractor run --local && api-extractor run --local -c api-extractor.diagnostics.json && api-extractor run --local -c api-extractor.styles.json && api-extractor run --local -c api-extractor.layout.json && api-extractor run --local -c api-extractor.layout-start.json && api-extractor run --local -c api-extractor.lod.json && api-extractor run --local -c api-extractor.layout-multilevel.json && api-extractor run --local -c api-extractor.icons.json",
 		"bench": "bun scripts/bench.ts",
 		"bench:chart": "bun scripts/bench-chart.ts",
 		"build": "tsdown",

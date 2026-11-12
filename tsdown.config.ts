@@ -9,6 +9,7 @@ export default defineConfig({
 		"src/layout.ts",
 		"src/layout-start.ts",
 		"src/lod.ts",
+		"src/layout-multilevel.ts",
 		"src/icons.ts",
 	],
 	format: ["esm"],

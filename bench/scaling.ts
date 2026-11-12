@@ -68,6 +68,55 @@ export const SCALING_SERIES: readonly ScalingSeriesSpec[] = [
 		sizes: LOD_SCALING_SIZES,
 		title: "Cluster tree build (main thread here; run it in a worker), ms",
 	},
+	{
+		caseSeries: "layout",
+		id: "layout-first-useful",
+		metric: "firstUsefulFrameMs",
+		phase: "cold",
+		title: "Worker force layout, first useful frame ms",
+	},
+	{
+		caseSeries: "layout-multilevel",
+		id: "layout-multilevel",
+		metric: "totalMs",
+		phase: "cold",
+		title: "Worker multilevel force layout, total ms",
+	},
+	{
+		caseSeries: "layout-multilevel",
+		id: "layout-multilevel-first-useful",
+		metric: "firstUsefulFrameMs",
+		phase: "cold",
+		title: "Worker multilevel force layout, first useful frame ms",
+	},
+	{
+		caseSeries: "layout-multilevel",
+		id: "layout-multilevel-coarsen",
+		metric: "coarsenMs",
+		phase: "cold",
+		title: "Multilevel layout, coarsening ms",
+	},
+	{
+		caseSeries: "layout-multilevel",
+		id: "layout-multilevel-coarsest",
+		metric: "coarsestMs",
+		phase: "cold",
+		title: "Multilevel layout, coarsest layout ms",
+	},
+	{
+		caseSeries: "layout-multilevel",
+		id: "layout-multilevel-refine",
+		metric: "refineMs",
+		phase: "cold",
+		title: "Multilevel layout, refinement ms",
+	},
+	{
+		caseSeries: "layout-multilevel",
+		id: "layout-multilevel-transfer",
+		metric: "transferMs",
+		phase: "cold",
+		title: "Multilevel layout, edge transfer ms",
+	},
 ];
 
 export interface ScalingPoint {

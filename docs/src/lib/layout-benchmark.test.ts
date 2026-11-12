@@ -45,6 +45,18 @@ describe("layout benchmark helpers", () => {
 		});
 	});
 
+	it("counts a multilevel preview as the first useful frame and keeps the phases of the final batch", () => {
+		const timer = new ProgressiveLayoutTimer(8, 4, 12);
+		timer.markStart(100);
+		timer.recordAppliedBatch(120);
+		timer.recordAppliedBatch(150, 40, { coarsenMs: 5, coarsestMs: 6, levels: 3, refineMs: 20 });
+		timer.recordAppliedBatch(160);
+		const timing = timer.complete(170);
+		expect(timing.firstUsefulFrameMilliseconds).toBe(20);
+		expect(timing.computeMilliseconds).toBe(40);
+		expect(timing.phases).toEqual({ coarsenMs: 5, coarsestMs: 6, levels: 3, refineMs: 20 });
+	});
+
 	it("rejects completion before the first useful batch", () => {
 		const timer = new ProgressiveLayoutTimer(8, 4, 12);
 		timer.markStart(0);

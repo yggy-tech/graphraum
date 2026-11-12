@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { SpatialGrid2D } from "./spatial-grid-2d";
+import type { GraphraumNodeGeometry } from "./types";
 
 describe("SpatialGrid2D", () => {
 	test("picks the nearest overlapping node across cell boundaries", () => {
@@ -66,5 +67,54 @@ describe("SpatialGrid2D", () => {
 
 		// size 5 alone would not reach a query bound ending at 14; the stroke padding closes the gap.
 		expect(grid.queryBounds({ bottom: 0, left: 0, right: 14, top: 10 })).toEqual([0]);
+	});
+
+	test("matches a brute-force scan through random moves, outliers and queries", () => {
+		let seed = 12345;
+		const random = () => {
+			seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+			return seed / 2 ** 32;
+		};
+		const grid = new SpatialGrid2D(16);
+		const nodes: GraphraumNodeGeometry[] = [];
+		const place = (index: number) => {
+			const outlier = random() < 0.02;
+			const node = {
+				id: `n${index}`,
+				position: { x: (random() - 0.5) * (outlier ? 1e7 : 500), y: (random() - 0.5) * (outlier ? 1e7 : 500) },
+				size: 0.5 + random() * 6,
+			};
+			nodes[index] = node;
+			grid.set(index, node);
+		};
+		for (let index = 0; index < 420; index += 1) place(index);
+		for (let round = 0; round < 60; round += 1) {
+			for (let move = 0; move < 5; move += 1) place(Math.floor(random() * 420));
+			const left = (random() - 0.5) * 700;
+			const bottom = (random() - 0.5) * 700;
+			const bounds = { bottom, left, right: left + random() * 300, top: bottom + random() * 300 };
+			const expected = nodes
+				.flatMap((node, index) => {
+					const radius = node.size ?? 0;
+					const inside =
+						node.position.x + radius >= bounds.left - 4 &&
+						node.position.x - radius <= bounds.right + 4 &&
+						node.position.y + radius >= bounds.bottom - 4 &&
+						node.position.y - radius <= bounds.top + 4;
+					return inside ? [index] : [];
+				})
+				.sort((a, b) => a - b);
+			expect([...grid.queryBounds(bounds, 4)].sort((a, b) => a - b)).toEqual(expected);
+			const target = nodes[Math.floor(random() * nodes.length)] as GraphraumNodeGeometry;
+			expect(grid.pick(target.position.x, target.position.y)).not.toBeNull();
+		}
+	});
+
+	test("coarsens the cells for a huge extent instead of allocating a cell per 32 units", () => {
+		const grid = new SpatialGrid2D();
+		grid.set(0, { id: "a", position: { x: -1e9, y: -1e9 }, size: 1 });
+		grid.set(1, { id: "b", position: { x: 1e9, y: 1e9 }, size: 1 });
+		expect(grid.queryBounds({ bottom: 0, left: 0, right: 1e10, top: 1e10 })).toEqual([1]);
+		expect(grid.pick(-1e9, -1e9)).toBe(0);
 	});
 });

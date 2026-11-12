@@ -311,7 +311,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private hoveredNodeIds = new Set<string>();
 	private focusedNodeIds = new Set<string>();
 	private dimmedNodeIds = new Set<string>();
-	private visibleNodeSlots = new Map<number, number>();
+	/** Instance slot of each node index drawn as itself, -1 for the others. */
+	private nodeSlots = new Int32Array(0);
+	/** False while the slots hold density-tier clusters, whose instances are not the nodes'. */
+	private nodeSlotsPlain = false;
+	private slotKeep = new Uint8Array(0);
 	private visibleEdgeSlots = new Map<number, number>();
 	private visibleEdgeLayouts = new Map<number, VisibleEdgeLayout>();
 	private lastEdgeLodTier: EdgeLodTier = "detail";
@@ -627,7 +631,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			const node = this.data.nodes[index];
 			if (!materialized || !node) continue;
 			const slot = firstNodeSlot + (index - previous.nodes);
-			this.visibleNodeSlots.set(index, slot);
+			this.assignNodeSlot(index, slot);
 			(this.visibleNodeIndices as number[]).push(index);
 			this.writeNodeInstance(targets, slot, materialized, node);
 		}
@@ -801,11 +805,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		for (const update of prepared) {
 			nodes[update.index] = update.next;
 			if (update.positionChanged || update.sizeChanged) {
-				const wasVisible = this.visibleNodeSlots.has(update.index);
+				const wasVisible = this.visibleNodeSlot(update.index) !== undefined;
 				this.spatialGrid2d.set(update.index, update.next);
 				visibilityChanged ||= wasVisible !== this.isNodeVisible2d(update.next, viewportBounds);
 			}
-			const nodeSlot = this.visibleNodeSlots.get(update.index);
+			const nodeSlot = this.visibleNodeSlot(update.index);
 			if (update.positionChanged || update.sizeChanged) {
 				if (nodeSlot !== undefined) {
 					const { height, width } = resolveNodeAxes({
@@ -1901,7 +1905,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			flight.step(easeInOutCubic(progress));
 			if (progress < 1) {
 				// 2D culls to the viewport, so a moving 2D camera repacks; 3D instances do not depend on the camera.
-				if (this.mode === "2d") this.materializeViewport();
+				if (this.mode === "2d") this.materializeViewport(false, true);
 				this.requestRender();
 				return;
 			}
@@ -2190,7 +2194,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 */
 	private readonly handleViewChange = () => {
 		this.qualityGovernor?.motion();
-		if (!this.orbitUpdating) this.materializeViewport();
+		if (!this.orbitUpdating) this.materializeViewport(false, true);
 		this.requestRender();
 	};
 
@@ -2314,7 +2318,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		for (const nodeId of nodeIds) {
 			const index = this.nodeIndices.get(nodeId);
 			if (index === undefined) continue;
-			const slot = this.visibleNodeSlots.get(index);
+			const slot = this.visibleNodeSlot(index);
 			if (slot === undefined) continue;
 			const node = this.data.nodes[index];
 			if (!node) continue;
@@ -2460,54 +2464,41 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.renderer.setClearColor(color, 1);
 	}
 
-	/** `pinnedInMain` is the fallback when the overlay does not fit: pinned edges then take budget slots. */
-	private materializeViewport(pinnedInMain = false) {
+	/**
+	 * `pinnedInMain` is the fallback when the overlay does not fit: pinned edges then take budget slots.
+	 * `cameraMoved` means only the camera changed, so nodes that stay in view keep their instances.
+	 */
+	private materializeViewport(pinnedInMain = false, cameraMoved = false) {
 		if (!this.nodeMesh || !this.nodePickMesh || !this.edgeMesh) return;
 		const bounds = this.getViewportBounds2d();
 		const visibleNodeCandidates = bounds
 			? this.spatialGrid2d.queryBounds(bounds, this.viewportOverscan)
 			: this.data.nodes.map((_, index) => index);
 		this.densityLodActive = shouldUseDensityLod(visibleNodeCandidates.length, this.nodeBudget, this.densityLodActive);
-		const materializedNodes = this.materializeNodes(visibleNodeCandidates, bounds);
-		const visibleNodeIndices = materializedNodes.map(({ index }) => index);
+		// Instances are reused only where a full pass would also draw every candidate as itself, in
+		// any order: no density tier, no node budget cut, no focus lens moving instances per frame.
+		const reuseSlots =
+			cameraMoved &&
+			bounds !== null &&
+			this.nodeSlotsPlain &&
+			!this.densityLodActive &&
+			!this.focusLens.enabled &&
+			visibleNodeCandidates.length <= this.nodeBudget;
+		const materializedNodes = reuseSlots ? [] : this.materializeNodes(visibleNodeCandidates, bounds);
+		const visibleNodeIndices = reuseSlots
+			? this.patchNodeSlots(visibleNodeCandidates)
+			: materializedNodes.map(({ index }) => index);
 		const edgeCandidates = bounds
-			? collectIncidentEdges(visibleNodeIndices, this.incidentEdgeIndices)
+			? // Candidate order, not slot order, so the edges pack as a full pass would.
+				collectIncidentEdges(
+					reuseSlots ? visibleNodeCandidates : visibleNodeIndices,
+					this.incidentEdgeIndices,
+					this.data.edges.length,
+				)
 			: this.data.edges.map((_, index) => index);
 		const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates, pinnedInMain);
-		this.visibleNodeSlots = new Map();
-		this.visibleNodeIndices = visibleNodeIndices;
-		this.nodeMesh.instanceMatrix.clearUpdateRanges();
-		this.nodePickMesh.instanceMatrix.clearUpdateRanges();
-		this.nodeMesh.instanceColor?.clearUpdateRanges();
-		const targets = this.nodeInstanceTargets();
-		targets.shape.clearUpdateRanges();
-		targets.icon.clearUpdateRanges();
-		targets.strokeWidth.clearUpdateRanges();
-		targets.strokeColor.clearUpdateRanges();
-		for (const [slot, materialized] of materializedNodes.entries()) {
-			const node = this.data.nodes[materialized.index];
-			if (!node) continue;
-			this.visibleNodeSlots.set(materialized.index, slot);
-			this.writeNodeInstance(targets, slot, materialized, node);
-		}
-		this.nodeMesh.count = materializedNodes.length;
-		this.nodePickMesh.count = materializedNodes.length;
-		this.nodeMesh.instanceMatrix.addUpdateRange(0, materializedNodes.length * 16);
-		this.nodeMesh.instanceMatrix.needsUpdate = true;
-		this.nodePickMesh.instanceMatrix.addUpdateRange(0, materializedNodes.length * 16);
-		this.nodePickMesh.instanceMatrix.needsUpdate = true;
-		if (this.nodeMesh.instanceColor) {
-			this.nodeMesh.instanceColor.addUpdateRange(0, materializedNodes.length * 3);
-			this.nodeMesh.instanceColor.needsUpdate = true;
-		}
-		targets.shape.addUpdateRange(0, materializedNodes.length);
-		targets.shape.needsUpdate = true;
-		targets.icon.addUpdateRange(0, materializedNodes.length);
-		targets.icon.needsUpdate = true;
-		targets.strokeWidth.addUpdateRange(0, materializedNodes.length);
-		targets.strokeWidth.needsUpdate = true;
-		targets.strokeColor.addUpdateRange(0, materializedNodes.length * 3);
-		targets.strokeColor.needsUpdate = true;
+		if (!reuseSlots) this.writeAllNodeInstances(materializedNodes, visibleNodeIndices);
+		const nodeCount = visibleNodeIndices.length;
 
 		const lodLevel = resolveLodLevel(this.densityLodActive, edgeCandidates.length, visibleEdgeIndices.length);
 		this.lastEdgeLodTier = edgeTierFromDiagnosticsLod(lodLevel);
@@ -2546,7 +2537,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 
 		this.visibleNodeCandidateCount = visibleNodeCandidates.length;
-		this.visibleNodeCount = materializedNodes.length;
+		this.visibleNodeCount = nodeCount;
 		this.visibleEdgeCandidateCount = edgeCandidates.length;
 		this.subPixelEdgesSkipped = skippedSubPixel;
 		this.visibleEdgeSegmentCount = segmentCount;
@@ -2620,8 +2611,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const bounds = this.getViewportBounds2d();
 		const onScreen = (edgeIndex: number) =>
 			bounds === null ||
-			this.visibleNodeSlots.has(this.edgeNodeIndices[edgeIndex * 2] ?? -1) ||
-			this.visibleNodeSlots.has(this.edgeNodeIndices[edgeIndex * 2 + 1] ?? -1);
+			this.visibleNodeSlot(this.edgeNodeIndices[edgeIndex * 2] ?? -1) !== undefined ||
+			this.visibleNodeSlot(this.edgeNodeIndices[edgeIndex * 2 + 1] ?? -1) !== undefined;
 		const overlay = this.edgeBudgetActive()
 			? [...this.pinnedEdgeIndices()]
 					.filter((edgeIndex) => !this.visibleEdgeSlots.has(edgeIndex) && onScreen(edgeIndex))
@@ -2786,6 +2777,120 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return distinctEdges.size;
 	}
 
+	private visibleNodeSlot(index: number): number | undefined {
+		const slot = this.nodeSlots[index];
+		return slot === undefined || slot < 0 ? undefined : slot;
+	}
+
+	private assignNodeSlot(index: number, slot: number) {
+		if (index >= this.nodeSlots.length) {
+			const grown = new Int32Array(Math.max(index + 1, this.data.nodes.length)).fill(-1);
+			grown.set(this.nodeSlots);
+			this.nodeSlots = grown;
+		}
+		this.nodeSlots[index] = slot;
+	}
+
+	/** Rewrites every node instance: the first pass, and any change a camera move does not explain. */
+	private writeAllNodeInstances(materializedNodes: readonly MaterializedNode[], visibleNodeIndices: number[]) {
+		const { nodeMesh, nodePickMesh } = this;
+		if (!nodeMesh || !nodePickMesh) return;
+		this.nodeSlots = new Int32Array(Math.max(this.data.nodes.length, 1)).fill(-1);
+		this.nodeSlotsPlain = !this.densityLodActive;
+		this.visibleNodeIndices = visibleNodeIndices;
+		const targets = this.nodeInstanceTargets();
+		for (const [slot, materialized] of materializedNodes.entries()) {
+			const node = this.data.nodes[materialized.index];
+			if (!node) continue;
+			this.nodeSlots[materialized.index] = slot;
+			this.writeNodeInstance(targets, slot, materialized, node);
+		}
+		this.markNodeInstances([[0, materializedNodes.length]], materializedNodes.length, true);
+	}
+
+	/**
+	 * Moves the drawn nodes to `candidates` by writing only the nodes that entered. A node that left frees
+	 * its slot for an entering one; slots still free are filled by the last drawn nodes, so the drawn
+	 * slots stay contiguous. Slot order is not the grid order of a full pass, which also changes
+	 * with every camera move, so only the paint order of overlapping nodes can differ.
+	 */
+	private patchNodeSlots(candidates: readonly number[]): number[] {
+		const indices = this.visibleNodeIndices as number[];
+		// Slots never pass the drawn count plus the entering nodes, which are at most the candidates.
+		const size = indices.length + candidates.length;
+		if (this.slotKeep.length < size) this.slotKeep = new Uint8Array(size * 2);
+		const keep = this.slotKeep.fill(0, 0, size);
+		const entering: number[] = [];
+		for (const index of candidates) {
+			const slot = this.visibleNodeSlot(index);
+			if (slot === undefined) entering.push(index);
+			else keep[slot] = 1;
+		}
+		const holes: number[] = [];
+		for (let slot = 0; slot < indices.length; slot += 1) {
+			if (keep[slot]) continue;
+			this.nodeSlots[indices[slot] as number] = -1;
+			holes.push(slot);
+		}
+		const targets = this.nodeInstanceTargets();
+		const written: [number, number][] = [];
+		const place = (index: number, slot: number) => {
+			const materialized = this.plainMaterializedNode(index);
+			const node = this.data.nodes[index];
+			if (!materialized || !node) return;
+			indices[slot] = index;
+			this.assignNodeSlot(index, slot);
+			this.writeNodeInstance(targets, slot, materialized, node);
+			keep[slot] = 1;
+			written.push([slot, slot + 1]);
+		};
+		let end = indices.length;
+		let hole = 0;
+		for (const index of entering) {
+			if (hole < holes.length) place(index, holes[hole++] as number);
+			else {
+				end += 1;
+				place(index, end - 1);
+			}
+		}
+		for (; hole < holes.length; hole += 1) {
+			while (end > 0 && !keep[end - 1]) end -= 1;
+			const slot = holes[hole] as number;
+			if (slot >= end) break;
+			keep[slot] = 1;
+			keep[end - 1] = 0;
+			place(indices[end - 1] as number, slot);
+			end -= 1;
+		}
+		while (end > 0 && !keep[end - 1]) end -= 1;
+		indices.length = end;
+		this.markNodeInstances(written, end, false);
+		return indices;
+	}
+
+	/** Flags the written slot ranges for upload and sets the drawn count. */
+	private markNodeInstances(ranges: readonly [number, number][], count: number, clear: boolean) {
+		const { nodeMesh, nodePickMesh } = this;
+		if (!nodeMesh || !nodePickMesh) return;
+		const attributes = [
+			[nodeMesh.instanceMatrix, 16],
+			[nodePickMesh.instanceMatrix, 16],
+			[nodeMesh.instanceColor, 3],
+			...(["instanceShape", "instanceIcon", "instanceStrokeWidth"] as const).map(
+				(name) => [getInstancedAttribute(nodeMesh.geometry, name), 1] as const,
+			),
+			[getInstancedAttribute(nodeMesh.geometry, "instanceStrokeColor"), 3],
+		] as const;
+		for (const [attribute, size] of attributes) {
+			if (!attribute) continue;
+			if (clear) attribute.clearUpdateRanges();
+			for (const [start, end] of ranges) attribute.addUpdateRange(start * size, (end - start) * size);
+			attribute.needsUpdate = true;
+		}
+		nodeMesh.count = count;
+		nodePickMesh.count = count;
+	}
+
 	private materializeNodes(indices: readonly number[], bounds: Bounds2D | null): readonly MaterializedNode[] {
 		if (!this.densityLodActive || !bounds) {
 			return indices.slice(0, this.nodeBudget).flatMap((index) => {
@@ -2834,6 +2939,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private disposeGraphObjects() {
+		this.nodeSlotsPlain = false;
 		this.glowLayer.dispose();
 		this.pickableEdgeSegments = [];
 		this.visibleEdgeSegmentEdgeIndices = [];

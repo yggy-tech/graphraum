@@ -8,6 +8,7 @@ import {
 	Vector4,
 } from "three";
 
+import { createColorResolver } from "./color-cache";
 import { DEFAULT_ICON_SCALE, type GraphraumIconAtlas, type GraphraumIconOptions } from "./node-icon";
 import { encodeNodeShape } from "./node-shapes";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
@@ -362,6 +363,8 @@ export interface NodeStrokeInput {
 	strokeWidthUv: number;
 }
 
+const resolveStrokeColor = createColorResolver();
+
 export function setNodeStrokeAt(
 	strokeWidthAttribute: InstancedBufferAttribute,
 	strokeColorAttribute: InstancedBufferAttribute,
@@ -369,6 +372,6 @@ export function setNodeStrokeAt(
 	{ strokeColor, strokeWidthUv }: NodeStrokeInput,
 ) {
 	strokeWidthAttribute.setX(index, strokeWidthUv);
-	const rgb = new Color(strokeColor);
+	const rgb = resolveStrokeColor(strokeColor);
 	strokeColorAttribute.setXYZ(index, rgb.r, rgb.g, rgb.b);
 }

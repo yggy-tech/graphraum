@@ -10,16 +10,22 @@ export function resolveLodLevel(
 	return edgeCandidateCount > visibleEdgeSegmentCount ? "overview" : "detail";
 }
 
-/** Collects unique edges touching visible nodes without scanning the complete edge list. */
+/** Collects unique edges touching visible nodes, in first-seen order, without scanning the complete edge list. */
 export function collectIncidentEdges(
 	visibleNodeIndices: readonly number[],
 	incidentEdgeIndices: readonly (readonly number[])[],
+	edgeCount: number,
 ): readonly number[] {
-	const edges = new Set<number>();
+	const seen = new Uint8Array(edgeCount);
+	const edges: number[] = [];
 	for (const nodeIndex of visibleNodeIndices) {
-		for (const edgeIndex of incidentEdgeIndices[nodeIndex] ?? []) edges.add(edgeIndex);
+		for (const edgeIndex of incidentEdgeIndices[nodeIndex] ?? []) {
+			if (seen[edgeIndex]) continue;
+			seen[edgeIndex] = 1;
+			edges.push(edgeIndex);
+		}
 	}
-	return [...edges];
+	return edges;
 }
 
 export interface EdgeBudgetOptions {

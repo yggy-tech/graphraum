@@ -55,7 +55,7 @@ function seen(graph: Graphraum): Seen {
 		incidentEdgeIndices: readonly (readonly number[])[];
 		pickableEdgeSegments: unknown[];
 		visibleEdgeCandidateCount: number;
-		visibleNodeSlots: Map<number, number>;
+		nodeSlots: Int32Array;
 	};
 	const edgeCount = internals(graph).data.edges.length;
 	return {
@@ -64,7 +64,7 @@ function seen(graph: Graphraum): Seen {
 		layouts: [...internals(graph).visibleEdgeLayouts.entries()].sort(([a], [b]) => a - b),
 		pickable: inner.pickableEdgeSegments.length,
 		positions: Array.from(inner.canonicalEdgePositions.slice(0, edgeCount * 6)),
-		slots: [...inner.visibleNodeSlots.entries()].sort(([a], [b]) => a - b),
+		slots: [...inner.nodeSlots.entries()].filter(([, slot]) => slot >= 0),
 	};
 }
 

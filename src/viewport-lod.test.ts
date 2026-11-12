@@ -32,6 +32,7 @@ describe("viewport LOD", () => {
 					[1, 2],
 					[2, 3],
 				],
+				4,
 			),
 		).toEqual([0, 1, 2, 3]);
 	});

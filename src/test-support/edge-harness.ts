@@ -177,3 +177,17 @@ export function createShadowGpu(options: { includeNodes?: boolean } = {}) {
 		},
 	};
 }
+
+/** Drawn instances that belong to no edge and are not hidden: slots a pan freed must not paint. */
+export function unusedVisibleSlots(graph: Graphraum) {
+	const mesh = internals(graph).edgeMesh;
+	if (!mesh) throw new Error("edge mesh missing");
+	const used = new Set<number>();
+	for (const layout of internals(graph).visibleEdgeLayouts.values()) {
+		for (let offset = 0; offset < layout.segmentCount; offset += 1) used.add(layout.segmentStart + offset);
+		for (let offset = 0; offset < layout.markerCount; offset += 1) used.add(layout.markerStart + offset);
+	}
+	const color = mesh.geometry.getAttribute("instanceColor");
+	return Array.from({ length: mesh.count }, (_, slot) => slot).filter((slot) => !used.has(slot) && color.getW(slot) > 0)
+		.length;
+}

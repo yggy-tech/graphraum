@@ -3,7 +3,7 @@ import type { BufferGeometry, InstancedBufferAttribute } from "three";
 import type { EndpointAttach, EndpointOutline } from "./edge-endpoint-attach";
 import { type EdgeMarkerInstance, type EdgeSegmentInstance, packEdgeInstances } from "./edge-materialize";
 import type { EdgeLodTier } from "./edge-paths";
-import type { PickableEdgeSegment } from "./edge-picking";
+import { type PickableEdgeSegment, pickableSegment } from "./edge-picking";
 import {
 	EDGE_INSTANCE_ATTRIBUTES,
 	getInstancedAttribute,
@@ -94,13 +94,13 @@ export interface PatchVisibleEdgesInput {
 	endpointAttach?: EndpointAttach;
 	endpointPositions: Float32Array;
 	layouts: ReadonlyMap<number, VisibleEdgeLayout>;
+	/** Smallest hit radius in CSS pixels. */
 	minHitSlop: number;
 	mode: GraphraumMode;
 	nodeOutlines?: readonly EndpointOutline[];
 	/** Keep the 2D pick segments in step with the instances (default true). 3D picks by raycast and keeps none. */
 	pickable?: boolean;
 	tier: EdgeLodTier;
-	worldPerPixel: number;
 }
 
 export interface PatchVisibleEdgesResult {
@@ -150,14 +150,7 @@ export function patchVisibleEdgeInstances(
 			const slot = layout.segmentStart + offset;
 			writeEdgeSegmentInstance(geometry, slot, segment);
 			if (input.pickable !== false) {
-				nextPickable[slot] = {
-					edgeIndex,
-					hitSlop: Math.max(input.minHitSlop, (segment.width * input.worldPerPixel) / 2 + 2 * input.worldPerPixel),
-					x1: segment.x1,
-					x2: segment.x2,
-					y1: segment.y1,
-					y2: segment.y2,
-				};
+				nextPickable[slot] = pickableSegment(segment, input.minHitSlop);
 			}
 			dirtySlotStart = Math.min(dirtySlotStart, slot);
 			dirtySlotEnd = Math.max(dirtySlotEnd, slot);

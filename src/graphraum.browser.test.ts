@@ -295,9 +295,9 @@ describe("edge budget keeps important edges and skips sub-pixel ones", () => {
 	function drawnEdgeIds(graph: ReturnType<typeof mountGraph>) {
 		const internals = graph as unknown as {
 			data: GraphraumData;
-			visibleEdgeSlots: Map<number, number>;
+			visibleEdgeLayouts: Map<number, unknown>;
 		};
-		return [...internals.visibleEdgeSlots.keys()].map((index) => internals.data.edges[index]?.id ?? "");
+		return [...internals.visibleEdgeLayouts.keys()].map((index) => internals.data.edges[index]?.id ?? "");
 	}
 
 	test("draws the hub edges first and reports the sub-pixel skips in 2D", () => {

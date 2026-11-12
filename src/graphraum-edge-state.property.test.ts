@@ -18,6 +18,7 @@ import {
 	mixedFixture,
 	pickSubset,
 	seededRandom,
+	unusedVisibleSlots,
 } from "./test-support/edge-harness";
 import { installFakeBrowserGlobals } from "./test-support/fake-webgl";
 import type { GraphraumDiagnostics, GraphraumOptions, GraphraumTheme, GraphraumThemeName } from "./types";
@@ -167,7 +168,7 @@ const CONFIGS: readonly PropertyConfig[] = [
 	{ compare: "bytes", moves: true, name: "3d", options: { mode: "3d" }, tier: "detail" },
 	// Node moves reorder the budget candidates on main, which changes the budgeted subset itself.
 	{
-		compare: "bytes",
+		compare: "per-edge",
 		moves: false,
 		name: "2d overview budget",
 		options: { maxVisibleEdges: 48, mode: "2d" },
@@ -213,6 +214,7 @@ describe("edge state equivalence under random interleavings", () => {
 				internals(twin).materializeViewport();
 
 				expect(snapshot(graph), `step ${step} (${operation.kind})`).toEqual(snapshot(twin));
+				expect(unusedVisibleSlots(graph), `step ${step} (${operation.kind})`).toBe(0);
 				expect(stateCounts(graph.getDiagnostics())).toEqual(stateCounts(twin.getDiagnostics()));
 				tiers.add(graph.getDiagnostics().lodLevel);
 				if (random() < 0.5) {

@@ -66,7 +66,6 @@ describe("patchVisibleEdgeInstances", () => {
 				minHitSlop: 2,
 				mode: "2d",
 				tier: "detail",
-				worldPerPixel: 1,
 			},
 			pickable,
 		);
@@ -113,7 +112,6 @@ describe("patchVisibleEdgeInstances", () => {
 				minHitSlop: 2,
 				mode: "2d",
 				tier: "detail",
-				worldPerPixel: 1,
 			},
 			pickable,
 		);
@@ -139,11 +137,7 @@ describe("patchVisibleEdgeInstances update ranges", () => {
 		const color = geometry.getAttribute("instanceColor") as InstancedBufferAttribute;
 		color.addUpdateRange(40, 8);
 
-		patchVisibleEdgeInstances(
-			geometry,
-			{ ...input, changedEdgeIndices: [0], layouts, minHitSlop: 2, worldPerPixel: 1 },
-			[],
-		);
+		patchVisibleEdgeInstances(geometry, { ...input, changedEdgeIndices: [0], layouts, minHitSlop: 2 }, []);
 
 		expect(color.updateRanges).toContainEqual({ start: 40, count: 8 });
 		expect(color.updateRanges).toContainEqual({ start: 0, count: 4 });

@@ -11,10 +11,11 @@ import type { Graphraum } from "./graphraum";
 import {
 	createGraph,
 	destroyGraphs,
-	edgeBuffers,
+	edgeInstancesByEdge,
 	internals,
 	mixedFixture,
 	seededRandom,
+	unusedVisibleSlots,
 } from "./test-support/edge-harness";
 import { installFakeBrowserGlobals } from "./test-support/fake-webgl";
 import type { GraphraumOptions } from "./types";
@@ -36,6 +37,8 @@ interface NodeInternals {
 	nodeSlots: Int32Array;
 	visibleNodeIndices: readonly number[];
 	writeNodeInstance(...args: unknown[]): void;
+	patchEdgeSlots(...args: unknown[]): boolean;
+	pickableEdgeSegments: { edgeIndex: number; hitSlop: number; x1: number; y1: number; x2: number; y2: number }[];
 }
 
 const ATTRIBUTES = ["instanceShape", "instanceIcon", "instanceStrokeWidth", "instanceStrokeColor"] as const;
@@ -66,6 +69,11 @@ function drawnNodes(graph: Graphraum) {
 	return new Map(entries);
 }
 
+function edgeDiagnostics(graph: Graphraum) {
+	const { subPixelEdgesSkipped, visibleEdgeMarkers, visibleEdgeSegments, visibleEdges } = graph.getDiagnostics();
+	return { subPixelEdgesSkipped, visibleEdgeMarkers, visibleEdgeSegments, visibleEdges };
+}
+
 function viewAt(graph: Graphraum, zoom: number, x: number, y: number) {
 	const { camera } = internals(graph);
 	if (camera instanceof OrthographicCamera) camera.zoom = zoom;
@@ -75,15 +83,32 @@ function viewAt(graph: Graphraum, zoom: number, x: number, y: number) {
 	camera.updateMatrixWorld();
 }
 
-const CONFIGS: readonly { name: string; options: GraphraumOptions; reused: readonly [min: number, max: number] }[] = [
-	{ name: "detail", options: { mode: "2d" }, reused: [20, 120] },
-	{ name: "node budget cut", options: { maxVisibleNodes: 30, mode: "2d" }, reused: [1, 119] },
-	{ name: "edge budget", options: { maxVisibleEdges: 48, mode: "2d" }, reused: [20, 120] },
-	{ name: "focus lens", options: { focusLens: { enabled: true }, mode: "2d" }, reused: [0, 0] },
+/** What a click could hit, per edge and rounded: the pick list lists slots, whose order differs. */
+function pickable(graph: Graphraum) {
+	const { pickableEdgeSegments } = internals(graph) as unknown as NodeInternals;
+	return pickableEdgeSegments
+		.filter((segment) => segment.edgeIndex >= 0)
+		.map((segment) => [
+			segment.edgeIndex,
+			...[segment.hitSlop, segment.x1, segment.y1, segment.x2, segment.y2].map((value) => Math.round(value * 1e4)),
+		])
+		.sort((a, b) => a.join().localeCompare(b.join()));
+}
+
+const CONFIGS: readonly {
+	name: string;
+	options: GraphraumOptions;
+	reused: readonly [min: number, max: number];
+	edgesKept: readonly [min: number, max: number];
+}[] = [
+	{ name: "detail", options: { mode: "2d" }, reused: [20, 120], edgesKept: [60, 120] },
+	{ name: "node budget cut", options: { maxVisibleNodes: 30, mode: "2d" }, reused: [1, 119], edgesKept: [40, 119] },
+	{ name: "edge budget", options: { maxVisibleEdges: 48, mode: "2d" }, reused: [20, 120], edgesKept: [30, 119] },
+	{ name: "focus lens", options: { focusLens: { enabled: true }, mode: "2d" }, reused: [0, 0], edgesKept: [0, 0] },
 ];
 
 describe("2D viewport keeps the instances of nodes that stay visible", () => {
-	test.each(CONFIGS)("$name: random pan and zoom draws what a full rewrite draws", ({ options, reused }) => {
+	test.each(CONFIGS)("$name: random pan and zoom draws what a full rewrite draws", ({ edgesKept, options, reused }) => {
 		const random = seededRandom(97);
 		const data = mixedFixture(220, 500, 5);
 		const graph = createGraph(options);
@@ -95,6 +120,7 @@ describe("2D viewport keeps the instances of nodes that stay visible", () => {
 		let x = 0;
 		let y = 0;
 		let reusedSteps = 0;
+		const patched = vi.spyOn(internals(graph) as unknown as NodeInternals, "patchEdgeSlots");
 		for (let step = 0; step < 120; step += 1) {
 			if (random() < 0.5) {
 				x += (random() - 0.5) * 120;
@@ -112,12 +138,18 @@ describe("2D viewport keeps the instances of nodes that stay visible", () => {
 			const drawn = drawnNodes(graph);
 			expect([...drawn.keys()].sort(), `step ${step}`).toEqual([...drawnNodes(twin).keys()].sort());
 			expect(drawn, `step ${step}`).toEqual(drawnNodes(twin));
-			expect(edgeBuffers(graph), `step ${step}`).toEqual(edgeBuffers(twin));
+			expect(edgeInstancesByEdge(graph), `step ${step}`).toEqual(edgeInstancesByEdge(twin));
+			expect(unusedVisibleSlots(graph), `step ${step}`).toBe(0);
+			expect(pickable(graph), `step ${step}`).toEqual(pickable(twin));
+			expect(edgeDiagnostics(graph), `step ${step}`).toEqual(edgeDiagnostics(twin));
 			expect(graph.getDiagnostics().visibleNodes).toBe(twin.getDiagnostics().visibleNodes);
 			if (writes < drawn.size) reusedSteps += 1;
 		}
 		expect(reusedSteps).toBeGreaterThanOrEqual(reused[0]);
 		expect(reusedSteps).toBeLessThanOrEqual(reused[1]);
+		const edgeSteps = patched.mock.results.filter((result) => result.value === true).length;
+		expect(edgeSteps).toBeGreaterThanOrEqual(edgesKept[0]);
+		expect(edgeSteps).toBeLessThanOrEqual(edgesKept[1]);
 	});
 
 	test("a selection colour survives the camera moving while the node stays visible", () => {

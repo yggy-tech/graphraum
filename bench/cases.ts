@@ -1,8 +1,9 @@
 import { createFixture } from "../docs/src/lib/benchmark";
 import { measureProgressiveForceLayout } from "../docs/src/lib/layout-benchmark";
 import { Graphraum, type GraphraumData, type GraphraumMode, type GraphraumThemeName } from "../src";
+import { attachClusterLod, buildClusterTree } from "../src/lod";
 import { MAX_PIXEL_RATIO, nextFrame, sampleFrames } from "./measure";
-import { SCALING_SIZES, scalingCaseId } from "./scaling";
+import { LOD_SCALING_SIZES, SCALING_SIZES, scalingCaseId } from "./scaling";
 import type { CaseDescriptor, CaseRunResult } from "./types";
 
 export interface BenchCase {
@@ -368,6 +369,76 @@ function scalingLayoutCase(nodes: number): BenchCase {
 	};
 }
 
+/** Cluster LOD ladder case: build the tree, attach it to a fresh graph, then drive the camera as the plain cases do. */
+function lodScalingCase(series: "lodpan2d" | "lodorbit3d", nodes: number): BenchCase {
+	const mode: GraphraumMode = series === "lodpan2d" ? "2d" : "3d";
+	const base = scalingDescriptor(
+		series,
+		nodes,
+		mode,
+		`Cluster LOD (4000 nodes, 8000 edges budget, 10 px threshold) over the same fixture as the plain ladder. ${mode === "2d" ? "Camera pans at a quarter of the fitted height." : "The camera orbits the target by setCameraState()."} Each frame's step includes the cut and the data swap.`,
+		mode === "2d" ? "2D pan, cluster LOD" : "3D orbit, cluster LOD",
+	);
+	return {
+		descriptor: base,
+		async run(container) {
+			const { data, fixtureMs } = plainFixture(nodes);
+			await nextFrame();
+			const dimensions = mode === "2d" ? 2 : 3;
+			const treeStartedAt = performance.now();
+			const positions = new Float32Array(nodes * dimensions);
+			for (const [index, node] of data.nodes.entries()) {
+				positions[index * dimensions] = node.position.x;
+				positions[index * dimensions + 1] = node.position.y;
+				if (dimensions === 3) positions[index * 3 + 2] = node.position.z ?? 0;
+			}
+			const edges = new Uint32Array(data.edges.length * 2);
+			for (let edge = 0; edge < data.edges.length; edge += 1) {
+				edges[edge * 2] = edge % nodes;
+				edges[edge * 2 + 1] = (edge * 97 + 13) % nodes;
+			}
+			const tree = buildClusterTree({ dimensions, edges, positions });
+			const treeBuildMs = performance.now() - treeStartedAt;
+			const constructionStartedAt = performance.now();
+			const graph = new Graphraum(container, { maxPixelRatio: MAX_PIXEL_RATIO, mode });
+			const constructMs = performance.now() - constructionStartedAt;
+			const attachStartedAt = performance.now();
+			const lod = attachClusterLod(graph, tree, { data, element: container });
+			const attachMs = performance.now() - attachStartedAt;
+			const firstFrameStartedAt = performance.now();
+			await nextFrame();
+			const cold = {
+				attachMs,
+				constructMs,
+				firstFrameMs: performance.now() - firstFrameStartedAt,
+				fixtureMs,
+				treeBuildMs,
+			};
+			await nextFrame();
+			const drive = mode === "2d" ? pan2d(graph) : orbit3d(graph);
+			await sampleFrames(graph, WARMUP_FRAMES, drive);
+			const warm = await sampleFrames(graph, frameCount(nodes), (index) => drive(index + WARMUP_FRAMES));
+			const drawn = lod.getDiagnostics();
+			lod.detach();
+			graph.destroy();
+			return {
+				cold: {
+					...cold,
+					drawnAggregates: drawn.drawnAggregates,
+					drawnEdges: drawn.drawnEdges,
+					drawnNodes: drawn.drawnNodes,
+				},
+				warm,
+			};
+		},
+	};
+}
+
+const lodCases: readonly BenchCase[] = LOD_SCALING_SIZES.flatMap((nodes) => [
+	lodScalingCase("lodpan2d", nodes),
+	lodScalingCase("lodorbit3d", nodes),
+]);
+
 const scalingCases: readonly BenchCase[] = SCALING_SIZES.flatMap((nodes) => [
 	scalingFrameCase("pan2d", "2d", "2D pan", "Camera pans at a quarter of the fitted height.", nodes, panDriver),
 	scalingFrameCase(
@@ -451,6 +522,7 @@ export const BENCH_CASES: readonly BenchCase[] = [
 	edgeHoverCase(2_000),
 	edgeHoverCase(10_000),
 	...scalingCases,
+	...lodCases,
 ];
 
 export function findCase(id: string): BenchCase | undefined {

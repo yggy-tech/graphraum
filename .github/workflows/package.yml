@@ -31,7 +31,7 @@ jobs:
       - name: Public API report is up to date
         run: |
           if ! bun run api:check; then
-            echo "::error::The public API changed. Run 'bun run build && bun run api:update' and commit etc/graphraum.api.md, etc/graphraum-diagnostics.api.md, etc/graphraum-styles.api.md, etc/graphraum-layout.api.md, etc/graphraum-layout-start.api.md and etc/graphraum-icons.api.md. A removed or changed export is a breaking change: mark the PR title with '!'."
+            echo "::error::The public API changed. Run 'bun run build && bun run api:update' and commit etc/graphraum.api.md, etc/graphraum-diagnostics.api.md, etc/graphraum-styles.api.md, etc/graphraum-layout.api.md, etc/graphraum-layout-start.api.md, etc/graphraum-lod.api.md and etc/graphraum-icons.api.md. A removed or changed export is a breaking change: mark the PR title with '!'."
             exit 1
           fi
       - name: Install the tarball like a user and type-check a consumer

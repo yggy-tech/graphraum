@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: "Layout", link: "/guide/layout/" },
 						{ label: "Guided layout", link: "/guide/guided-layout/" },
 						{ label: "Camera and 3D", link: "/guide/camera-and-3d/" },
+						{ label: "Cluster LOD", link: "/guide/cluster-lod/" },
 						{ label: "Theme", link: "/guide/theme/" },
 						{ label: "Styling", link: "/guide/styling/" },
 					],

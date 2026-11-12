@@ -1,0 +1,94 @@
+---
+title: Cluster LOD
+description: Draw a graph of a million nodes in 2D or 3D by showing far-away regions as one glyph each.
+---
+
+A plain graphraum draws every node it is given, up to `maxVisibleNodes` (100,000 by default). Beyond that, 2D bins the nodes in view into density cells and 3D keeps only the first nodes in array order. Cluster LOD is the opt-in alternative for very large graphs: it groups nearby nodes into a tree once, and on every camera change it shows each region as small as it can without the eye noticing. Far regions are one glyph sized by how many nodes it holds, joined by aggregated edges. Regions you zoom into open up until you see the real nodes.
+
+It lives in its own entry, so apps that do not use it pay nothing:
+
+```ts
+import { Graphraum } from "@yggy-tech/graphraum";
+import { attachClusterLod, buildClusterTree } from "@yggy-tech/graphraum/lod";
+
+const dimensions = 3;
+const tree = buildClusterTree({
+  dimensions,
+  edges, // Uint32Array, two node indices per edge
+  positions, // Float32Array, x y z per node
+});
+
+const graph = new Graphraum(container, { mode: "3d" });
+const lod = attachClusterLod(graph, tree, { data, element: container });
+
+lod.detach(); // stops following the camera
+```
+
+`data` is the full `GraphraumData` you built the tree from: node `i` has the position `i` of the tree, and edge `k` is the pair `k`. graphraum draws only the cut, so never call `setData()` yourself while the layer is attached.
+
+## When to use it
+
+- Use it when the graph is far above `maxVisibleNodes`, or when 3D must show every region instead of the first 100,000 nodes.
+- Skip it below a few tens of thousands of nodes. The plain renderer shows every node and every selected edge, and is simpler.
+- The graph needs positions up front. Compute them in a worker with the [layout helpers](/guide/layout/) or on your server.
+
+## Build the tree in a worker
+
+The tree is plain typed arrays. `buildClusterTree()` takes about 0.7 seconds for a million nodes and three million edges on a laptop, so run it in a worker and hand the result over:
+
+```ts
+import { buildClusterTree, clusterTreeTransferables } from "@yggy-tech/graphraum/lod";
+
+// worker
+self.onmessage = ({ data: input }) => {
+  const tree = buildClusterTree(input);
+  self.postMessage(tree, clusterTreeTransferables(tree));
+};
+```
+
+Tree options: `leafSize` (default 16) is how many nodes a leaf may hold before it splits, and `maxNeighbors` (default 32) caps the aggregated edges kept per cluster, heaviest first. `weights` gives one number per edge (default 1). A tree holds at most 8,388,608 nodes.
+
+## Options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `pixelThreshold` | 10 | A cluster whose projected radius is under this many pixels is one glyph. Lower shows more detail. |
+| `maxDrawnNodes` | 4000 | Clusters plus real nodes in one cut. The cut never passes it, whatever the graph size. |
+| `maxDrawnEdges` | 8000 | Edges drawn. Edges between real nodes keep half the budget, so detail survives next to heavy aggregates. |
+| `cullMargin` | 0.1 | Share of the viewport kept around it, so clusters just off screen are ready when you pan. |
+| `aggregateStyle` | size by count | Return `size`, `color` and the like for a glyph from its `count`, `radius` and `depth`. |
+| `aggregateEdgeStyle` | width and opacity by weight | Return an edge style from the weight and its share of the heaviest drawn edge. |
+| `idPrefix` | `cluster:` | Prefix of aggregate ids, so they never collide with yours. |
+| `fit` | `true` | Fit the camera to the first cut. |
+
+The cut is chosen best first: the cluster that looks biggest on screen is opened next, until every cluster is under the threshold or the node budget is spent. Clusters outside the view are dropped. In 3D, clusters the camera is inside count as infinitely large, so they always open.
+
+## Picking and zoom
+
+Aggregates are ordinary nodes to graphraum, so `pick()`, `pickHit()`, hover and selection report them with ids like `cluster:123`. Ask the layer what an id means:
+
+```ts
+const id = graph.pick(event.clientX, event.clientY);
+const hit = id ? lod.resolve(id) : null;
+if (hit?.kind === "cluster") {
+  lod.members(hit.cluster); // node indices of the cluster, as a Uint32Array
+  graph.setCameraState(lod.frameCluster(hit.cluster)); // zoom in; the cluster opens
+}
+```
+
+`resolve()` returns `{ kind: "cluster", cluster, count }`, `{ kind: "node", node }` for a real node, or `null`.
+
+## Diagnostics
+
+`lod.getDiagnostics()` (and the `onCut` option) reports `drawnAggregates`, `drawnNodes`, `drawnEdges`, `droppedEdges`, `cutDepth` and `cutMilliseconds`. `graph.getDiagnostics()` counts what graphraum was given, which is the cut.
+
+## Limits
+
+- Every cut hands a new snapshot to `setData()`, which costs time in the size of the cut, not the graph. A pan that changes the cut every frame spends a few milliseconds per frame; lower `maxDrawnNodes` on slow devices.
+- Edges to clusters outside the view are not drawn, so edges stop near the screen edge.
+- Selection by id survives a cut for real nodes; an aggregate that stops being drawn loses its selection.
+- Node drag, the focus lens and labels see the cut, not your full graph. Real nodes keep their own data; aggregates have no labels.
+- Nodes with identical positions cannot be split, so a very large pile at one point stays one aggregate.
+- With `maxNeighbors` smaller than the real number of neighbours, light aggregate edges can be missing.
+- The 3D cut assumes the camera graphraum creates: a 45 degree field of view with y up.
+- How aggregates look is provisional. Style them with `aggregateStyle` and `aggregateEdgeStyle`.

@@ -238,6 +238,18 @@ function disposeMaterial(material: Material | Material[]) {
 
 /** Overview edges shorter than this many CSS pixels on screen are not drawn. */
 const SUB_PIXEL_EDGE_PIXELS = 0.75;
+/** Spare edge instances after the budgeted layer, for the selection overlay. */
+const OVERLAY_INSTANCE_RESERVE = 32_768;
+const NO_PINNED_EDGES: ReadonlySet<number> = new Set();
+/** Fills the marker slots of the pick list so a segment's list index stays its instance slot. */
+const NO_PICKABLE_SEGMENT: PickableEdgeSegment = {
+	edgeIndex: -1,
+	hitSlop: 0,
+	x1: Number.NaN,
+	x2: Number.NaN,
+	y1: Number.NaN,
+	y2: Number.NaN,
+};
 
 /** One warning per page when a context cannot run depth of field; diagnostics report it per instance. */
 let warnedDepthOfFieldUnsupported = false;
@@ -314,6 +326,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private visibleEdgeMarkerCount = 0;
 	private visibleEdgeCandidateCount = 0;
 	private subPixelEdgesSkipped = 0;
+	/** The budgeted layer, packed without regard to selection: slots `[0, segments + markers)`. */
+	private mainEdge = { edges: 0, markers: 0, segments: 0, subPixelSkipped: 0 };
+	/** Pinned edges the budget left out, drawn after the main layer. Rebuilt on a selection change. */
+	private overlayEdgeIndices: readonly number[] = [];
 	private edgeSegmentCapacity = 0;
 	private mode: GraphraumMode;
 	private frameRequest: number | null = null;
@@ -576,6 +592,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.getViewportBounds2d() !== null ||
 			this.densityLodActive ||
 			this.lastEdgeLodTier !== "detail" ||
+			this.overlayEdgeIndices.length > 0 ||
 			!drewEverything ||
 			total.nodes > this.maxVisibleNodes ||
 			total.edges > this.maxVisibleEdges
@@ -672,6 +689,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.visibleEdgeSegmentCount = segmentsTotal;
 		this.visibleEdgeCount += addedEdgeCount;
 		this.visibleEdgeMarkerCount = markersTotal;
+		this.mainEdge = { ...this.mainEdge, edges: this.visibleEdgeCount, markers: markersTotal, segments: segmentsTotal };
 		return true;
 	}
 
@@ -718,7 +736,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.edgeCapacity = capacities.edgeCapacity;
 		this.edgeSegmentCapacity = capacities.segmentCapacity;
 		this.markerCapacity = capacities.markerCapacity;
-		this.edgeInstanceCapacity = capacities.edgeInstanceCapacity;
+		this.edgeInstanceCapacity =
+			capacities.edgeInstanceCapacity + Math.min(OVERLAY_INSTANCE_RESERVE, capacities.edgeInstanceCapacity);
 		const edgeGeometry = createEdgeGeometry(this.edgeInstanceCapacity);
 		const edgeMaterial = createEdgeMaterial();
 		const edgeMesh = new InstancedMesh(edgeGeometry, edgeMaterial, this.edgeInstanceCapacity);
@@ -923,12 +942,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const changed = changedIds(this.selectedEdgeIds, next);
 		this.selectedEdgeIds = next;
 		this.repaintEdgeStates(changed);
-		// Over the edge budget a selected edge is pinned, so a changed selection repacks.
-		if (changed.length > 0 && this.edgeBudgetActive()) this.materializeViewport();
+		// Over the edge budget a selected edge is pinned: it joins the overlay, not the budgeted layer.
+		if (changed.length > 0 && this.edgeBudgetActive()) this.syncPinnedOverlay();
 	}
 
 	private edgeBudgetActive() {
-		return this.visibleEdgeCandidateCount > this.visibleEdgeCount;
+		return this.visibleEdgeCandidateCount > this.mainEdge.edges;
 	}
 
 	/**
@@ -1044,15 +1063,15 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				[...changedNodeIds].filter((id) => nextSelection.has(id)),
 			)
 		) {
-			this.materializeViewport();
+			this.syncPinnedOverlay();
 		}
 		this.requestRender();
 		if (state === "selected" || state === "hovered") this.notifyFocusChange();
 	}
 
 	/**
-	 * Selected and focused nodes pin their edges, so over the edge budget a change repacks. Hover
-	 * changes constantly, so it repacks only for a hovered node with an edge the last frame left out.
+	 * Selected and focused nodes pin their edges, so over the edge budget a change redraws the overlay.
+	 * Hover changes constantly, so it does so only for a hovered node with an edge the last frame left out.
 	 */
 	private nodeStateRepinsEdges(state: GraphraumNodeState, enteredNodeIds: readonly string[]): boolean {
 		if (state === "dimmed" || !this.edgeBudgetActive()) return false;
@@ -2269,7 +2288,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.raycaster.setFromCamera(this.pointer, this.camera);
 		for (const hit of this.raycaster.intersectObject(this.edgeMesh, false)) {
 			if (hit.instanceId === undefined) continue;
-			if (hit.instanceId >= this.visibleEdgeSegmentCount) continue;
+			if (hit.instanceId >= this.visibleEdgeSegmentEdgeIndices.length) continue;
 			const edgeIndex = this.visibleEdgeSegmentEdgeIndices[hit.instanceId];
 			if (edgeIndex === undefined) continue;
 			return this.data.edges[edgeIndex]?.id ?? null;
@@ -2441,7 +2460,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.renderer.setClearColor(color, 1);
 	}
 
-	private materializeViewport() {
+	/** `pinnedInMain` is the fallback when the overlay does not fit: pinned edges then take budget slots. */
+	private materializeViewport(pinnedInMain = false) {
 		if (!this.nodeMesh || !this.nodePickMesh || !this.edgeMesh) return;
 		const bounds = this.getViewportBounds2d();
 		const visibleNodeCandidates = bounds
@@ -2453,7 +2473,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const edgeCandidates = bounds
 			? collectIncidentEdges(visibleNodeIndices, this.incidentEdgeIndices)
 			: this.data.edges.map((_, index) => index);
-		const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates);
+		const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates, pinnedInMain);
 		this.visibleNodeSlots = new Map();
 		this.visibleNodeIndices = visibleNodeIndices;
 		this.nodeMesh.instanceMatrix.clearUpdateRanges();
@@ -2532,6 +2552,17 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.visibleEdgeSegmentCount = segmentCount;
 		this.visibleEdgeCount = distinctEdgeCount;
 		this.visibleEdgeMarkerCount = packed.markers.length;
+		this.mainEdge = {
+			edges: distinctEdgeCount,
+			markers: packed.markers.length,
+			segments: segmentCount,
+			subPixelSkipped: skippedSubPixel,
+		};
+		this.overlayEdgeIndices = [];
+		if (!pinnedInMain && !this.drawPinnedOverlay()) {
+			this.materializeViewport(true);
+			return;
+		}
 		this.syncGlow();
 	}
 
@@ -2539,13 +2570,14 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * Fits the incident edges to the budget. Over the budget, 2D first drops edges shorter than
 	 * `SUB_PIXEL_EDGE_PIXELS` on screen (the focus lens moves endpoints, so it keeps them), then keeps
 	 * pinned edges and the highest endpoint degree. 3D does not repack on orbit, so it has no screen
-	 * length to cut by.
+	 * length to cut by. The order never depends on the selection (the overlay draws what it pins),
+	 * except in the `pinnedInMain` fallback.
 	 */
-	private budgetEdges(edgeCandidates: readonly number[]) {
+	private budgetEdges(edgeCandidates: readonly number[], pinnedInMain: boolean) {
 		if (edgeCandidates.length <= this.edgeBudget) {
 			return { skippedSubPixel: 0, visibleEdgeIndices: edgeCandidates };
 		}
-		const pinned = this.pinnedEdgeIndices();
+		const pinned = pinnedInMain ? this.pinnedEdgeIndices() : NO_PINNED_EDGES;
 		const cut =
 			this.mode === "2d" && !this.lensApplied
 				? dropSubPixelEdges(
@@ -2563,6 +2595,94 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				score: endpointDegreeScore(this.edgeNodeIndices, this.incidentEdgeIndices),
 			}),
 		};
+	}
+
+	private syncPinnedOverlay() {
+		if (!this.drawPinnedOverlay()) this.materializeViewport(true);
+	}
+
+	/**
+	 * Replaces the overlay: the pinned edges the budgeted layer left out, written after it in their
+	 * own instance range, so a selection change touches a handful of slots instead of repacking the
+	 * layer. Returns false, with the overlay not drawn, when it does not fit the spare instances.
+	 */
+	private drawPinnedOverlay(): boolean {
+		const { edgeMesh } = this;
+		if (!edgeMesh) return true;
+		const main = this.mainEdge;
+		for (const edgeIndex of this.overlayEdgeIndices) {
+			this.visibleEdgeSlots.delete(edgeIndex);
+			this.visibleEdgeLayouts.delete(edgeIndex);
+		}
+		// Overlay entries sit past the main ones; segments are listed by slot, markers leave gaps.
+		this.pickableEdgeSegments.length = Math.min(this.pickableEdgeSegments.length, main.segments);
+		this.visibleEdgeSegmentEdgeIndices.length = Math.min(this.visibleEdgeSegmentEdgeIndices.length, main.segments);
+		const bounds = this.getViewportBounds2d();
+		const onScreen = (edgeIndex: number) =>
+			bounds === null ||
+			this.visibleNodeSlots.has(this.edgeNodeIndices[edgeIndex * 2] ?? -1) ||
+			this.visibleNodeSlots.has(this.edgeNodeIndices[edgeIndex * 2 + 1] ?? -1);
+		const overlay = this.edgeBudgetActive()
+			? [...this.pinnedEdgeIndices()]
+					.filter((edgeIndex) => !this.visibleEdgeSlots.has(edgeIndex) && onScreen(edgeIndex))
+					.sort((a, b) => a - b)
+			: [];
+		const start = main.segments + main.markers;
+		const packed = packEdgeInstances({
+			edgeIndices: overlay,
+			edgeStates: this.edgeStateStyling(),
+			edgeVisuals: this.data.edges,
+			endpointPositions: this.canonicalEdgePositions,
+			defaults: this.edgeDefaults(),
+			tier: this.lastEdgeLodTier,
+			maxSegments: this.edgeInstanceCapacity - start,
+			endpointAttach: this.endpointAttach(),
+			edgeNodeIndices: this.edgeNodeIndices,
+			mode: this.mode,
+			nodeOutlines: this.data.nodes,
+		});
+		const segmentCount = packed.segments.length;
+		const markerCount = packed.markers.length;
+		this.overlayEdgeIndices = [];
+		if (packed.truncated || start + segmentCount + markerCount > this.edgeInstanceCapacity) return false;
+
+		if (segmentCount > 0) {
+			if (this.camera instanceof OrthographicCamera) {
+				this.pickableEdgeSegments.length = start;
+				this.pickableEdgeSegments.fill(NO_PICKABLE_SEGMENT, main.segments, start);
+			}
+			this.visibleEdgeSegmentEdgeIndices.length = start;
+		}
+		const distinct = this.writeEdgeInstances(
+			packed,
+			{ markerStart: start + segmentCount, segmentStart: start },
+			this.worldUnitsPerPixel(),
+		);
+		for (const [edgeIndex, layout] of buildVisibleEdgeLayouts(packed.segments, packed.markers, segmentCount)) {
+			if (layout.segmentStart >= 0) layout.segmentStart += start;
+			layout.markerStart += start;
+			this.visibleEdgeLayouts.set(edgeIndex, layout);
+		}
+		edgeMesh.count = start + segmentCount + markerCount;
+		if (segmentCount + markerCount > 0) {
+			for (const name of EDGE_INSTANCE_ATTRIBUTES) {
+				const attribute = getInstancedAttribute(edgeMesh.geometry, name);
+				attribute.addUpdateRange(start * attribute.itemSize, (segmentCount + markerCount) * attribute.itemSize);
+				attribute.needsUpdate = true;
+			}
+		}
+		this.overlayEdgeIndices = overlay;
+		// Short pinned edges are in the sub-pixel count of the layer, yet drawn here.
+		const drawnShort =
+			this.mode === "2d" && !this.lensApplied
+				? dropSubPixelEdges(overlay, this.canonicalEdgePositions, this.worldUnitsPerPixel(), SUB_PIXEL_EDGE_PIXELS)
+						.skipped
+				: 0;
+		this.subPixelEdgesSkipped = Math.max(0, main.subPixelSkipped - drawnShort);
+		this.visibleEdgeSegmentCount = main.segments + segmentCount;
+		this.visibleEdgeMarkerCount = main.markers + markerCount;
+		this.visibleEdgeCount = main.edges + distinct;
+		return true;
 	}
 
 	/** Selected edges and every edge of a selected, focused or hovered node: never culled or budgeted away. */

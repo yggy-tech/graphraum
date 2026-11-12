@@ -150,6 +150,43 @@ A precomputed layout from your server is the better choice when:
 
 Compute in the browser when the graph is built per user, changes often, or is small. Both can be mixed: load the server layout as `initialPositions` with `warmStart: true`, so edits settle locally instead of waiting for the server.
 
+### Multilevel layout for large graphs
+
+`computeMultilevelForcePositions()` from `@yggy-tech/graphraum/layout-multilevel` solves the same force layout on smaller copies of the graph. It merges strongly linked nodes into groups, level after level, until about 200 super-nodes remain, lays those out with the regular force layout, then places every node at its group's position and refines each finer level with a few steps. The expensive part, finding the global shape, runs on a few hundred nodes instead of every node. The default layout is unchanged; this is a separate, opt-in entry.
+
+```ts
+import { computeMultilevelForcePositions } from "@yggy-tech/graphraum/layout-multilevel";
+
+const positions = computeMultilevelForcePositions(
+  { dimensions: 3, edges, nodeCount, settings: { layoutStyle: "edge-t" } },
+  { coarsestSize: 200, refineSteps: 2, onPreview: (rough) => graph.applyLayout({ nodeIds, positions: rough }) },
+);
+```
+
+It takes the same request as `computeForcePositions()` (both layout styles, `clusters`, `anchors`, `initialPositions`, `settings`, per-edge `linkDistances` and `springStrengths`) and returns the same `nodeCount * 3` positions.
+
+**When to use it.** Use it with `layoutStyle: "edge-t"` on graphs of about 5,000 nodes or more. On a sparse random graph with about 3 edges per node (one run per cell, one thread, Node on an Apple M5 Pro while the machine was busy) it took 76 ms instead of 180 ms at 10,000 nodes and 583 ms instead of 1,564 ms at 100,000 nodes in 2D, and 78 ms instead of 194 ms and 600 ms instead of 1,766 ms in 3D. The layout quality was close: normalised stress against hop distances (lower is better) was 0.215 against 0.195 and 0.204 against 0.217 in 2D, and 0.147 against 0.143 and 0.149 against 0.158 in 3D. Do not expect a speed-up with `"classic"`: its one-shot layout already takes only about 15 steps, so the coarsening costs about what it saves. At 10,000 nodes it was on par (23 ms against 15 ms) and at 100,000 nodes it was slower (about 290 ms against 140 to 220 ms) at the same stress. Edge lengths are also less even than in the plain layout (a coefficient of variation of 0.59 to 0.71 against 0.38 to 0.52 for `"classic"` at 10,000 and 100,000 nodes), so run the plain layout when you need the most even edges.
+
+**A rough picture first.** `onPreview` is called once, after the coarsest layout and before any refinement, with the whole graph placed from its groups. It already shows the global shape, so you can draw it while the refinement runs. The docs layout worker does this when you start it with `algorithm: "multilevel"` and posts the preview as a first batch; the Prove benchmark and `bun run bench` report the time to that first batch next to the total.
+
+| Option | Meaning | Default |
+| --- | --- | --- |
+| `coarsestSize` | Stop merging at this many super-nodes, 8 to 5,000. | 200 |
+| `levels` | Most coarsening levels, 1 to 32. | as many as `coarsestSize` needs |
+| `refineSteps` | Force steps on the full graph after the coarsest layout, 1 to 16. Each coarser level gets one more step. `"edge-t"` runs twice as many. | 2 |
+| `seed` | Changes the random choices of the merging and the placement. The same seed gives the same positions. | 0 |
+| `onPreview`, `onProgress` | The rough picture, and the time of each phase (coarsen, coarsest, refine) per level. | none |
+
+**Predefined starts.** `initialPositions` and `anchors` feed the coarsest layout: graphraum averages them per group, so a PCA or UMAP projection, a server layout or `pivotMdsPositions()` from `@yggy-tech/graphraum/layout-start` decides where the groups go, and the refinement then follows. `clusters` are respected: nodes of different clusters never merge, so a cluster keeps its shape at every level. Give the start in the same units as for `computeForcePositions()`.
+
+**Limits.**
+
+- Graphs with at most `coarsestSize` nodes, and graphs where almost nothing can be merged (no edges), use the plain force layout.
+- With `warmStart: true` the call behaves like `computeForcePositions()`: a layout that already settled needs no coarse pass. Refining only the groups that moved is not implemented yet.
+- Many small clusters keep the coarsest level large, because groups never merge across clusters.
+- A few steps per level replace the long schedule, so the result is a good layout, not an identical one. Compare with the plain layout on your graph before you switch.
+- It runs on one thread. Run it in a worker for large graphs, like the plain layout.
+
 ### Unfolding long chains
 
 A random start knots a long thin structure (a process chain, a version history, a timeline), and local forces cannot undo a fold that spans the whole graph. Pass your own start with `initialPositions`, and let `@yggy-tech/graphraum/layout-start` compute one from graph distances:

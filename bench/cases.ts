@@ -225,22 +225,28 @@ function glowCase(glowNodes: number, theme: GraphraumThemeName, mode: GraphraumM
 	};
 }
 
-function layoutCase(nodes: number): BenchCase {
+const MULTILEVEL_PROTOCOL =
+	" With the multilevel algorithm the worker coarsens the graph, lays out the coarsest level, posts a rough preview of the whole graph (the first useful frame) and refines the finer levels; coarsen, coarsest and refine are the worker's own time in those phases.";
+
+function layoutCase(nodes: number, algorithm: "classic" | "multilevel" = "classic"): BenchCase {
+	const multilevel = algorithm === "multilevel";
 	return {
 		descriptor: {
 			edges: nodes * 3,
 			group: "layout",
-			id: `layout-3d-${nodes}`,
+			id: `layout-${multilevel ? "multilevel-" : ""}3d-${nodes}`,
 			mode: "3d",
 			nodes,
 			protocol:
-				"One force layout in the docs layout worker, streamed back in batches and applied to a mounted graph. Startup is Worker construction on the main thread, transfer is packing and posting the edge buffer, compute is the worker's own solve time, first useful frame is start to the first applied batch, total is start to the last batch.",
-			title: `Worker force layout ${nodes.toLocaleString("en-US")}`,
+				"One force layout in the docs layout worker, streamed back in batches and applied to a mounted graph. Startup is Worker construction on the main thread, transfer is packing and posting the edge buffer, compute is the worker's own solve time, first useful frame is start to the first applied batch, total is start to the last batch." +
+				(multilevel ? MULTILEVEL_PROTOCOL : ""),
+			title: `Worker ${multilevel ? "multilevel " : ""}force layout ${nodes.toLocaleString("en-US")}`,
 		},
 		async run(container) {
 			const { data, fixtureMs } = plainFixture(nodes);
 			const { cold, graph } = await mount(container, "3d", data, fixtureMs);
 			const timing = await measureProgressiveForceLayout({
+				algorithm,
 				applyLayout: (positions) => graph.applyLayout(positions),
 				createWorker: () =>
 					new Worker(new URL("../docs/src/lib/layout-worker.ts", import.meta.url), { type: "module" }),
@@ -254,6 +260,14 @@ function layoutCase(nodes: number): BenchCase {
 				cold: {
 					...cold,
 					batchCount: timing.batchCount,
+					...(timing.phases
+						? {
+								coarsenMs: timing.phases.coarsenMs,
+								coarsestMs: timing.phases.coarsestMs,
+								levels: timing.phases.levels,
+								refineMs: timing.phases.refineMs,
+							}
+						: {}),
 					computeMs: timing.computeMilliseconds,
 					firstUsefulFrameMs: timing.firstUsefulFrameMilliseconds,
 					iterations: timing.iterations,
@@ -361,10 +375,17 @@ function scalingLoadCase(nodes: number): BenchCase {
 	};
 }
 
-function scalingLayoutCase(nodes: number): BenchCase {
-	const base = layoutCase(nodes);
+function scalingLayoutCase(nodes: number, algorithm: "classic" | "multilevel" = "classic"): BenchCase {
+	const base = layoutCase(nodes, algorithm);
+	const multilevel = algorithm === "multilevel";
 	return {
-		descriptor: scalingDescriptor("layout", nodes, "3d", base.descriptor.protocol, "Worker force layout"),
+		descriptor: scalingDescriptor(
+			multilevel ? "layout-multilevel" : "layout",
+			nodes,
+			"3d",
+			base.descriptor.protocol,
+			multilevel ? "Worker multilevel force layout" : "Worker force layout",
+		),
 		run: base.run,
 	};
 }
@@ -460,6 +481,7 @@ const scalingCases: readonly BenchCase[] = SCALING_SIZES.flatMap((nodes) => [
 	scalingFrameCase("selection2d", "2d", "Selection", "Each frame selects a different node.", nodes, selectDriver),
 	scalingLoadCase(nodes),
 	scalingLayoutCase(nodes),
+	scalingLayoutCase(nodes, "multilevel"),
 ]);
 
 function panDriver(graph: Graphraum) {

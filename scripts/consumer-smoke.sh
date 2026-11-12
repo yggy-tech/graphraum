@@ -26,6 +26,8 @@ const layoutStart = await import('@yggy-tech/graphraum/layout-start');
 if (typeof layoutStart.pivotMdsPositions !== 'function') throw new Error('layout-start export missing');
 const lod = await import('@yggy-tech/graphraum/lod');
 if (typeof lod.buildClusterTree !== 'function' || typeof lod.attachClusterLod !== 'function') throw new Error('lod export missing');
+const layoutMultilevel = await import('@yggy-tech/graphraum/layout-multilevel');
+if (typeof layoutMultilevel.computeMultilevelForcePositions !== 'function') throw new Error('layout-multilevel export missing');
 const icons = await import('@yggy-tech/graphraum/icons');
 if (typeof icons.createIconAtlas !== 'function' || typeof icons.phosphorIcon !== 'function') throw new Error('icons export missing');
 "
@@ -37,6 +39,7 @@ import { measureLayoutStability } from "@yggy-tech/graphraum/diagnostics";
 import { graphraumStylePresets } from "@yggy-tech/graphraum/styles";
 import { pivotMdsPositions } from "@yggy-tech/graphraum/layout-start";
 import { attachClusterLod, buildClusterTree } from "@yggy-tech/graphraum/lod";
+import { computeMultilevelForcePositions } from "@yggy-tech/graphraum/layout-multilevel";
 import { createIconAtlas, phosphorIcon } from "@yggy-tech/graphraum/icons";
 
 const data: GraphraumData = {
@@ -52,6 +55,7 @@ export function mount(element: HTMLElement) {
 	const request = { dimensions: 2 as const, edges: new Uint32Array(), nodeCount: 1 };
 	const tree = buildClusterTree({ dimensions: 2, positions: new Float32Array([0, 0]) });
 	attachClusterLod(graph, tree, { data, element });
+	void computeMultilevelForcePositions;
 	return computeForcePositions({ ...request, initialPositions: pivotMdsPositions(request) });
 }
 TS

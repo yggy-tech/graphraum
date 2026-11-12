@@ -566,3 +566,95 @@ export function foldCount(probe: StripProbe, positions: Float32Array) {
 	}
 	return folds;
 }
+
+export interface SampledQuality {
+	/** Standard deviation over mean of all edge lengths: lower is more uniform. */
+	edgeLengthCv: number;
+	/** Mean share of each sampled node's graph neighbours among its nearest layout neighbours: higher is better. */
+	neighborhoodPreservation: number;
+	/** `normalizedStress` over the pairs reached from the sampled sources: lower is better. */
+	stress: number;
+}
+
+/**
+ * Quality for graphs too large for `measureLayout()`: stress from breadth-first searches out of `samples`
+ * evenly spread sources, and neighbourhood preservation for the same nodes by a linear nearest-neighbour
+ * scan. O(samples (n + m)), so 100k nodes take seconds.
+ */
+export function sampledLayoutQuality(graph: QualityGraph, positions: Float32Array, samples = 32): SampledQuality {
+	const { edges, nodeCount } = graph;
+	const rowPtr = new Uint32Array(nodeCount + 1);
+	for (const node of edges) rowPtr[node + 1] += 1;
+	for (let node = 0; node < nodeCount; node += 1) rowPtr[node + 1] += rowPtr[node] ?? 0;
+	const cursor = rowPtr.slice(0, nodeCount);
+	const col = new Uint32Array(edges.length);
+	for (let index = 0; index < edges.length; index += 2) {
+		const source = edges[index] ?? 0;
+		const target = edges[index + 1] ?? 0;
+		col[cursor[source]++] = target;
+		col[cursor[target]++] = source;
+	}
+	const distance = (left: number, right: number) =>
+		Math.hypot(
+			(positions[left * 3] ?? 0) - (positions[right * 3] ?? 0),
+			(positions[left * 3 + 1] ?? 0) - (positions[right * 3 + 1] ?? 0),
+			(positions[left * 3 + 2] ?? 0) - (positions[right * 3 + 2] ?? 0),
+		);
+	let ratioSum = 0;
+	let ratioSquareSum = 0;
+	const ratios: number[] = [];
+	const hops = new Int32Array(nodeCount);
+	const queue = new Uint32Array(nodeCount);
+	let preserved = 0;
+	let counted = 0;
+	for (let sample = 0; sample < samples; sample += 1) {
+		const source = Math.floor(((sample + 0.5) / samples) * nodeCount);
+		hops.fill(-1);
+		hops[source] = 0;
+		queue[0] = source;
+		let tail = 1;
+		for (let head = 0; head < tail; head += 1) {
+			const node = queue[head] ?? 0;
+			for (let at = rowPtr[node] ?? 0; at < (rowPtr[node + 1] ?? 0); at += 1) {
+				const next = col[at] ?? 0;
+				if (hops[next] !== -1) continue;
+				hops[next] = (hops[node] ?? 0) + 1;
+				queue[tail++] = next;
+			}
+		}
+		for (let index = 1; index < tail; index += 1) {
+			const target = queue[index] ?? 0;
+			const ratio = distance(source, target) / (hops[target] ?? 1);
+			ratios.push(ratio);
+			ratioSum += ratio;
+			ratioSquareSum += ratio * ratio;
+		}
+		const degree = (rowPtr[source + 1] ?? 0) - (rowPtr[source] ?? 0);
+		if (degree === 0) continue;
+		const nearest = Array.from({ length: nodeCount }, (_, node) => node)
+			.filter((node) => node !== source)
+			.map((node) => [distance(source, node), node] as const)
+			.sort((left, right) => left[0] - right[0])
+			.slice(0, degree)
+			.map(([, node]) => node);
+		const neighbours = new Set(col.subarray(rowPtr[source], rowPtr[source + 1]));
+		preserved += nearest.filter((node) => neighbours.has(node)).length / degree;
+		counted += 1;
+	}
+	const scale = ratioSquareSum / Math.max(ratioSum, 1e-12);
+	const stress = ratios.reduce((sum, ratio) => sum + (ratio / scale - 1) ** 2, 0) / Math.max(1, ratios.length);
+	let lengthSum = 0;
+	let lengthSquareSum = 0;
+	for (let index = 0; index < edges.length; index += 2) {
+		const length = distance(edges[index] ?? 0, edges[index + 1] ?? 0);
+		lengthSum += length;
+		lengthSquareSum += length * length;
+	}
+	const edgeCount = Math.max(1, edges.length / 2);
+	const mean = lengthSum / edgeCount;
+	return {
+		edgeLengthCv: Math.sqrt(Math.max(0, lengthSquareSum / edgeCount - mean * mean)) / Math.max(mean, 1e-9),
+		neighborhoodPreservation: counted ? preserved / counted : 0,
+		stress,
+	};
+}

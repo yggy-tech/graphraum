@@ -1,6 +1,14 @@
 import { DEFAULT_FORCE_SETTINGS, type ForceSettings, forceIterationCount } from "../../../src/force-layout";
 import { type LayoutStability, measureLayoutStability } from "../../../src/layout-stability";
 
+/** Where a multilevel layout spent its worker time, in milliseconds. */
+export interface MultilevelPhaseTiming {
+	coarsenMs: number;
+	coarsestMs: number;
+	levels: number;
+	refineMs: number;
+}
+
 export interface ProgressiveLayoutTiming {
 	batchCount: number;
 	batchSize: number;
@@ -10,6 +18,8 @@ export interface ProgressiveLayoutTiming {
 	iterations: number;
 	kind: "force";
 	nodeCount: number;
+	/** Multilevel runs only: the worker's time per phase. */
+	phases?: MultilevelPhaseTiming;
 	startupMilliseconds: number;
 	transferMilliseconds: number;
 }
@@ -17,6 +27,9 @@ export interface ProgressiveLayoutTiming {
 export interface ProgressiveLayoutPositionsMessage {
 	computeMilliseconds?: number;
 	end: number;
+	phases?: MultilevelPhaseTiming;
+	/** A rough full-graph layout posted before the final positions; the final batches still follow. */
+	preview?: boolean;
 	positions: Float32Array;
 	run: number;
 	type: "positions";
@@ -51,6 +64,8 @@ export function progressiveForceBatchSize(nodeCount: number): number {
 export class ProgressiveLayoutTimer {
 	private batchCount = 0;
 	private computeMilliseconds = 0;
+	private computeRecorded = false;
+	private phases: MultilevelPhaseTiming | undefined;
 	private firstUsefulFrameMilliseconds: number | undefined;
 	private startedAt = 0;
 	private startupMilliseconds = 0;
@@ -74,11 +89,13 @@ export class ProgressiveLayoutTimer {
 		this.transferMilliseconds = milliseconds;
 	}
 
-	recordAppliedBatch(now: number, computeMilliseconds?: number) {
+	recordAppliedBatch(now: number, computeMilliseconds?: number, phases?: MultilevelPhaseTiming) {
 		this.batchCount += 1;
-		if (this.batchCount === 1 && typeof computeMilliseconds === "number") {
+		if (!this.computeRecorded && typeof computeMilliseconds === "number") {
 			this.computeMilliseconds = computeMilliseconds;
+			this.computeRecorded = true;
 		}
+		this.phases ??= phases;
 		if (this.firstUsefulFrameMilliseconds === undefined) {
 			this.firstUsefulFrameMilliseconds = now - this.startedAt;
 		}
@@ -97,6 +114,7 @@ export class ProgressiveLayoutTimer {
 			iterations: this.iterations,
 			kind: "force",
 			nodeCount: this.nodeCount,
+			...(this.phases === undefined ? {} : { phases: this.phases }),
 			startupMilliseconds: this.startupMilliseconds,
 			transferMilliseconds: this.transferMilliseconds,
 		};
@@ -106,6 +124,8 @@ export class ProgressiveLayoutTimer {
 export async function measureProgressiveForceLayout(options: {
 	applyLayout: (layout: { nodeIds: string[]; positions: Float32Array }) => void;
 	batchSize?: number;
+	/** `"multilevel"` runs the multilevel force layout in the worker (see `layout-worker.ts`). Omitted: the plain force layout. */
+	algorithm?: "classic" | "multilevel";
 	createWorker: () => Worker;
 	dimensions: 2 | 3;
 	edges: readonly { source: string; target: string }[];
@@ -131,6 +151,7 @@ export async function measureProgressiveForceLayout(options: {
 	const packedEdges = packIndexedForceEdges(options.edges);
 	worker.postMessage(
 		{
+			algorithm: options.algorithm,
 			batchSize,
 			dimensions: options.dimensions,
 			edges: packedEdges,
@@ -157,7 +178,7 @@ export async function measureProgressiveForceLayout(options: {
 						const nodeIds = Array.from({ length: data.positions.length / 3 }, (_, index) => `node-${start + index}`);
 						options.applyLayout({ nodeIds, positions: data.positions });
 						await options.nextFrame();
-						timer.recordAppliedBatch(now(), data.computeMilliseconds);
+						timer.recordAppliedBatch(now(), data.computeMilliseconds, data.phases);
 						worker.postMessage({ run, type: "next" });
 						return;
 					}

@@ -1,9 +1,15 @@
 import { computeForcePositions, createForceSimulation, type ForceSettings } from "../../../src/force-layout";
+import { computeMultilevelForcePositions, type MultilevelOptions } from "../../../src/layout-multilevel";
 import { normalizeExtent, spreadClusters } from "./stress-layout";
+
+/** Where a multilevel layout spent its time, in milliseconds, and how many coarse levels it built. */
+type MultilevelPhases = { coarsenMs: number; coarsestMs: number; levels: number; refineMs: number };
 
 type LayoutName = "circle" | "force" | "force-live" | "grid";
 
 type LayoutRequest = {
+	/** `"multilevel"` solves the force layout on coarsened copies of the graph and posts a rough preview first. Omitted: `"classic"`, the plain force layout. */
+	algorithm?: "classic" | "multilevel";
 	batchSize: number;
 	/** Community index per node; seeds force nodes around cluster centres. */
 	clusters?: Uint32Array;
@@ -14,6 +20,8 @@ type LayoutRequest = {
 	iterations?: number;
 	layout: LayoutName;
 	maxFps: number;
+	/** Options of the `"multilevel"` algorithm. */
+	multilevel?: MultilevelOptions;
 	nodeCount: number;
 	run: number;
 	settings: ForceSettings;
@@ -32,6 +40,7 @@ let activeLayout:
 	| {
 			computeMilliseconds?: number;
 			nextStart: number;
+			phases?: MultilevelPhases;
 			positions?: Float32Array;
 			request: LayoutRequest;
 			timer?: ReturnType<typeof setTimeout>;
@@ -96,7 +105,9 @@ function postNextBatch(run: number) {
 		: positionsFor(activeLayout.request, start, end);
 	activeLayout.nextStart = end;
 	const computeMilliseconds = activeLayout.computeMilliseconds;
+	const phases = activeLayout.phases;
 	activeLayout.computeMilliseconds = undefined;
+	activeLayout.phases = undefined;
 	workerScope.postMessage(
 		{
 			end,
@@ -104,6 +115,7 @@ function postNextBatch(run: number) {
 			run,
 			type: "positions",
 			...(computeMilliseconds === undefined ? {} : { computeMilliseconds }),
+			...(phases === undefined ? {} : { phases }),
 		},
 		[positions.buffer],
 	);
@@ -117,10 +129,11 @@ workerScope.addEventListener("message", ({ data }) => {
 			return;
 		}
 		let computeMilliseconds: number | undefined;
+		let multilevelPhases: MultilevelPhases | undefined;
 		let positions: Float32Array | undefined;
 		if (data.layout === "force") {
 			const computeStartedAt = performance.now();
-			positions = computeForcePositions({
+			const forceRequest = {
 				clusters: data.clusters,
 				dimensions: data.dimensions,
 				edges: data.edges ?? new Uint32Array(),
@@ -129,13 +142,30 @@ workerScope.addEventListener("message", ({ data }) => {
 				nodeCount: data.nodeCount,
 				settings: data.settings,
 				warmStart: data.warmStart,
-			});
+			};
+			if (data.algorithm === "multilevel") {
+				const phases = { coarsenMs: 0, coarsestMs: 0, levels: 0, refineMs: 0 };
+				positions = computeMultilevelForcePositions(forceRequest, {
+					...data.multilevel,
+					onPreview: (preview) =>
+						workerScope.postMessage(
+							{ end: data.nodeCount, positions: preview, preview: true, run: data.run, type: "positions" },
+							[preview.buffer],
+						),
+					onProgress: ({ level, milliseconds, phase }) => {
+						if (phase === "coarsen") phases.levels = level;
+						phases[`${phase}Ms`] += milliseconds;
+					},
+				});
+				multilevelPhases = phases;
+			} else positions = computeForcePositions(forceRequest);
 			if (data.clusters) normalizeExtent(spreadClusters(positions, data.clusters), data.nodeCount);
 			computeMilliseconds = performance.now() - computeStartedAt;
 		}
 		activeLayout = {
 			computeMilliseconds,
 			nextStart: 0,
+			phases: multilevelPhases,
 			positions,
 			request: data,
 		};

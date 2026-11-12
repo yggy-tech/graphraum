@@ -109,6 +109,7 @@ import {
 	createNodeGeometry,
 	createNodeMaterial,
 	NODE_RENDER_ORDER,
+	setNodeBlendAt,
 	setNodeIconAt,
 	setNodeLighting,
 	setNodeShapeAt,
@@ -221,6 +222,8 @@ interface MaterializedNode {
 
 /** The instanced attributes one node's slot is written into. */
 interface NodeInstanceTargets {
+	blendA: InstancedBufferAttribute;
+	blendB: InstancedBufferAttribute;
 	icon: InstancedBufferAttribute;
 	matrix: Matrix4;
 	shape: InstancedBufferAttribute;
@@ -2725,6 +2728,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private nodeInstanceTargets(): NodeInstanceTargets {
 		const geometry = (this.nodeMesh as InstancedMesh).geometry;
 		return {
+			blendA: geometry.getAttribute("instanceBlendA") as InstancedBufferAttribute,
+			blendB: geometry.getAttribute("instanceBlendB") as InstancedBufferAttribute,
 			icon: geometry.getAttribute("instanceIcon") as InstancedBufferAttribute,
 			matrix: new Matrix4(),
 			shape: geometry.getAttribute("instanceShape") as InstancedBufferAttribute,
@@ -2735,7 +2740,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	/** Writes one node's matrix, pick matrix, color, shape and stroke into `slot`. */
 	private writeNodeInstance(
-		{ icon, matrix, shape, strokeColor, strokeWidth }: NodeInstanceTargets,
+		{ blendA, blendB, icon, matrix, shape, strokeColor, strokeWidth }: NodeInstanceTargets,
 		slot: number,
 		materialized: MaterializedNode,
 		node: GraphraumNode<NodeAttributes>,
@@ -2752,6 +2757,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		(this.nodeMesh as InstancedMesh).setColorAt(slot, this.getNodeColor(node));
 		setNodeShapeAt(shape, slot, node.shape);
 		setNodeIconAt(icon, slot, node.icon);
+		setNodeBlendAt(blendA, blendB, slot, node.blend);
 		setNodeStrokeAt(strokeWidth, strokeColor, slot, resolveNodeStroke(node, this.theme, this.extras.node.strokeWidth));
 	}
 
@@ -2912,6 +2918,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				(name) => [getInstancedAttribute(nodeMesh.geometry, name), 1] as const,
 			),
 			[getInstancedAttribute(nodeMesh.geometry, "instanceStrokeColor"), 3],
+			[getInstancedAttribute(nodeMesh.geometry, "instanceBlendA"), 4],
+			[getInstancedAttribute(nodeMesh.geometry, "instanceBlendB"), 4],
 		] as const;
 		for (const [attribute, size] of attributes) {
 			if (!attribute) continue;

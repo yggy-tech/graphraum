@@ -12,7 +12,7 @@ import { createColorResolver } from "./color-cache";
 import { DEFAULT_ICON_SCALE, type GraphraumIconAtlas, type GraphraumIconOptions } from "./node-icon";
 import { encodeNodeShape } from "./node-shapes";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
-import type { GraphraumColor, GraphraumNodeShape, GraphraumShading } from "./types";
+import type { GraphraumColor, GraphraumNodeBlend, GraphraumNodeShape, GraphraumShading } from "./types";
 
 // Do not declare `attribute vec3 instanceColor` here. Three.js injects it when
 // InstancedMesh.instanceColor is set (USE_INSTANCING_COLOR). A second declaration
@@ -22,6 +22,10 @@ attribute float instanceShape;
 attribute float instanceLens;
 attribute float instanceStrokeWidth;
 attribute vec3 instanceStrokeColor;
+attribute vec4 instanceBlendA;
+attribute vec4 instanceBlendB;
+varying vec4 nodeBlendA;
+varying vec4 nodeBlendB;
 varying vec3 nodeColor;
 varying vec2 nodePoint;
 varying float nodeShape;
@@ -43,6 +47,8 @@ void main() {
 	nodeShape = instanceShape;
 	nodeStrokeWidth = instanceStrokeWidth;
 	nodeStrokeColor = instanceStrokeColor;
+	nodeBlendA = instanceBlendA;
+	nodeBlendB = instanceBlendB;
 
 	vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
 	float scaleX = length(instanceMatrix[0].xyz) * instanceLens;
@@ -82,6 +88,8 @@ varying vec2 nodePoint;
 varying float nodeShape;
 varying float nodeStrokeWidth;
 varying vec3 nodeStrokeColor;
+varying vec4 nodeBlendA;
+varying vec4 nodeBlendB;
 #ifdef GRAPHRAUM_ICONS
 uniform sampler2D graphraumIconAtlas;
 // columns, rows, half-extent of an icon cell in half-heights, unused
@@ -195,10 +203,22 @@ void main() {
 	gl_FragDepth = clamp(surface.z / surface.w * 0.5 + 0.5, 0.0, 1.0);
 #endif
 
-	vec3 fillColor = nodeColor;
+	vec3 baseColor = nodeColor;
+	if (nodeBlendA.w + nodeBlendB.w > 0.0) {
+		// Soft radial blobs: the main colour on top, the blend colours below left and right, each as strong as its share.
+		float mainShare = max(1.0 - nodeBlendA.w - nodeBlendB.w, 0.0);
+		vec2 toMain = nodePoint - vec2(0.0, 0.42);
+		vec2 toA = nodePoint - vec2(-0.36, -0.21);
+		vec2 toB = nodePoint - vec2(0.36, -0.21);
+		float mainBlob = mainShare * exp(-dot(toMain, toMain) * 2.2) + 0.0001;
+		float blobA = nodeBlendA.w * exp(-dot(toA, toA) * 2.2);
+		float blobB = nodeBlendB.w * exp(-dot(toB, toB) * 2.2);
+		baseColor = (nodeColor * mainBlob + nodeBlendA.rgb * blobA + nodeBlendB.rgb * blobB) / (mainBlob + blobA + blobB);
+	}
+	vec3 fillColor = baseColor;
 #ifdef GRAPHRAUM_SHADING
 	// Only the fill takes light; the stroke stays unlit and reads as a rim.
-	fillColor = shade(nodeColor, surfaceNormal(distanceToEdge, nodeShape < 0.5));
+	fillColor = shade(baseColor, surfaceNormal(distanceToEdge, nodeShape < 0.5));
 #endif
 	if (nodeStrokeWidth > 0.0) {
 		// Stroke band occupies [outer edge, outer edge - nodeStrokeWidth]; below that, the fill takes over.
@@ -232,6 +252,9 @@ export function createNodeGeometry(capacity: number) {
 	geometry.setAttribute("instanceIcon", new InstancedBufferAttribute(new Float32Array(capacity).fill(-1), 1));
 	geometry.setAttribute("instanceStrokeWidth", new InstancedBufferAttribute(new Float32Array(capacity), 1));
 	geometry.setAttribute("instanceStrokeColor", new InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
+	// Blend colours with their share in w; a zero share draws the plain fill.
+	geometry.setAttribute("instanceBlendA", new InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
+	geometry.setAttribute("instanceBlendB", new InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
 	return geometry;
 }
 
@@ -374,4 +397,25 @@ export function setNodeStrokeAt(
 	strokeWidthAttribute.setX(index, strokeWidthUv);
 	const rgb = resolveStrokeColor(strokeColor);
 	strokeColorAttribute.setXYZ(index, rgb.r, rgb.g, rgb.b);
+}
+
+const resolveBlendColor = createColorResolver();
+
+/** Writes a node's blend colours into its slot. A node without a blend only clears the two shares. */
+export function setNodeBlendAt(
+	blendA: InstancedBufferAttribute,
+	blendB: InstancedBufferAttribute,
+	index: number,
+	blend: readonly GraphraumNodeBlend[] | undefined,
+) {
+	for (const [position, attribute] of [blendA, blendB].entries()) {
+		const entry = blend?.[position];
+		const weight = entry ? Math.min(Math.max(entry.weight, 0), 1) : 0;
+		if (!entry || weight === 0) {
+			attribute.setW(index, 0);
+			continue;
+		}
+		const rgb = resolveBlendColor(entry.color);
+		attribute.setXYZW(index, rgb.r, rgb.g, rgb.b, weight);
+	}
 }

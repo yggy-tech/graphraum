@@ -7,6 +7,9 @@ export const SCALING_SIZES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_
 /** The cluster LOD series run the same ladder; at 1M and 5M the plain renderer cannot draw everything. */
 export const LOD_SCALING_SIZES = SCALING_SIZES;
 
+/** The same cases with the split and merge animation off, at three sizes. */
+export const LOD_INSTANT_SIZES = [10_000, 100_000, 1_000_000] as const;
+
 /** 60 fps frame budget in milliseconds. */
 export const FRAME_BUDGET_MS = 16.7;
 
@@ -59,6 +62,22 @@ export const SCALING_SERIES: readonly ScalingSeriesSpec[] = [
 		phase: "warm",
 		sizes: LOD_SCALING_SIZES,
 		title: "3D orbit with cluster LOD, main-thread ms per frame",
+	},
+	{
+		caseSeries: "lodinstant2d",
+		id: "lodinstant2d",
+		metric: "totalMs",
+		phase: "warm",
+		sizes: LOD_INSTANT_SIZES,
+		title: "2D pan with cluster LOD, animation off, main-thread ms per frame",
+	},
+	{
+		caseSeries: "lodinstant3d",
+		id: "lodinstant3d",
+		metric: "totalMs",
+		phase: "warm",
+		sizes: LOD_INSTANT_SIZES,
+		title: "3D orbit with cluster LOD, animation off, main-thread ms per frame",
 	},
 	{
 		caseSeries: "lodpan2d",

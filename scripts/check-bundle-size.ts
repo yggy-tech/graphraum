@@ -14,13 +14,14 @@ import { dirname, join } from "node:path";
 // Main entry 49.1 KiB after the force layout moved to the layout entry; 56 000 left as room.
 // 7 500 for the layout entry: force layout, styles, clusters, anchors and warm start, 5.9 KiB when split out.
 // 8 200 for the lod entry (#229): cluster tree, cut and the attach layer, 7.6 KiB when added; kept out of the main bundle.
+// 12 800 for the lod entry since glyph colours, count labels, click to zoom and the split and merge animation: 12.2 KiB at that change. The main entry grew 0.5 KiB (54.1 to 54.6) for the node blend attribute and shader, inside its 54.7 KiB budget.
 // 10 500 for the layout-multilevel entry: the force layout chunk it shares with layout (5.9 KiB) plus coarsening and level refinement (3.0 KiB).
 const BUDGETS = [
 	{ file: "dist/index.js", gzipBytes: 56_300 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout.js", gzipBytes: 7_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },
-	{ file: "dist/lod.js", gzipBytes: 8_200 },
+	{ file: "dist/lod.js", gzipBytes: 12_800 },
 	{ file: "dist/layout-multilevel.js", gzipBytes: 10_500 },
 	{ file: "dist/icons.js", gzipBytes: 1_500 },
 ];

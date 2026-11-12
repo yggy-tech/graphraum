@@ -9,6 +9,8 @@
  */
 
 export interface ClusterTreeInput {
+	/** Optional colour per node as 0xRRGGBB. Each cluster then keeps its three most common colours (see `ClusterTree.colorKey`). */
+	colors?: Uint32Array;
 	/** 2 for x,y; 3 for x,y,z. */
 	dimensions: 2 | 3;
 	/** One pair of node indices per edge. */
@@ -29,6 +31,13 @@ export interface ClusterTree {
 	adjacencyStart: Uint32Array;
 	adjacencyTarget: Uint32Array;
 	adjacencyWeight: Float32Array;
+	/**
+	 * The three most common member colours of cluster `c` at `colorKey[c * 3 .. c * 3 + 2]`, most common first, with
+	 * their member counts in `colorCount`. Empty slots count 0. Null when the tree was built without colours.
+	 * Counts of internal clusters merge the top colours of their children, so they are exact for leaves and approximate above.
+	 */
+	colorCount: Uint32Array | null;
+	colorKey: Uint32Array | null;
 	/** Cluster centroids, `dimensions` floats each. */
 	centroid: Float32Array;
 	childCount: Uint32Array;
@@ -95,6 +104,9 @@ function assertInput(input: ClusterTreeInput): { leafSize: number; maxNeighbors:
 	}
 	for (const value of positions) {
 		if (!Number.isFinite(value)) throw new Error("Cluster tree positions must be finite numbers.");
+	}
+	if (input.colors && input.colors.length !== nodeCount) {
+		throw new Error("Cluster tree colors must hold one number per node.");
 	}
 	if (edges) {
 		if (edges.length % 2 !== 0) throw new Error("Cluster tree edges must hold two node indices per edge.");
@@ -264,6 +276,39 @@ function computeShapes(
 	return { centroid, radius };
 }
 
+const COLOR_SLOTS = 3;
+
+/** The most common colours of every cluster, children before parents. */
+function summarizeColors(skeleton: Skeleton, order: Uint32Array, colors: Uint32Array) {
+	const clusterCount = skeleton.parent.length;
+	const keys = new Uint32Array(clusterCount * COLOR_SLOTS);
+	const counts = new Uint32Array(clusterCount * COLOR_SLOTS);
+	const tally = new Map<number, number>();
+	for (let cluster = clusterCount - 1; cluster >= 0; cluster -= 1) {
+		const childCount = skeleton.childCount[cluster] as number;
+		if (childCount === 0) {
+			const start = skeleton.memberStart[cluster] as number;
+			for (let rank = start; rank < start + (skeleton.memberCount[cluster] as number); rank += 1) {
+				const color = colors[order[rank] as number] as number;
+				tally.set(color, (tally.get(color) ?? 0) + 1);
+			}
+		} else {
+			const first = skeleton.childStart[cluster] as number;
+			for (let slot = first * COLOR_SLOTS; slot < (first + childCount) * COLOR_SLOTS; slot += 1) {
+				const count = counts[slot] as number;
+				if (count > 0) tally.set(keys[slot] as number, (tally.get(keys[slot] as number) ?? 0) + count);
+			}
+		}
+		const top = [...tally].sort((left, right) => right[1] - left[1] || left[0] - right[0]).slice(0, COLOR_SLOTS);
+		tally.clear();
+		for (const [position, [key, count]] of top.entries()) {
+			keys[cluster * COLOR_SLOTS + position] = key;
+			counts[cluster * COLOR_SLOTS + position] = count;
+		}
+	}
+	return { counts, keys };
+}
+
 /** The edges of every node in one flat list, both directions. */
 function buildNodeEdges(nodeCount: number, edges: Uint32Array | undefined) {
 	const edgeCount = edges ? edges.length / 2 : 0;
@@ -378,7 +423,10 @@ export function buildClusterTree(input: ClusterTreeInput): ClusterTree {
 	const edgeWeights = input.weights ? Float32Array.from(input.weights) : null;
 	const nodeEdges = buildNodeEdges(nodeCount, input.edges);
 	const aggregated = aggregateEdges(skeleton, order, nodeEdges, edgeWeights, maxNeighbors);
+	const summary = input.colors ? summarizeColors(skeleton, order, input.colors) : null;
 	return {
+		colorCount: summary?.counts ?? null,
+		colorKey: summary?.keys ?? null,
 		adjacencyCount: aggregated.adjacencyCount,
 		adjacencyStart: aggregated.adjacencyStart,
 		adjacencyTarget: aggregated.adjacencyTarget,

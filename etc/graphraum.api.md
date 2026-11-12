@@ -470,6 +470,13 @@ export type GraphraumMode = "2d" | "3d";
 export type GraphraumNode<NodeAttributes = undefined> = GraphraumNodeGeometry & GraphraumAttributes<NodeAttributes>;
 
 // @public
+export interface GraphraumNodeBlend {
+    // (undocumented)
+    color: GraphraumColor;
+    weight: number;
+}
+
+// @public
 export interface GraphraumNodeDragEvent {
     // (undocumented)
     nodeId: string;
@@ -498,6 +505,7 @@ export interface GraphraumNodeEncoding {
 
 // @public (undocumented)
 export interface GraphraumNodeGeometry {
+    blend?: readonly GraphraumNodeBlend[];
     // (undocumented)
     color?: GraphraumColor;
     glow?: number;

@@ -23,6 +23,7 @@ bun run test:browser
 bun run build
 bun run check:package   # publint, type resolution, bundle size budget
 bun run api:update      # after a public API change: refresh etc/graphraum.api.md
+bun run bench           # browser benchmark suite (needs `bun install --cwd docs`); writes bench-results/*.md and *.json
 bun run docs:check
 bun run docs:test
 bun run docs:build
@@ -48,7 +49,7 @@ Apply these in order; later principles never override correctness or a clear pub
 2. **YAGNI:** implement the smallest capability required by a real use case or benchmark. Do not build speculative abstractions, adapters, or configuration surfaces.
 3. **DRY:** keep one source of truth for contracts, theme values, fixture rules, and documentation. Remove duplication when it represents the same decision; do not merge code that merely looks similar.
 4. **SOLID, pragmatically:** keep responsibilities focused, extend through narrow contracts, preserve substitutability, expose small interfaces, and point dependencies toward stable graphraum types. Prefer a clear function over a class hierarchy that exists only to demonstrate a principle.
-5. **Performance claims require proof:** use the live benchmark and diagnostics. Report fixture size, browser, pixel ratio, protocol, and full result; never generalize one favorable run into a universal claim.
+5. **Performance claims require proof:** use the live benchmark, `bun run bench` (fresh page per run, cold and warm phases, GPU timing when the browser has it) and diagnostics. Report fixture size, browser, pixel ratio, protocol, and full result; never generalize one favorable run into a universal claim.
 
 Prefer simple data flow, explicit arguments, immutable public inputs, early guards, and short focused functions. Avoid `any`, non-null assertions, hidden animation loops, per-node objects in the render hot path, and framework-specific state in the core.
 

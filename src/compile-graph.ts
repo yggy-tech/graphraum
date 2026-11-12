@@ -14,13 +14,13 @@ import type {
 export interface CompiledGraph {
 	edgeNodeIndices: Uint32Array;
 	edgePositions: Float32Array;
-	edgePresentations: ReadonlyMap<string, CompiledGraphraumPresentation>;
+	edgePresentations: Map<string, CompiledGraphraumPresentation>;
 	edgeVisuals: readonly Readonly<GraphraumEdgeVisual>[];
 	incidentEdgeIndices: readonly (readonly number[])[];
 	nodeIds: readonly string[];
-	nodeIndices: ReadonlyMap<string, number>;
+	nodeIndices: Map<string, number>;
 	nodePositions: Float32Array;
-	nodePresentations: ReadonlyMap<string, CompiledGraphraumPresentation>;
+	nodePresentations: Map<string, CompiledGraphraumPresentation>;
 	nodeVisuals: readonly Readonly<GraphraumNodeVisual>[];
 }
 
@@ -92,6 +92,7 @@ function assertNonNegativeFiniteVisual(id: string, field: string, value: number 
 	}
 }
 
+/** Validates and freezes `visual` in place; callers pass an object they own. */
 function compileNodeVisual(id: string, visual: GraphraumNodeVisual): Readonly<GraphraumNodeVisual> {
 	assertPositiveFiniteVisual(id, "size", visual.size);
 	assertPositiveFiniteVisual(id, "width", visual.width);
@@ -100,33 +101,50 @@ function compileNodeVisual(id: string, visual: GraphraumNodeVisual): Readonly<Gr
 	assertNodeGlow(id, visual.glow);
 	assertNodeIcon(id, visual.icon);
 	if (visual.shape !== undefined) assertNodeShape(id, visual.shape);
-	return Object.freeze({ ...visual });
+	return Object.freeze(visual);
 }
 
 function compileEdgeVisual(id: string, visual: GraphraumEdgeVisual): Readonly<GraphraumEdgeVisual> {
 	assertEdgeVisual(id, visual);
-	return Object.freeze({ ...visual });
+	return Object.freeze(visual);
 }
+
+const EDGE_VISUAL_KEYS = [
+	"color",
+	"width",
+	"opacity",
+	"style",
+	"marker",
+	"markerSize",
+	"markerEnd",
+	"path",
+	"controlPoints",
+] as const satisfies readonly (keyof GraphraumEdgeVisual)[];
 
 /** Validates graph identity and compiles lookup-heavy objects into GPU-oriented position buffers. */
 export function compileGraph<NodeAttributes = undefined, EdgeAttributes = undefined>(
 	data: GraphraumData<NodeAttributes, EdgeAttributes>,
 	visuals?: GraphraumVisualMapper<NodeAttributes, EdgeAttributes>,
 ): CompiledGraph {
+	const nodeCount = data.nodes.length;
+	const edgeCount = data.edges.length;
 	const nodeIndices = new Map<string, number>();
-	const nodePositions = new Float32Array(data.nodes.length * 3);
+	const nodePositions = new Float32Array(nodeCount * 3);
 	const nodePresentations = new Map<string, CompiledGraphraumPresentation>();
-	const nodeVisuals: Readonly<GraphraumNodeVisual>[] = [];
+	const nodeVisuals: Readonly<GraphraumNodeVisual>[] = new Array(nodeCount);
+	const nodeIds: string[] = new Array(nodeCount);
 
-	for (const [index, node] of data.nodes.entries()) {
+	for (let index = 0; index < nodeCount; index += 1) {
+		const node = data.nodes[index] as (typeof data.nodes)[number];
 		if (nodeIndices.has(node.id)) throw new Error(`Duplicate node id: "${node.id}"`);
+		const z = node.position.z ?? 0;
 		assertFinitePosition(node.id, "x", node.position.x);
 		assertFinitePosition(node.id, "y", node.position.y);
-		assertFinitePosition(node.id, "z", node.position.z ?? 0);
+		assertFinitePosition(node.id, "z", z);
 		const encoding = visuals?.node?.(node);
-		const visual = compileNodeVisual(
+		nodeVisuals[index] = compileNodeVisual(
 			node.id,
-			encoding?.visual ?? {
+			(encoding?.visual && { ...encoding.visual }) || {
 				color: node.color,
 				glow: node.glow,
 				height: node.height,
@@ -138,38 +156,39 @@ export function compileGraph<NodeAttributes = undefined, EdgeAttributes = undefi
 				width: node.width,
 			},
 		);
-		nodeVisuals.push(visual);
 		if (encoding?.presentation) {
 			nodePresentations.set(node.id, compilePresentation("Node", node.id, encoding.presentation));
 		}
 
+		nodeIds[index] = node.id;
 		nodeIndices.set(node.id, index);
-		nodePositions.set([node.position.x, node.position.y, node.position.z ?? 0], index * 3);
+		nodePositions[index * 3] = node.position.x;
+		nodePositions[index * 3 + 1] = node.position.y;
+		nodePositions[index * 3 + 2] = z;
 	}
 
 	const edgeIds = new Set<string>();
-	const edgeNodeIndices = new Uint32Array(data.edges.length * 2);
-	const edgePositions = new Float32Array(data.edges.length * 6);
+	const edgeNodeIndices = new Uint32Array(edgeCount * 2);
+	const edgePositions = new Float32Array(edgeCount * 6);
 	const edgePresentations = new Map<string, CompiledGraphraumPresentation>();
-	const edgeVisuals: Readonly<GraphraumEdgeVisual>[] = [];
-	const incidentEdgeIndices = Array.from({ length: data.nodes.length }, () => [] as number[]);
-	for (const [index, edge] of data.edges.entries()) {
+	const edgeVisuals: Readonly<GraphraumEdgeVisual>[] = new Array(edgeCount);
+	const incidentEdgeIndices: number[][] = new Array(nodeCount);
+	for (let index = 0; index < nodeCount; index += 1) incidentEdgeIndices[index] = [];
+	for (let index = 0; index < edgeCount; index += 1) {
+		const edge = data.edges[index] as (typeof data.edges)[number];
 		if (edgeIds.has(edge.id)) throw new Error(`Duplicate edge id: "${edge.id}"`);
 		edgeIds.add(edge.id);
 		const encoding = visuals?.edge?.(edge);
-		const visual = compileEdgeVisual(edge.id, {
-			color: edge.color,
-			width: edge.width,
-			opacity: edge.opacity,
-			style: edge.style,
-			marker: edge.marker,
-			markerSize: edge.markerSize,
-			markerEnd: edge.markerEnd,
-			path: edge.path,
-			controlPoints: edge.controlPoints,
-			...encoding?.visual,
-		});
-		edgeVisuals.push(visual);
+		// Edges that style themselves alike share one frozen visual; consumers copy it, never edit it.
+		const previous = edgeVisuals[index - 1];
+		if (!encoding?.visual && previous && EDGE_VISUAL_KEYS.every((key) => previous[key] === edge[key])) {
+			edgeVisuals[index] = previous;
+		} else {
+			const visual: GraphraumEdgeVisual = {};
+			for (const key of EDGE_VISUAL_KEYS) (visual as Record<string, unknown>)[key] = edge[key];
+			Object.assign(visual, encoding?.visual);
+			edgeVisuals[index] = compileEdgeVisual(edge.id, visual);
+		}
 		if (encoding?.presentation) {
 			edgePresentations.set(edge.id, compilePresentation("Edge", edge.id, encoding.presentation));
 		}
@@ -178,12 +197,15 @@ export function compileGraph<NodeAttributes = undefined, EdgeAttributes = undefi
 		const targetIndex = nodeIndices.get(edge.target);
 		if (sourceIndex === undefined) throw new Error(`Edge "${edge.id}" references missing source "${edge.source}"`);
 		if (targetIndex === undefined) throw new Error(`Edge "${edge.id}" references missing target "${edge.target}"`);
-		edgeNodeIndices.set([sourceIndex, targetIndex], index * 2);
-		incidentEdgeIndices[sourceIndex]?.push(index);
-		if (targetIndex !== sourceIndex) incidentEdgeIndices[targetIndex]?.push(index);
+		edgeNodeIndices[index * 2] = sourceIndex;
+		edgeNodeIndices[index * 2 + 1] = targetIndex;
+		(incidentEdgeIndices[sourceIndex] as number[]).push(index);
+		if (targetIndex !== sourceIndex) (incidentEdgeIndices[targetIndex] as number[]).push(index);
 
-		edgePositions.set(nodePositions.subarray(sourceIndex * 3, sourceIndex * 3 + 3), index * 6);
-		edgePositions.set(nodePositions.subarray(targetIndex * 3, targetIndex * 3 + 3), index * 6 + 3);
+		for (let axis = 0; axis < 3; axis += 1) {
+			edgePositions[index * 6 + axis] = nodePositions[sourceIndex * 3 + axis] as number;
+			edgePositions[index * 6 + 3 + axis] = nodePositions[targetIndex * 3 + axis] as number;
+		}
 	}
 
 	return {
@@ -192,7 +214,7 @@ export function compileGraph<NodeAttributes = undefined, EdgeAttributes = undefi
 		edgePresentations,
 		edgeVisuals,
 		incidentEdgeIndices,
-		nodeIds: data.nodes.map((node) => node.id),
+		nodeIds,
 		nodeIndices,
 		nodePositions,
 		nodePresentations,

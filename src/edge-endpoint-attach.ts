@@ -29,6 +29,9 @@ export interface TrimEdgeEndpointsInput {
 	targetOutline: EndpointOutline;
 }
 
+const MAX_CIRCLE_RADII = 256;
+const circleRadii = new Map<number, number>();
+
 /**
  * Distance from the node center to its outline (stroke included) along a unit heading in the
  * billboard plane, in world units. Every shape fits its `[-1, 1]` box, so the box diagonal bounds
@@ -43,12 +46,20 @@ function outlineRadius(outline: EndpointOutline, headingX: number, headingY: num
 	const stroke = Math.max(0, outline.strokeWidth ?? 0);
 	const halfWidth = width + stroke;
 	const halfHeight = height + stroke;
+	// A circle reaches the same distance along every heading, so one search serves all the edges of a size.
+	const round = halfWidth === halfHeight && (outline.shape ?? "circle") === "circle";
+	const cached = round ? circleRadii.get(halfWidth) : undefined;
+	if (cached !== undefined) return cached;
 	let low = 0;
 	let high = Math.hypot(halfWidth, halfHeight);
 	for (let step = 0; step < 24; step += 1) {
 		const mid = (low + high) / 2;
 		if (containsNodePoint(outline.shape, (headingX * mid) / halfWidth, (headingY * mid) / halfHeight)) low = mid;
 		else high = mid;
+	}
+	if (round) {
+		if (circleRadii.size >= MAX_CIRCLE_RADII) circleRadii.clear();
+		circleRadii.set(halfWidth, low);
 	}
 	return low;
 }

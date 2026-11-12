@@ -28,6 +28,7 @@ import { AutoOrbitLoop } from "./auto-orbit-loop";
 import { applyPerspectiveContainerAspect, containerAspect } from "./camera-aspect";
 import { easeInOutCubic, flightProgress, interpolateScale, resolveFlyToOptions } from "./camera-flight";
 import { perspectiveClipRange, validateCameraState } from "./camera-state";
+import { createColorResolver } from "./color-cache";
 import { compileGraph } from "./compile-graph";
 import { dataPatchFitsCapacity, isAppendOnlyDataPatch, type MergedGraphData, mergeDataPatch } from "./data-patch";
 import {
@@ -342,6 +343,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private readonly flightDirection = new Vector3();
 	/** True only during the orbit's own `controls.update(dt)`; see `handleViewChange`. */
 	private orbitUpdating = false;
+	private readonly resolveColor = createColorResolver();
 	private basePixelRatio = 1;
 	private interactionQuality: ResolvedInteractionQualityOptions = INTERACTION_QUALITY_DEFAULTS;
 	private qualityGovernor: InteractionQualityGovernor | null = null;
@@ -484,13 +486,13 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		};
 		this.nodeIds = compiled.nodeIds;
 		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
-		this.nodeIndices = new Map(compiled.nodeIndices);
+		this.nodeIndices = compiled.nodeIndices;
 		this.lensScales.fill(0);
 		this.edgeNodeIndices = compiled.edgeNodeIndices;
 		this.canonicalEdgePositions = compiled.edgePositions;
 		this.incidentEdgeIndices = compiled.incidentEdgeIndices;
-		this.nodePresentations = new Map(compiled.nodePresentations);
-		this.edgePresentations = new Map(compiled.edgePresentations);
+		this.nodePresentations = compiled.nodePresentations;
+		this.edgePresentations = compiled.edgePresentations;
 		this.spatialGrid2d = new SpatialGrid2D();
 		for (const [index, node] of this.data.nodes.entries()) this.spatialGrid2d.set(index, node);
 		const liveNodeIds = new Set(this.nodeIds);
@@ -712,13 +714,13 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		};
 		this.nodeIds = compiled.nodeIds;
 		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
-		this.nodeIndices = new Map(compiled.nodeIndices);
+		this.nodeIndices = compiled.nodeIndices;
 		this.lensScales.fill(0);
 		this.edgeNodeIndices = compiled.edgeNodeIndices;
 		this.canonicalEdgePositions = compiled.edgePositions;
 		this.incidentEdgeIndices = compiled.incidentEdgeIndices;
-		this.nodePresentations = new Map(compiled.nodePresentations);
-		this.edgePresentations = new Map(compiled.edgePresentations);
+		this.nodePresentations = compiled.nodePresentations;
+		this.edgePresentations = compiled.edgePresentations;
 		this.spatialGrid2d = new SpatialGrid2D();
 		for (const [index, node] of this.data.nodes.entries()) this.spatialGrid2d.set(index, node);
 		this.pruneEdgeStates();
@@ -1039,6 +1041,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	/** Drops edge states whose edges left the graph. */
 	private pruneEdgeStates() {
+		if (this.selectedEdgeIds.size + this.dimmedEdgeIds.size + this.edgeColors.size === 0) return;
 		const indices = this.edgeIndicesById();
 		this.selectedEdgeIds = new Set([...this.selectedEdgeIds].filter((id) => indices.has(id)));
 		this.dimmedEdgeIds = new Set([...this.dimmedEdgeIds].filter((id) => indices.has(id)));
@@ -1673,7 +1676,13 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 
 		this.camera.updateProjectionMatrix();
-		this.controls.update();
+		// The full pass below packs the new view, so the change event must not pack it a second time.
+		this.orbitUpdating = true;
+		try {
+			this.controls.update();
+		} finally {
+			this.orbitUpdating = false;
+		}
 		this.materializeViewport();
 		this.requestRender();
 	}
@@ -1969,7 +1978,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.fitView();
 			return;
 		}
-		this.materializeViewport();
+		// The same size packs the same view; only a new size changes what the camera frames.
+		if (sizeChanged) this.materializeViewport();
 		this.requestRender();
 	}
 
@@ -2388,12 +2398,18 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 	}
 
+	/** The node's display color in a scratch `Color` that the next call overwrites: copy it out at once. */
 	private getNodeColor(node: GraphraumData<NodeAttributes, EdgeAttributes>["nodes"][number]) {
-		if (this.focusedNodeIds.has(node.id)) return new Color(this.theme.focusedNode);
-		if (this.selectedNodeIds.has(node.id)) return new Color(this.theme.selectedNode);
-		if (this.hoveredNodeIds.has(node.id)) return new Color(this.theme.hoveredNode);
-		if (this.dimmedNodeIds.has(node.id)) return new Color(this.theme.dimmedNode);
-		return new Color(node.color ?? this.theme.node);
+		const source = this.focusedNodeIds.has(node.id)
+			? this.theme.focusedNode
+			: this.selectedNodeIds.has(node.id)
+				? this.theme.selectedNode
+				: this.hoveredNodeIds.has(node.id)
+					? this.theme.hoveredNode
+					: this.dimmedNodeIds.has(node.id)
+						? this.theme.dimmedNode
+						: (node.color ?? this.theme.node);
+		return this.resolveColor(source);
 	}
 
 	private getViewportBounds2d(): Bounds2D | null {

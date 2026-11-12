@@ -1,4 +1,5 @@
-import { type BufferGeometry, Color, InstancedBufferAttribute, PlaneGeometry, ShaderMaterial } from "three";
+import { type BufferGeometry, InstancedBufferAttribute, PlaneGeometry, ShaderMaterial } from "three";
+import { createColorResolver } from "./color-cache";
 
 import type { EdgeMarkerInstance, EdgeSegmentInstance } from "./edge-materialize";
 import type { EdgePaint } from "./edge-state";
@@ -292,8 +293,10 @@ export function writeEdgeMarkerInstance(geometry: BufferGeometry, slot: number, 
 	getInstancedAttribute(geometry, "instanceTrim").setXY(slot, marker.trim, 0);
 }
 
+const resolveEdgeColor = createColorResolver();
+
 /** Writes one color and opacity into `count` consecutive instance slots starting at `start`. */
 export function writeEdgeColorSlots(color: InstancedBufferAttribute, start: number, count: number, paint: EdgePaint) {
-	const rgb = new Color(paint.color);
+	const rgb = resolveEdgeColor(paint.color);
 	for (let slot = start; slot < start + count; slot += 1) color.setXYZW(slot, rgb.r, rgb.g, rgb.b, paint.opacity);
 }

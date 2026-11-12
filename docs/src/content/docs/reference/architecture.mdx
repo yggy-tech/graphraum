@@ -26,6 +26,10 @@ Layout producers can send `GraphraumLayoutPositions` batches: node IDs plus tran
 
 graphraum renders when data, selection, camera controls, mode, or container size changes. It does not keep an idle animation loop alive. The one exception is an opt-in 3D auto-orbit (`setAutoOrbit`), which runs a frame loop only while it is actively orbiting and only renders on those frames, without rebuilding node or edge instances. Calls within one browser frame are coalesced through `requestAnimationFrame`.
 
+## Interaction quality
+
+Opt-in `interactionQuality` is a small governor on top of on-demand rendering. Camera changes mark motion, each rendered frame after a camera change is timed, and three slow frames in a row lower one tier. A tier is a pixel ratio and a budget scale; it reuses the same `maxVisibleEdges`, `maxVisibleNodes` and `setPixelRatio` paths as full quality and rematerializes the viewport once per tier change. One idle timer restores tier 0, so the tier cannot oscillate. It adds no draw call and never touches data.
+
 ## Viewport materialization
 
 In 2D, graphraum queries visible nodes from its spatial grid with an overscan margin, derives unique incident edges without scanning the full edge list, and compacts that subset into the existing node and edge GPU buffers. The renderer remains at two draw calls; the opt-in node [glow](../../guide/theme/#glow) adds one bounded halo draw call only while a visible node glows. Opt-in 3D [depth of field](../../guide/camera-and-3d/#depth-of-field) adds four post-process draw calls only on frames that blur.

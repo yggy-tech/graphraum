@@ -79,6 +79,15 @@ import {
 	resolveFocusLensOptions,
 } from "./focus-lens";
 import { markInstanceColorSlots } from "./instance-color-ranges";
+import {
+	INTERACTION_QUALITY_DEFAULTS,
+	INTERACTION_TIERS,
+	InteractionQualityGovernor,
+	type ResolvedInteractionQualityOptions,
+	resolveInteractionQualityOptions,
+	scaledBudget,
+	scaledPixelRatio,
+} from "./interaction-quality";
 import { prepareLayoutPositions } from "./layout-positions";
 import { resolveNodeAxes } from "./node-axes";
 import { NodeDragController } from "./node-drag";
@@ -128,6 +137,7 @@ import type {
 	GraphraumEdgeState,
 	GraphraumFlyToOptions,
 	GraphraumFocusLensOptions,
+	GraphraumInteractionQualityOptions,
 	GraphraumLabelCandidate,
 	GraphraumLayoutPositions,
 	GraphraumMode,
@@ -312,6 +322,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private readonly flightDirection = new Vector3();
 	/** True only during the orbit's own `controls.update(dt)`; see `handleViewChange`. */
 	private orbitUpdating = false;
+	private basePixelRatio = 1;
+	private interactionQuality: ResolvedInteractionQualityOptions = INTERACTION_QUALITY_DEFAULTS;
+	private qualityGovernor: InteractionQualityGovernor | null = null;
 	private destroyed = false;
 	private canvasWidth = 0;
 	private canvasHeight = 0;
@@ -374,7 +387,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			const extension = context.getExtension("EXT_disjoint_timer_query_webgl2");
 			if (extension) this.gpuTimer = { context, extension, pending: [] };
 		}
-		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, options.maxPixelRatio ?? 2));
+		this.basePixelRatio = Math.min(window.devicePixelRatio, options.maxPixelRatio ?? 2);
+		this.renderer.setPixelRatio(this.basePixelRatio);
 		this.renderer.domElement.style.display = "block";
 		this.renderer.domElement.style.height = "100%";
 		this.renderer.domElement.style.width = "100%";
@@ -390,6 +404,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.resizeObserver = new ResizeObserver(() => this.resize());
 		this.resizeObserver.observe(container);
 		this.resize();
+		if (options.interactionQuality !== undefined) this.setInteractionQuality(options.interactionQuality);
 	}
 
 	/** Replaces the whole graph. Fits the camera unless `options.fit` is `false`. */
@@ -1185,6 +1200,48 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.requestRender();
 	}
 
+	/**
+	 * Turns lower quality while the camera moves on or off (default off); omitted fields keep their
+	 * value. Enabled, frames of a moving camera that run slower than `targetFrameMs` step the tier
+	 * down (`getDiagnostics().interactionQuality`): the render pixel ratio drops and so do the
+	 * visible edge budget and, in 2D, the visible node budget (3D keeps every node, because a cut
+	 * node list would drop nodes instead of thinning them). After `idleMs` without a camera change
+	 * full quality returns at once. Only render resolution and budgets change, never data, and no
+	 * draw call is added. Invalid options throw before anything changes.
+	 */
+	setInteractionQuality(options: GraphraumInteractionQualityOptions) {
+		const resolved = resolveInteractionQualityOptions(options, this.interactionQuality);
+		if (this.destroyed) return;
+		this.interactionQuality = resolved;
+		const loweredBefore = this.qualityTier !== 0;
+		this.qualityGovernor?.dispose();
+		this.qualityGovernor = resolved.enabled
+			? new InteractionQualityGovernor(resolved, () => this.applyQualityTier())
+			: null;
+		if (loweredBefore) this.applyQualityTier();
+	}
+
+	private get qualityTier() {
+		return this.qualityGovernor?.tier ?? 0;
+	}
+
+	private get edgeBudget() {
+		return scaledBudget(this.maxVisibleEdges, this.qualityTier);
+	}
+
+	private get nodeBudget() {
+		return this.mode === "2d" ? scaledBudget(this.maxVisibleNodes, this.qualityTier) : this.maxVisibleNodes;
+	}
+
+	/** Applies the tier: the pixel ratio and the budgets, in one frame. */
+	private applyQualityTier() {
+		this.renderer.setPixelRatio(scaledPixelRatio(this.basePixelRatio, this.qualityTier));
+		// The density hysteresis would keep clusters on after the budget is back at full.
+		if (this.qualityTier === 0) this.densityLodActive = false;
+		this.materializeViewport();
+		this.requestRender();
+	}
+
 	/** The focus lens options in effect, including defaults. */
 	getFocusLens(): ResolvedFocusLensOptions {
 		return this.focusLens;
@@ -1526,6 +1583,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			gpuDrawCalls: this.renderer.info.render.calls,
 			gpuGeometries: this.renderer.info.memory.geometries,
 			gpuTextures: this.renderer.info.memory.textures,
+			interactionQuality: INTERACTION_TIERS[this.qualityTier]?.name ?? "full",
 			lodLevel: resolveLodLevel(this.densityLodActive, this.visibleEdgeCandidateCount, this.visibleEdgeCount),
 			pickingStrategy: this.mode === "2d" ? "spatial-grid-2d" : "raycaster-3d",
 			coloredEdges: this.edgeColors.size,
@@ -1897,6 +1955,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.cancelFlight();
 		this.nodeDrag.dispose();
 		this.stopAutoOrbit();
+		this.qualityGovernor?.dispose();
+		this.qualityGovernor = null;
 		this.resizeObserver.disconnect();
 		this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
 		this.renderer.domElement.removeEventListener("pointerleave", this.handlePointerLeave);
@@ -1934,6 +1994,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private renderFrame() {
+		this.qualityGovernor?.frame();
 		this.updateFocusLens();
 		this.readGpuTimers();
 		const timer = this.gpuTimer;
@@ -2109,6 +2170,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * call, so an orbit frame needs only a render, whose view listeners still run every frame.
 	 */
 	private readonly handleViewChange = () => {
+		this.qualityGovernor?.motion();
 		if (!this.orbitUpdating) this.materializeViewport();
 		this.requestRender();
 	};
@@ -2385,11 +2447,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const visibleNodeCandidates = bounds
 			? this.spatialGrid2d.queryBounds(bounds, this.viewportOverscan)
 			: this.data.nodes.map((_, index) => index);
-		this.densityLodActive = shouldUseDensityLod(
-			visibleNodeCandidates.length,
-			this.maxVisibleNodes,
-			this.densityLodActive,
-		);
+		this.densityLodActive = shouldUseDensityLod(visibleNodeCandidates.length, this.nodeBudget, this.densityLodActive);
 		const materializedNodes = this.materializeNodes(visibleNodeCandidates, bounds);
 		const visibleNodeIndices = materializedNodes.map(({ index }) => index);
 		const edgeCandidates = bounds
@@ -2484,7 +2542,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * length to cut by.
 	 */
 	private budgetEdges(edgeCandidates: readonly number[]) {
-		if (edgeCandidates.length <= this.maxVisibleEdges) {
+		if (edgeCandidates.length <= this.edgeBudget) {
 			return { skippedSubPixel: 0, visibleEdgeIndices: edgeCandidates };
 		}
 		const pinned = this.pinnedEdgeIndices();
@@ -2500,7 +2558,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				: { kept: edgeCandidates, skipped: 0 };
 		return {
 			skippedSubPixel: cut.skipped,
-			visibleEdgeIndices: applyEdgeBudget(cut.kept, this.maxVisibleEdges, {
+			visibleEdgeIndices: applyEdgeBudget(cut.kept, this.edgeBudget, {
 				pinned,
 				score: endpointDegreeScore(this.edgeNodeIndices, this.incidentEdgeIndices),
 			}),
@@ -2610,14 +2668,14 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	private materializeNodes(indices: readonly number[], bounds: Bounds2D | null): readonly MaterializedNode[] {
 		if (!this.densityLodActive || !bounds) {
-			return indices.slice(0, this.maxVisibleNodes).flatMap((index) => {
+			return indices.slice(0, this.nodeBudget).flatMap((index) => {
 				const materialized = this.plainMaterializedNode(index);
 				return materialized ? [materialized] : [];
 			});
 		}
 		const aspect = Math.max(this.container.clientWidth, 1) / Math.max(this.container.clientHeight, 1);
-		const columns = Math.max(1, Math.floor(Math.sqrt(this.maxVisibleNodes * aspect)));
-		const rows = Math.max(1, Math.floor(this.maxVisibleNodes / columns));
+		const columns = Math.max(1, Math.floor(Math.sqrt(this.nodeBudget * aspect)));
+		const rows = Math.max(1, Math.floor(this.nodeBudget / columns));
 		const cellWidth = Math.max((bounds.right - bounds.left) / columns, Number.EPSILON);
 		const cellHeight = Math.max((bounds.top - bounds.bottom) / rows, Number.EPSILON);
 		// Clusters collapse many nodes into one representative blob, so the aggregated footprint
@@ -2652,7 +2710,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			cluster.width = grownAxis;
 			cluster.height = grownAxis;
 		}
-		return [...clusters.values()].slice(0, this.maxVisibleNodes);
+		return [...clusters.values()].slice(0, this.nodeBudget);
 	}
 
 	private disposeGraphObjects() {

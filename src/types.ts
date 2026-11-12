@@ -518,12 +518,31 @@ export interface GraphraumFocusLensOptions {
 	reach?: number;
 }
 
+/**
+ * Options for `Graphraum.setInteractionQuality`. While the camera moves and frames run slow,
+ * graphraum lowers the render pixel ratio and the visible edge budget (and, in 2D, the node
+ * budget) step by step; a short rest restores full quality in one frame. Data never changes.
+ */
+export interface GraphraumInteractionQualityOptions {
+	/** Default `false`. */
+	enabled?: boolean;
+	/** Rest time in milliseconds after the last camera change before full quality returns. Default 200. */
+	idleMs?: number;
+	/** Frame time in milliseconds the camera should hold; slower frames lower quality. Default 25. */
+	targetFrameMs?: number;
+}
+
+/** The quality tier in effect: `full` when the camera rests or the option is off. */
+export type GraphraumInteractionQuality = "full" | "minimal" | "reduced";
+
 export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	antialias?: boolean;
 	/** Opt-in 3D depth of field; off by default. Change it later with `setDepthOfField`. */
 	depthOfField?: GraphraumDepthOfFieldOptions;
 	/** Opt-in focus lens; off by default. Change it later with `setFocusLens`. */
 	focusLens?: GraphraumFocusLensOptions;
+	/** Opt-in lower quality while the camera moves; off by default. Change it later with `setInteractionQuality`. */
+	interactionQuality?: GraphraumInteractionQualityOptions;
 	/** Scene options; see `Graphraum.setScene`. */
 	scene?: GraphraumSceneOptions;
 	maxVisibleEdges?: number;
@@ -573,6 +592,8 @@ export interface GraphraumDiagnostics {
 	gpuDrawCalls: number;
 	gpuGeometries: number;
 	gpuTextures: number;
+	/** `full`, or the lowered tier while the camera moves under `interactionQuality`. */
+	interactionQuality: GraphraumInteractionQuality;
 	lodLevel: "density" | "detail" | "overview";
 	pickingStrategy: "raycaster-3d" | "spatial-grid-2d";
 	/** Edges painted in a host colour by `setEdgeColors`. */

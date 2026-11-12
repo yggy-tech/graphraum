@@ -4,6 +4,9 @@ import type { BenchEnvironment } from "./types";
 /** Node counts of the scaling ladder; edges are always 3x nodes. */
 export const SCALING_SIZES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000] as const;
 
+/** The cluster LOD series also run at one million nodes, where the plain renderer cannot draw everything. */
+export const LOD_SCALING_SIZES = [...SCALING_SIZES, 1_000_000] as const;
+
 /** 60 fps frame budget in milliseconds. */
 export const FRAME_BUDGET_MS = 16.7;
 
@@ -16,6 +19,8 @@ export interface ScalingSeriesSpec {
 	id: string;
 	metric: string;
 	phase: "cold" | "warm";
+	/** Ladder sizes of this family; the default ladder when absent. */
+	sizes?: readonly number[];
 	title: string;
 }
 
@@ -39,6 +44,30 @@ export const SCALING_SERIES: readonly ScalingSeriesSpec[] = [
 	},
 	{ caseSeries: "load", id: "load", metric: "loadMs", phase: "cold", title: "Data load: setData plus first frame, ms" },
 	{ caseSeries: "layout", id: "layout", metric: "totalMs", phase: "cold", title: "Worker force layout, total ms" },
+	{
+		caseSeries: "lodpan2d",
+		id: "lodpan2d",
+		metric: "totalMs",
+		phase: "warm",
+		sizes: LOD_SCALING_SIZES,
+		title: "2D pan with cluster LOD, main-thread ms per frame",
+	},
+	{
+		caseSeries: "lodorbit3d",
+		id: "lodorbit3d",
+		metric: "totalMs",
+		phase: "warm",
+		sizes: LOD_SCALING_SIZES,
+		title: "3D orbit with cluster LOD, main-thread ms per frame",
+	},
+	{
+		caseSeries: "lodpan2d",
+		id: "lodtree",
+		metric: "treeBuildMs",
+		phase: "cold",
+		sizes: LOD_SCALING_SIZES,
+		title: "Cluster tree build (main thread here; run it in a worker), ms",
+	},
 ];
 
 export interface ScalingPoint {
@@ -152,7 +181,7 @@ export function buildScalingFile(
 	skipped: ReadonlyMap<string, string>,
 ): ScalingFile {
 	const series = SCALING_SERIES.map((spec): ScalingSeries => {
-		const points = SCALING_SIZES.flatMap((nodes): ScalingPoint[] => {
+		const points = (spec.sizes ?? SCALING_SIZES).flatMap((nodes): ScalingPoint[] => {
 			const id = scalingCaseId(spec.caseSeries, nodes);
 			const entry = report.aggregates.find((item) => item.descriptor.id === id);
 			if (!entry) return [];

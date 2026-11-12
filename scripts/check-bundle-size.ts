@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 // 8 200 for the lod entry (#229): cluster tree, cut and the attach layer, 7.6 KiB when added; kept out of the main bundle.
 // 10 500 for the layout-multilevel entry: the force layout chunk it shares with layout (5.9 KiB) plus coarsening and level refinement (3.0 KiB).
 const BUDGETS = [
-	{ file: "dist/index.js", gzipBytes: 56_000 },
+	{ file: "dist/index.js", gzipBytes: 56_300 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout.js", gzipBytes: 7_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },

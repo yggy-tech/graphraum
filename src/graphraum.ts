@@ -53,7 +53,7 @@ import {
 	packEdgeInstances,
 } from "./edge-materialize";
 import { DETAIL_MAX_SEGMENTS, type EdgeLodTier } from "./edge-paths";
-import { type PickableEdgeSegment, pickClosestEdgeIndex } from "./edge-picking";
+import { type PickableEdgeSegment, pickableSegment, pickClosestEdgeIndex } from "./edge-picking";
 import {
 	createEdgeGeometry,
 	createEdgeMaterial,
@@ -63,6 +63,7 @@ import {
 	writeEdgeMarkerInstance,
 	writeEdgeSegmentInstance,
 } from "./edge-rendering";
+import { EdgeSlotPool, EdgeVisibility } from "./edge-slot-pool";
 import { changedIds, type EdgeStateStyling } from "./edge-state";
 import {
 	appendVisibleEdgeLayouts,
@@ -242,15 +243,6 @@ const SUB_PIXEL_EDGE_PIXELS = 0.75;
 /** Spare edge instances after the budgeted layer, for the selection overlay. */
 const OVERLAY_INSTANCE_RESERVE = 32_768;
 const NO_PINNED_EDGES: ReadonlySet<number> = new Set();
-/** Fills the marker slots of the pick list so a segment's list index stays its instance slot. */
-const NO_PICKABLE_SEGMENT: PickableEdgeSegment = {
-	edgeIndex: -1,
-	hitSlop: 0,
-	x1: Number.NaN,
-	x2: Number.NaN,
-	y1: Number.NaN,
-	y2: Number.NaN,
-};
 
 /** One warning per page when a context cannot run depth of field; diagnostics report it per instance. */
 let warnedDepthOfFieldUnsupported = false;
@@ -301,6 +293,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private edgeCapacity = 0;
 	private markerCapacity = 0;
 	private edgeInstanceCapacity = 0;
+	private edgePoolCapacity = 0;
 	private selectedNodeIds = new Set<string>();
 	private selectedEdgeIds = new Set<string>();
 	private dimmedEdgeIds = new Set<string>();
@@ -317,7 +310,6 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	/** False while the slots hold density-tier clusters, whose instances are not the nodes'. */
 	private nodeSlotsPlain = false;
 	private slotKeep = new Uint8Array(0);
-	private visibleEdgeSlots = new Map<number, number>();
 	private visibleEdgeLayouts = new Map<number, VisibleEdgeLayout>();
 	private lastEdgeLodTier: EdgeLodTier = "detail";
 	private visibleNodeIndices: readonly number[] = [];
@@ -331,8 +323,17 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private visibleEdgeMarkerCount = 0;
 	private visibleEdgeCandidateCount = 0;
 	private subPixelEdgesSkipped = 0;
-	/** The budgeted layer, packed without regard to selection: slots `[0, segments + markers)`. */
-	private mainEdge = { edges: 0, markers: 0, segments: 0, subPixelSkipped: 0 };
+	/**
+	 * The budgeted layer, packed without regard to selection: slots `[0, extent)`.
+	 */
+	private mainEdge = { edges: 0, extent: 0, markers: 0, segments: 0, subPixelSkipped: 0 };
+	/**
+	 * While true the main layer sits in `edgePool` runs, and `edgeVisibility` counts the drawn nodes'
+	 * edges, so a camera move writes only the edges that enter and frees the ones that leave.
+	 */
+	private edgePoolLive = false;
+	private readonly edgePool = new EdgeSlotPool();
+	private readonly edgeVisibility = new EdgeVisibility();
 	/** Pinned edges the budget left out, drawn after the main layer. Rebuilt on a selection change. */
 	private overlayEdgeIndices: readonly number[] = [];
 	private edgeSegmentCapacity = 0;
@@ -473,12 +474,14 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return dataPatchFitsCapacity(merged, { edges: this.edgeCapacity, nodes: this.nodeCapacity });
 	}
 
-	private mutateDataInPlace(merged: MergedGraphData<NodeAttributes, EdgeAttributes>) {
-		const compiled = compileGraph(merged, this.visuals);
-		this.assertIconsInAtlas(compiled);
+	/** Takes the compiled graph as the current data, with the compiled visuals merged into each node and edge. */
+	private adoptCompiled(
+		source: GraphraumData<NodeAttributes, EdgeAttributes>,
+		compiled: ReturnType<typeof compileGraph<NodeAttributes, EdgeAttributes>>,
+	) {
 		this.data = {
-			edges: merged.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
-			nodes: merged.nodes.map((node, index) => ({
+			edges: source.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
+			nodes: source.nodes.map((node, index) => ({
 				...node,
 				...compiled.nodeVisuals[index],
 				position: { ...node.position },
@@ -495,6 +498,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.edgePresentations = compiled.edgePresentations;
 		this.spatialGrid2d = new SpatialGrid2D();
 		for (const [index, node] of this.data.nodes.entries()) this.spatialGrid2d.set(index, node);
+	}
+
+	private mutateDataInPlace(merged: MergedGraphData<NodeAttributes, EdgeAttributes>) {
+		const compiled = compileGraph(merged, this.visuals);
+		this.assertIconsInAtlas(compiled);
+		this.adoptCompiled(merged, compiled);
 		const liveNodeIds = new Set(this.nodeIds);
 		this.selectedNodeIds = new Set([...this.selectedNodeIds].filter((id) => liveNodeIds.has(id)));
 		this.hoveredNodeIds = new Set([...this.hoveredNodeIds].filter((id) => liveNodeIds.has(id)));
@@ -608,19 +617,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 		const segmentsBefore = this.visibleEdgeSegmentCount;
 		const markersBefore = this.visibleEdgeMarkerCount;
-		const packed = packEdgeInstances({
-			edgeIndices: Array.from({ length: total.edges - previous.edges }, (_, offset) => previous.edges + offset),
-			edgeStates: this.edgeStateStyling(),
-			edgeVisuals: this.data.edges,
-			endpointPositions: this.canonicalEdgePositions,
-			defaults: this.edgeDefaults(),
-			tier: this.lastEdgeLodTier,
-			maxSegments: this.edgeSegmentCapacity - segmentsBefore,
-			endpointAttach: this.endpointAttach(),
-			edgeNodeIndices: this.edgeNodeIndices,
-			mode: this.mode,
-			nodeOutlines: this.data.nodes,
-		});
+		const packed = this.packEdges(
+			Array.from({ length: total.edges - previous.edges }, (_, offset) => previous.edges + offset),
+			this.edgeSegmentCapacity - segmentsBefore,
+		);
 		const segmentsTotal = segmentsBefore + packed.segments.length;
 		const markersTotal = markersBefore + packed.markers.length;
 		if (packed.truncated || markersTotal > this.markerCapacity) return false;
@@ -637,25 +637,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			(this.visibleNodeIndices as number[]).push(index);
 			this.writeNodeInstance(targets, slot, materialized, node);
 		}
-		const addedNodeCount = total.nodes - previous.nodes;
-		nodeMesh.count = total.nodes;
-		nodePickMesh.count = total.nodes;
-		nodeMesh.instanceMatrix.addUpdateRange(firstNodeSlot * 16, addedNodeCount * 16);
-		nodeMesh.instanceMatrix.needsUpdate = true;
-		nodePickMesh.instanceMatrix.addUpdateRange(firstNodeSlot * 16, addedNodeCount * 16);
-		nodePickMesh.instanceMatrix.needsUpdate = true;
-		if (nodeMesh.instanceColor) {
-			nodeMesh.instanceColor.addUpdateRange(firstNodeSlot * 3, addedNodeCount * 3);
-			nodeMesh.instanceColor.needsUpdate = true;
-		}
-		targets.shape.addUpdateRange(firstNodeSlot, addedNodeCount);
-		targets.shape.needsUpdate = true;
-		targets.icon.addUpdateRange(firstNodeSlot, addedNodeCount);
-		targets.icon.needsUpdate = true;
-		targets.strokeWidth.addUpdateRange(firstNodeSlot, addedNodeCount);
-		targets.strokeWidth.needsUpdate = true;
-		targets.strokeColor.addUpdateRange(firstNodeSlot * 3, addedNodeCount * 3);
-		targets.strokeColor.needsUpdate = true;
+		this.markNodeInstances([[firstNodeSlot, total.nodes]], total.nodes, false);
 
 		// Edges: new segments take the first slots after the old ones, so the markers move up to make room.
 		const edgeGeometry = edgeMesh.geometry;
@@ -674,20 +656,12 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			segmentStart: segmentsBefore,
 			segmentTotal: segmentsTotal,
 		});
-		const addedEdgeCount = this.writeEdgeInstances(
-			packed,
-			{ markerStart: segmentsTotal + markersBefore, segmentStart: segmentsBefore },
-			this.worldUnitsPerPixel(),
-		);
+		const addedEdgeCount = this.writeEdgeInstances(packed, {
+			markerStart: segmentsTotal + markersBefore,
+			segmentStart: segmentsBefore,
+		});
 		edgeMesh.count = segmentsTotal + markersTotal;
-		for (const name of EDGE_INSTANCE_ATTRIBUTES) {
-			const attribute = getInstancedAttribute(edgeGeometry, name);
-			attribute.addUpdateRange(
-				segmentsBefore * attribute.itemSize,
-				(segmentsTotal + markersTotal - segmentsBefore) * attribute.itemSize,
-			);
-			attribute.needsUpdate = true;
-		}
+		this.markEdgeInstances(segmentsBefore, segmentsTotal + markersTotal, false);
 
 		this.visibleNodeCandidateCount = total.nodes;
 		this.visibleNodeCount = total.nodes;
@@ -695,7 +669,13 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.visibleEdgeSegmentCount = segmentsTotal;
 		this.visibleEdgeCount += addedEdgeCount;
 		this.visibleEdgeMarkerCount = markersTotal;
-		this.mainEdge = { ...this.mainEdge, edges: this.visibleEdgeCount, markers: markersTotal, segments: segmentsTotal };
+		this.mainEdge = {
+			...this.mainEdge,
+			edges: this.visibleEdgeCount,
+			extent: segmentsTotal + markersTotal,
+			markers: markersTotal,
+			segments: segmentsTotal,
+		};
 		return true;
 	}
 
@@ -704,25 +684,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const compiled = compileGraph(data, this.visuals);
 		this.assertIconsInAtlas(compiled);
 		this.disposeGraphObjects();
-		this.data = {
-			edges: data.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
-			nodes: data.nodes.map((node, index) => ({
-				...node,
-				...compiled.nodeVisuals[index],
-				position: { ...node.position },
-			})),
-		};
-		this.nodeIds = compiled.nodeIds;
-		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
-		this.nodeIndices = compiled.nodeIndices;
-		this.lensScales.fill(0);
-		this.edgeNodeIndices = compiled.edgeNodeIndices;
-		this.canonicalEdgePositions = compiled.edgePositions;
-		this.incidentEdgeIndices = compiled.incidentEdgeIndices;
-		this.nodePresentations = compiled.nodePresentations;
-		this.edgePresentations = compiled.edgePresentations;
-		this.spatialGrid2d = new SpatialGrid2D();
-		for (const [index, node] of this.data.nodes.entries()) this.spatialGrid2d.set(index, node);
+		this.adoptCompiled(data, compiled);
 		this.pruneEdgeStates();
 
 		this.nodeCapacity = Math.min(this.maxVisibleNodes, nextCapacity(data.nodes.length));
@@ -742,6 +704,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.edgeCapacity = capacities.edgeCapacity;
 		this.edgeSegmentCapacity = capacities.segmentCapacity;
 		this.markerCapacity = capacities.markerCapacity;
+		this.edgePoolCapacity = capacities.edgeInstanceCapacity;
 		this.edgeInstanceCapacity =
 			capacities.edgeInstanceCapacity + Math.min(OVERLAY_INSTANCE_RESERVE, capacities.edgeInstanceCapacity);
 		const edgeGeometry = createEdgeGeometry(this.edgeInstanceCapacity);
@@ -908,8 +871,6 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	/** Patches GPU edge instances for moved endpoints when the visible edge set is unchanged. */
 	private patchVisibleEdgeEndpoints(changedEdgeIndices: readonly number[]): boolean {
 		if (!this.edgeMesh || changedEdgeIndices.length === 0) return true;
-		const worldPerPixel = this.worldUnitsPerPixel();
-		const minHitSlop = Math.max(4 * worldPerPixel, this.theme.edgeWidth * worldPerPixel);
 		const result = patchVisibleEdgeInstances(
 			this.edgeMesh.geometry,
 			{
@@ -921,12 +882,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				endpointAttach: this.endpointAttach(),
 				endpointPositions: this.canonicalEdgePositions,
 				layouts: this.visibleEdgeLayouts,
-				minHitSlop,
+				minHitSlop: Math.max(4, this.theme.edgeWidth),
 				mode: this.mode,
 				nodeOutlines: this.data.nodes,
 				pickable: this.camera instanceof OrthographicCamera,
 				tier: this.lastEdgeLodTier,
-				worldPerPixel,
 			},
 			this.pickableEdgeSegments,
 		);
@@ -1086,7 +1046,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return enteredNodeIds.some((id) => {
 			const nodeIndex = this.nodeIndices.get(id);
 			const incident = nodeIndex === undefined ? [] : (this.incidentEdgeIndices[nodeIndex] ?? []);
-			return incident.some((edgeIndex) => !this.visibleEdgeSlots.has(edgeIndex));
+			return incident.some((edgeIndex) => !this.visibleEdgeLayouts.has(edgeIndex));
 		});
 	}
 
@@ -2224,14 +2184,20 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return controls;
 	}
 
-	private pickNode(clientX: number, clientY: number): string | null {
-		if (!this.nodeMesh || !this.nodePickMesh) return null;
+	/** Points the pick ray at the client position; false while the canvas has no size. */
+	private aimPointer(clientX: number, clientY: number) {
 		const bounds = this.renderer.domElement.getBoundingClientRect();
-		if (bounds.width === 0 || bounds.height === 0) return null;
+		if (bounds.width === 0 || bounds.height === 0) return false;
 		this.pointer.set(
 			((clientX - bounds.left) / bounds.width) * 2 - 1,
 			-((clientY - bounds.top) / bounds.height) * 2 + 1,
 		);
+		return true;
+	}
+
+	private pickNode(clientX: number, clientY: number): string | null {
+		if (!this.nodeMesh || !this.nodePickMesh) return null;
+		if (!this.aimPointer(clientX, clientY)) return null;
 		if (this.camera instanceof OrthographicCamera) {
 			const world = new Vector3(this.pointer.x, this.pointer.y, 0).unproject(this.camera);
 			const index = this.focusLens.enabled
@@ -2288,15 +2254,14 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	private pickEdge(clientX: number, clientY: number): string | null {
 		if (!this.edgeMesh || this.visibleEdgeSegmentCount === 0) return null;
-		const bounds = this.renderer.domElement.getBoundingClientRect();
-		if (bounds.width === 0 || bounds.height === 0) return null;
-		this.pointer.set(
-			((clientX - bounds.left) / bounds.width) * 2 - 1,
-			-((clientY - bounds.top) / bounds.height) * 2 + 1,
-		);
+		if (!this.aimPointer(clientX, clientY)) return null;
 		if (this.camera instanceof OrthographicCamera) {
 			const world = new Vector3(this.pointer.x, this.pointer.y, 0).unproject(this.camera);
-			const edgeIndex = pickClosestEdgeIndex({ x: world.x, y: world.y }, this.pickableEdgeSegments);
+			const edgeIndex = pickClosestEdgeIndex(
+				{ x: world.x, y: world.y },
+				this.pickableEdgeSegments,
+				this.worldUnitsPerPixel(),
+			);
 			return edgeIndex === null ? null : (this.data.edges[edgeIndex]?.id ?? null);
 		}
 		this.raycaster.setFromCamera(this.pointer, this.camera);
@@ -2501,71 +2466,61 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			!this.focusLens.enabled &&
 			visibleNodeCandidates.length <= this.nodeBudget;
 		const materializedNodes = reuseSlots ? [] : this.materializeNodes(visibleNodeCandidates, bounds);
-		const visibleNodeIndices = reuseSlots
-			? this.patchNodeSlots(visibleNodeCandidates)
-			: materializedNodes.map(({ index }) => index);
-		const edgeCandidates = bounds
-			? // Candidate order, not slot order, so the edges pack as a full pass would.
-				collectIncidentEdges(
-					reuseSlots ? visibleNodeCandidates : visibleNodeIndices,
-					this.incidentEdgeIndices,
-					this.data.edges.length,
-				)
-			: this.data.edges.map((_, index) => index);
-		const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates, pinnedInMain);
-		if (!reuseSlots) this.writeAllNodeInstances(materializedNodes, visibleNodeIndices);
-		const nodeCount = visibleNodeIndices.length;
+		const nodeDelta = reuseSlots ? this.patchNodeSlots(visibleNodeCandidates) : null;
+		const visibleNodeIndices = nodeDelta ? nodeDelta.indices : materializedNodes.map(({ index }) => index);
+		if (!nodeDelta) this.edgeVisibility.live = false;
+		if (!(nodeDelta && this.patchEdgeSlots(nodeDelta))) {
+			const edgeCandidates = bounds
+				? // Candidate order, not slot order, so the edges pack as a full pass would.
+					collectIncidentEdges(
+						reuseSlots ? visibleNodeCandidates : visibleNodeIndices,
+						this.incidentEdgeIndices,
+						this.data.edges.length,
+					)
+				: this.data.edges.map((_, index) => index);
+			const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates, pinnedInMain);
+			if (!reuseSlots) this.writeAllNodeInstances(materializedNodes, visibleNodeIndices);
 
-		const lodLevel = resolveLodLevel(this.densityLodActive, edgeCandidates.length, visibleEdgeIndices.length);
-		this.lastEdgeLodTier = edgeTierFromDiagnosticsLod(lodLevel);
-		const worldPerPixel = this.worldUnitsPerPixel();
-		const packed = packEdgeInstances({
-			edgeIndices: visibleEdgeIndices,
-			edgeStates: this.edgeStateStyling(),
-			edgeVisuals: this.data.edges,
-			endpointPositions: this.canonicalEdgePositions,
-			defaults: this.edgeDefaults(),
-			tier: this.lastEdgeLodTier,
-			maxSegments: this.edgeSegmentCapacity,
-			endpointAttach: this.endpointAttach(),
-			edgeNodeIndices: this.edgeNodeIndices,
-			mode: this.mode,
-			nodeOutlines: this.data.nodes,
-		});
-		const edgeGeometry = this.edgeMesh.geometry;
-		this.visibleEdgeSlots = new Map();
-		this.visibleEdgeLayouts = buildVisibleEdgeLayouts(packed.segments, packed.markers, packed.segments.length);
-		this.pickableEdgeSegments = [];
-		this.visibleEdgeSegmentEdgeIndices = [];
-		const distinctEdgeCount = this.writeEdgeInstances(
-			packed,
-			{ markerStart: packed.segments.length, segmentStart: 0 },
-			worldPerPixel,
-		);
-		const segmentCount = packed.segments.length;
-		const edgeSlot = segmentCount + packed.markers.length;
-		this.edgeMesh.count = edgeSlot;
-		for (const name of EDGE_INSTANCE_ATTRIBUTES) {
-			const attribute = edgeGeometry.getAttribute(name) as InstancedBufferAttribute;
-			attribute.clearUpdateRanges();
-			attribute.addUpdateRange(0, edgeSlot * attribute.itemSize);
-			attribute.needsUpdate = true;
+			const lodLevel = resolveLodLevel(this.densityLodActive, edgeCandidates.length, visibleEdgeIndices.length);
+			this.lastEdgeLodTier = edgeTierFromDiagnosticsLod(lodLevel);
+			const packed = this.packEdges(visibleEdgeIndices, this.edgeSegmentCapacity);
+			this.visibleEdgeLayouts = buildVisibleEdgeLayouts(packed.segments, packed.markers, packed.segments.length);
+			this.pickableEdgeSegments = [];
+			this.visibleEdgeSegmentEdgeIndices = [];
+			const distinctEdgeCount = this.writeEdgeInstances(packed, {
+				markerStart: packed.segments.length,
+				segmentStart: 0,
+			});
+			const segmentCount = packed.segments.length;
+			const edgeSlot = segmentCount + packed.markers.length;
+			this.edgeMesh.count = edgeSlot;
+			this.markEdgeInstances(0, edgeSlot, true);
+
+			this.visibleEdgeCandidateCount = edgeCandidates.length;
+			this.subPixelEdgesSkipped = skippedSubPixel;
+			this.visibleEdgeSegmentCount = segmentCount;
+			this.visibleEdgeCount = distinctEdgeCount;
+			this.visibleEdgeMarkerCount = packed.markers.length;
+			this.mainEdge = {
+				edges: distinctEdgeCount,
+				extent: edgeSlot,
+				markers: packed.markers.length,
+				segments: segmentCount,
+				subPixelSkipped: skippedSubPixel,
+			};
+			// Only a camera move looks at the pool, and only after it kept the nodes' slots; the detail
+			// tier means no density tier and no edge cut, so every candidate edge is drawn.
+			this.edgePoolLive = bounds !== null && !packed.truncated && this.lastEdgeLodTier === "detail";
+			if (this.edgePoolLive) {
+				if (!this.edgeVisibility.live) {
+					this.edgeVisibility.reset(visibleNodeIndices, this.incidentEdgeIndices, this.data.edges.length);
+				}
+				this.edgePool.reset(edgeSlot, this.edgePoolCapacity);
+			}
+			this.overlayEdgeIndices = [];
 		}
-
 		this.visibleNodeCandidateCount = visibleNodeCandidates.length;
-		this.visibleNodeCount = nodeCount;
-		this.visibleEdgeCandidateCount = edgeCandidates.length;
-		this.subPixelEdgesSkipped = skippedSubPixel;
-		this.visibleEdgeSegmentCount = segmentCount;
-		this.visibleEdgeCount = distinctEdgeCount;
-		this.visibleEdgeMarkerCount = packed.markers.length;
-		this.mainEdge = {
-			edges: distinctEdgeCount,
-			markers: packed.markers.length,
-			segments: segmentCount,
-			subPixelSkipped: skippedSubPixel,
-		};
-		this.overlayEdgeIndices = [];
+		this.visibleNodeCount = visibleNodeIndices.length;
 		if (!pinnedInMain && !this.drawPinnedOverlay()) {
 			this.materializeViewport(true);
 			return;
@@ -2604,6 +2559,76 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		};
 	}
 
+	/**
+	 * A camera move that kept the nodes' instances keeps the edges' too: the edges of entering nodes
+	 * take free runs, the ones that lost their last drawn node free theirs, and the rest stay where
+	 * they are. It holds while every candidate edge fits the budget, so no edge is cut by length or
+	 * rank and the set is the one a full pass draws; zooming then changes nothing but the pick radius.
+	 * Slot order is no longer the candidate order of a full pass, so only the paint order of
+	 * overlapping edges, and of arrowheads against other lines, can differ. Returns false, with the
+	 * main layer left for a full pass to write, when the budget binds, the runs do not fit, or too
+	 * many holes are left.
+	 */
+	private patchEdgeSlots(delta: { entering: number[]; leaving: number[] }) {
+		const { edgeMesh, edgePool, edgeVisibility } = this;
+		if (!edgeMesh || !edgeVisibility.live) return false;
+		const entered = edgeVisibility.shift(delta.entering, 1, this.incidentEdgeIndices);
+		const left = edgeVisibility.shift(delta.leaving, -1, this.incidentEdgeIndices);
+		const candidates = this.visibleEdgeCandidateCount + entered.length - left.length;
+		const fits = this.edgePoolLive && candidates <= this.edgeBudget;
+		this.edgePoolLive = false;
+		if (!fits) return false;
+
+		const geometry = edgeMesh.geometry;
+		const color = getInstancedAttribute(geometry, "instanceColor");
+		const pickable = this.pickableEdgeSegments;
+		const main = this.mainEdge;
+		const account = (layout: VisibleEdgeLayout, sign: 1 | -1) => {
+			main.segments += sign * layout.segmentCount;
+			main.markers += sign * layout.markerCount;
+			main.edges += sign;
+		};
+		for (const edgeIndex of left) {
+			const layout = this.visibleEdgeLayouts.get(edgeIndex);
+			if (!layout) continue;
+			for (const [start, size] of [
+				[layout.segmentStart, layout.segmentCount],
+				[layout.markerStart, layout.markerCount],
+			] as const) {
+				if (size === 0) continue;
+				edgePool.release(start, size);
+				for (let slot = start; slot < start + size; slot += 1) {
+					color.setW(slot, 0);
+					Reflect.deleteProperty(pickable, slot); // a hole: picking skips it
+				}
+			}
+			this.visibleEdgeLayouts.delete(edgeIndex);
+			account(layout, -1);
+		}
+		if (edgePool.freeSlots > edgePool.extent / 2) return false;
+
+		for (const edgeIndex of entered) {
+			const packed = this.packEdges([edgeIndex]);
+			const segmentCount = packed.segments.length;
+			const markerCount = packed.markers.length;
+			const markerStart = edgePool.take(markerCount);
+			const segmentStart = edgePool.take(segmentCount);
+			if (markerStart < 0 || segmentStart < 0) return false;
+			this.writeEdgeInstances(packed, { markerStart, segmentStart });
+			const layout = { markerCount, markerStart, segmentCount, segmentStart };
+			this.visibleEdgeLayouts.set(edgeIndex, layout);
+			account(layout, 1);
+		}
+
+		// One span: ranges are a GPU call each, and a pan frees and takes slots all over.
+		if (entered.length + left.length > 0) this.markEdgeInstances(0, edgePool.extent, false);
+		edgeMesh.count = edgePool.extent;
+		main.extent = edgePool.extent;
+		this.edgePoolLive = true;
+		this.visibleEdgeCandidateCount = candidates;
+		return true;
+	}
+
 	private syncPinnedOverlay() {
 		if (!this.drawPinnedOverlay()) this.materializeViewport(true);
 	}
@@ -2618,12 +2643,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		if (!edgeMesh) return true;
 		const main = this.mainEdge;
 		for (const edgeIndex of this.overlayEdgeIndices) {
-			this.visibleEdgeSlots.delete(edgeIndex);
 			this.visibleEdgeLayouts.delete(edgeIndex);
 		}
 		// Overlay entries sit past the main ones; segments are listed by slot, markers leave gaps.
-		this.pickableEdgeSegments.length = Math.min(this.pickableEdgeSegments.length, main.segments);
-		this.visibleEdgeSegmentEdgeIndices.length = Math.min(this.visibleEdgeSegmentEdgeIndices.length, main.segments);
+		this.pickableEdgeSegments.length = Math.min(this.pickableEdgeSegments.length, main.extent);
+		this.visibleEdgeSegmentEdgeIndices.length = Math.min(this.visibleEdgeSegmentEdgeIndices.length, main.extent);
 		const bounds = this.getViewportBounds2d();
 		const onScreen = (edgeIndex: number) =>
 			bounds === null ||
@@ -2631,53 +2655,27 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.visibleNodeSlot(this.edgeNodeIndices[edgeIndex * 2 + 1] ?? -1) !== undefined;
 		const overlay = this.edgeBudgetActive()
 			? [...this.pinnedEdgeIndices()]
-					.filter((edgeIndex) => !this.visibleEdgeSlots.has(edgeIndex) && onScreen(edgeIndex))
+					.filter((edgeIndex) => !this.visibleEdgeLayouts.has(edgeIndex) && onScreen(edgeIndex))
 					.sort((a, b) => a - b)
 			: [];
-		const start = main.segments + main.markers;
-		const packed = packEdgeInstances({
-			edgeIndices: overlay,
-			edgeStates: this.edgeStateStyling(),
-			edgeVisuals: this.data.edges,
-			endpointPositions: this.canonicalEdgePositions,
-			defaults: this.edgeDefaults(),
-			tier: this.lastEdgeLodTier,
-			maxSegments: this.edgeInstanceCapacity - start,
-			endpointAttach: this.endpointAttach(),
-			edgeNodeIndices: this.edgeNodeIndices,
-			mode: this.mode,
-			nodeOutlines: this.data.nodes,
-		});
+		const start = main.extent;
+		const packed = this.packEdges(overlay, this.edgeInstanceCapacity - start);
 		const segmentCount = packed.segments.length;
 		const markerCount = packed.markers.length;
 		this.overlayEdgeIndices = [];
 		if (packed.truncated || start + segmentCount + markerCount > this.edgeInstanceCapacity) return false;
 
 		if (segmentCount > 0) {
-			if (this.camera instanceof OrthographicCamera) {
-				this.pickableEdgeSegments.length = start;
-				this.pickableEdgeSegments.fill(NO_PICKABLE_SEGMENT, main.segments, start);
-			}
 			this.visibleEdgeSegmentEdgeIndices.length = start;
 		}
-		const distinct = this.writeEdgeInstances(
-			packed,
-			{ markerStart: start + segmentCount, segmentStart: start },
-			this.worldUnitsPerPixel(),
-		);
+		const distinct = this.writeEdgeInstances(packed, { markerStart: start + segmentCount, segmentStart: start });
 		for (const [edgeIndex, layout] of buildVisibleEdgeLayouts(packed.segments, packed.markers, segmentCount)) {
 			if (layout.segmentStart >= 0) layout.segmentStart += start;
 			layout.markerStart += start;
 			this.visibleEdgeLayouts.set(edgeIndex, layout);
 		}
 		edgeMesh.count = start + segmentCount + markerCount;
-		if (segmentCount + markerCount > 0) {
-			for (const name of EDGE_INSTANCE_ATTRIBUTES) {
-				const attribute = getInstancedAttribute(edgeMesh.geometry, name);
-				attribute.addUpdateRange(start * attribute.itemSize, (segmentCount + markerCount) * attribute.itemSize);
-				attribute.needsUpdate = true;
-			}
-		}
+		if (segmentCount + markerCount > 0) this.markEdgeInstances(start, start + segmentCount + markerCount, false);
 		this.overlayEdgeIndices = overlay;
 		// Short pinned edges are in the sub-pixel count of the layer, yet drawn here.
 		const drawnShort =
@@ -2757,6 +2755,22 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		setNodeStrokeAt(strokeWidth, strokeColor, slot, resolveNodeStroke(node, this.theme, this.extras.node.strokeWidth));
 	}
 
+	private packEdges(edgeIndices: readonly number[], maxSegments?: number) {
+		return packEdgeInstances({
+			edgeIndices,
+			edgeStates: this.edgeStateStyling(),
+			edgeVisuals: this.data.edges,
+			endpointPositions: this.canonicalEdgePositions,
+			defaults: this.edgeDefaults(),
+			tier: this.lastEdgeLodTier,
+			maxSegments,
+			endpointAttach: this.endpointAttach(),
+			edgeNodeIndices: this.edgeNodeIndices,
+			mode: this.mode,
+			nodeOutlines: this.data.nodes,
+		});
+	}
+
 	/**
 	 * Writes packed edge instances at the given first slots and records what picking needs for them.
 	 * Returns how many distinct edges got a segment.
@@ -2764,28 +2778,18 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private writeEdgeInstances(
 		packed: { markers: readonly EdgeMarkerInstance[]; segments: readonly EdgeSegmentInstance[] },
 		start: { markerStart: number; segmentStart: number },
-		worldPerPixel: number,
 	): number {
 		const edgeGeometry = (this.edgeMesh as InstancedMesh).geometry;
-		const minHitSlop = Math.max(4 * worldPerPixel, this.theme.edgeWidth * worldPerPixel);
+		const minHitSlop = Math.max(4, this.theme.edgeWidth);
 		const distinctEdges = new Set<number>();
 		// 2D picks the closest segment on the CPU; 3D raycasts the instances and needs no copies of them.
 		const keepPickable = this.camera instanceof OrthographicCamera;
 		for (const [offset, segment] of packed.segments.entries()) {
 			const slot = start.segmentStart + offset;
 			writeEdgeSegmentInstance(edgeGeometry, slot, segment);
-			if (!this.visibleEdgeSlots.has(segment.edgeIndex)) this.visibleEdgeSlots.set(segment.edgeIndex, slot);
 			distinctEdges.add(segment.edgeIndex);
-			this.visibleEdgeSegmentEdgeIndices.push(segment.edgeIndex);
-			if (!keepPickable) continue;
-			this.pickableEdgeSegments.push({
-				edgeIndex: segment.edgeIndex,
-				hitSlop: Math.max(minHitSlop, (segment.width * worldPerPixel) / 2 + 2 * worldPerPixel),
-				x1: segment.x1,
-				y1: segment.y1,
-				x2: segment.x2,
-				y2: segment.y2,
-			});
+			if (keepPickable) this.pickableEdgeSegments[slot] = pickableSegment(segment, minHitSlop);
+			else this.visibleEdgeSegmentEdgeIndices[slot] = segment.edgeIndex;
 		}
 		for (const [offset, marker] of packed.markers.entries()) {
 			writeEdgeMarkerInstance(edgeGeometry, start.markerStart + offset, marker);
@@ -2830,7 +2834,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * slots stay contiguous. Slot order is not the grid order of a full pass, which also changes
 	 * with every camera move, so only the paint order of overlapping nodes can differ.
 	 */
-	private patchNodeSlots(candidates: readonly number[]): number[] {
+	private patchNodeSlots(candidates: readonly number[]) {
 		const indices = this.visibleNodeIndices as number[];
 		// Slots never pass the drawn count plus the entering nodes, which are at most the candidates.
 		const size = indices.length + candidates.length;
@@ -2843,9 +2847,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			else keep[slot] = 1;
 		}
 		const holes: number[] = [];
+		const leaving: number[] = [];
 		for (let slot = 0; slot < indices.length; slot += 1) {
 			if (keep[slot]) continue;
 			this.nodeSlots[indices[slot] as number] = -1;
+			leaving.push(indices[slot] as number);
 			holes.push(slot);
 		}
 		const targets = this.nodeInstanceTargets();
@@ -2881,7 +2887,17 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		while (end > 0 && !keep[end - 1]) end -= 1;
 		indices.length = end;
 		this.markNodeInstances(written, end, false);
-		return indices;
+		return { entering, indices, leaving };
+	}
+
+	/** Flags the edge instances in `[start, end)` for upload; `clear` drops the ranges flagged before. */
+	private markEdgeInstances(start: number, end: number, clear: boolean) {
+		for (const name of EDGE_INSTANCE_ATTRIBUTES) {
+			const attribute = getInstancedAttribute((this.edgeMesh as InstancedMesh).geometry, name);
+			if (clear) attribute.clearUpdateRanges();
+			attribute.addUpdateRange(start * attribute.itemSize, (end - start) * attribute.itemSize);
+			attribute.needsUpdate = true;
+		}
 	}
 
 	/** Flags the written slot ranges for upload and sets the drawn count. */

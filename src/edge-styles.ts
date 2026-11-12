@@ -19,30 +19,31 @@ export const graphraumEdgePaths = ["straight", "quadratic", "cubic"] as const sa
 const styleCodes: Readonly<Record<GraphraumEdgeStyle, number>> = { solid: 0, dashed: 1, dotted: 2 };
 const markerCodes: Readonly<Record<GraphraumEdgeMarker, number>> = { none: 0, triangle: 1 };
 
-export function assertEdgeStyle(edgeId: string, style: unknown): asserts style is GraphraumEdgeStyle {
-	if (typeof style !== "string" || !graphraumEdgeStyles.includes(style as GraphraumEdgeStyle)) {
-		throw new Error(`Edge "${edgeId}" style must be one of: ${graphraumEdgeStyles.map((s) => `"${s}"`).join(", ")}`);
+function assertOneOf<T extends string>(
+	edgeId: string,
+	field: string,
+	allowed: readonly T[],
+	value: unknown,
+): asserts value is T {
+	if (typeof value !== "string" || !allowed.includes(value as T)) {
+		throw new Error(`Edge "${edgeId}" ${field} must be one of: ${allowed.map((option) => `"${option}"`).join(", ")}`);
 	}
+}
+
+export function assertEdgeStyle(edgeId: string, style: unknown): asserts style is GraphraumEdgeStyle {
+	assertOneOf(edgeId, "style", graphraumEdgeStyles, style);
 }
 
 export function assertEdgeMarker(edgeId: string, marker: unknown): asserts marker is GraphraumEdgeMarker {
-	if (typeof marker !== "string" || !graphraumEdgeMarkers.includes(marker as GraphraumEdgeMarker)) {
-		throw new Error(`Edge "${edgeId}" marker must be one of: ${graphraumEdgeMarkers.map((m) => `"${m}"`).join(", ")}`);
-	}
+	assertOneOf(edgeId, "marker", graphraumEdgeMarkers, marker);
 }
 
 export function assertEdgeMarkerEnd(edgeId: string, markerEnd: unknown): asserts markerEnd is GraphraumEdgeMarkerEnd {
-	if (typeof markerEnd !== "string" || !graphraumEdgeMarkerEnds.includes(markerEnd as GraphraumEdgeMarkerEnd)) {
-		throw new Error(
-			`Edge "${edgeId}" markerEnd must be one of: ${graphraumEdgeMarkerEnds.map((m) => `"${m}"`).join(", ")}`,
-		);
-	}
+	assertOneOf(edgeId, "markerEnd", graphraumEdgeMarkerEnds, markerEnd);
 }
 
 export function assertEdgePath(edgeId: string, path: unknown): asserts path is GraphraumEdgePath {
-	if (typeof path !== "string" || !graphraumEdgePaths.includes(path as GraphraumEdgePath)) {
-		throw new Error(`Edge "${edgeId}" path must be one of: ${graphraumEdgePaths.map((p) => `"${p}"`).join(", ")}`);
-	}
+	assertOneOf(edgeId, "path", graphraumEdgePaths, path);
 }
 
 function assertControlPoint(edgeId: string, index: number, point: GraphraumPosition) {

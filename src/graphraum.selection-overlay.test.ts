@@ -22,7 +22,7 @@ function setup(mode: "2d" | "3d") {
 	graph.setData(data);
 	const state = internals(graph) as unknown as ReturnType<typeof internals> & {
 		mainEdge: { markers: number; segments: number };
-		visibleEdgeSlots: Map<number, number>;
+		visibleEdgeLayouts: Map<number, unknown>;
 	};
 	return { graph, state };
 }
@@ -51,7 +51,7 @@ describe("selection overlay over the edge budget", () => {
 			.map((node) => node.id)
 			.find((id) => {
 				const incident = edges.filter((edge) => edge.source === id || edge.target === id);
-				return incident.length > 0 && incident.every((edge) => !state.visibleEdgeSlots.has(edges.indexOf(edge)));
+				return incident.length > 0 && incident.every((edge) => !state.visibleEdgeLayouts.has(edges.indexOf(edge)));
 			});
 		expect(nodeId).toBeDefined();
 		graph.setNodeState("selected", [nodeId as string]);
@@ -59,7 +59,7 @@ describe("selection overlay over the edge budget", () => {
 		expect(materialize).not.toHaveBeenCalled();
 		expect(mainLayerBytes(state)).toEqual(before);
 		for (const edge of edges.filter((candidate) => candidate.source === nodeId || candidate.target === nodeId)) {
-			expect(state.visibleEdgeSlots.has(edges.indexOf(edge))).toBe(true);
+			expect(state.visibleEdgeLayouts.has(edges.indexOf(edge))).toBe(true);
 		}
 		const diagnostics = graph.getDiagnostics();
 		const drawn = [...state.visibleEdgeLayouts.values()];
@@ -75,11 +75,11 @@ describe("selection overlay over the edge budget", () => {
 	test("a selected edge is drawn once and does not move the layer", () => {
 		const { graph, state } = setup("2d");
 		const before = mainLayerBytes(state);
-		const cut = state.data.edges.findIndex((_, index) => !state.visibleEdgeSlots.has(index));
+		const cut = state.data.edges.findIndex((_, index) => !state.visibleEdgeLayouts.has(index));
 		const materialize = vi.spyOn(state, "materializeViewport");
 		graph.setEdgeSelection([state.data.edges[cut]?.id ?? ""]);
 		expect(materialize).not.toHaveBeenCalled();
-		expect(state.visibleEdgeSlots.has(cut)).toBe(true);
+		expect(state.visibleEdgeLayouts.has(cut)).toBe(true);
 		expect(mainLayerBytes(state)).toEqual(before);
 	});
 });

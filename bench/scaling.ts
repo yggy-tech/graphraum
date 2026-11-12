@@ -2,10 +2,10 @@ import type { BenchReport } from "./report";
 import type { BenchEnvironment } from "./types";
 
 /** Node counts of the scaling ladder; edges are always 3x nodes. */
-export const SCALING_SIZES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000] as const;
+export const SCALING_SIZES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_000_000, 5_000_000] as const;
 
-/** The cluster LOD series also run at one million nodes, where the plain renderer cannot draw everything. */
-export const LOD_SCALING_SIZES = [...SCALING_SIZES, 1_000_000] as const;
+/** The cluster LOD series run the same ladder; at 1M and 5M the plain renderer cannot draw everything. */
+export const LOD_SCALING_SIZES = SCALING_SIZES;
 
 /** 60 fps frame budget in milliseconds. */
 export const FRAME_BUDGET_MS = 16.7;

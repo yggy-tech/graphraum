@@ -42,11 +42,10 @@ function compactGroups(groups: Uint32Array): Uint32Array {
 /** The finest level of an edge list. Edges with an endpoint at or past `nodeCount` and self loops are dropped; parallel edges stay until the first contraction merges them. */
 export function baseCoarseLevel(nodeCount: number, edges: Uint32Array, groups?: Uint32Array): CoarseLevel {
 	const rowPtr = new Uint32Array(nodeCount + 1);
-	const valid = (source: number, target: number) => source !== target && source < nodeCount && target < nodeCount;
 	for (let index = 0; index < edges.length; index += 2) {
 		const source = edges[index] ?? 0;
 		const target = edges[index + 1] ?? 0;
-		if (!valid(source, target)) continue;
+		if (source === target || source >= nodeCount || target >= nodeCount) continue;
 		rowPtr[source + 1] += 1;
 		rowPtr[target + 1] += 1;
 	}
@@ -56,7 +55,7 @@ export function baseCoarseLevel(nodeCount: number, edges: Uint32Array, groups?: 
 	for (let index = 0; index < edges.length; index += 2) {
 		const source = edges[index] ?? 0;
 		const target = edges[index + 1] ?? 0;
-		if (!valid(source, target)) continue;
+		if (source === target || source >= nodeCount || target >= nodeCount) continue;
 		col[cursor[source]++] = target;
 		col[cursor[target]++] = source;
 	}

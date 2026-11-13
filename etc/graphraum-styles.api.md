@@ -128,7 +128,7 @@ export const graphraumStylePresets: Readonly<{
 
 // Warnings were encountered during analysis:
 //
-// dist/styles.d.ts:42:5 - (ae-forgotten-export) The symbol "GraphraumLabelStyle" needs to be exported by the entry point styles.d.ts
+// dist/styles.d.ts:43:5 - (ae-forgotten-export) The symbol "GraphraumLabelStyle" needs to be exported by the entry point styles.d.ts
 
 // (No @packageDocumentation comment for this package)
 

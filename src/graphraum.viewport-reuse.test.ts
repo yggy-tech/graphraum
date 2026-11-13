@@ -108,6 +108,9 @@ const CONFIGS: readonly {
 ];
 
 describe("2D viewport keeps the instances of nodes that stay visible", () => {
+	// Hundreds of seeded camera moves, each compared with a full rewrite: under 1 s locally, about 5 s on CI runners.
+	const RANDOM_WALK_TIMEOUT_MS = 30_000;
+
 	test.each(CONFIGS)("$name: random pan and zoom draws what a full rewrite draws", ({ edgesKept, options, reused }) => {
 		const random = seededRandom(97);
 		const data = mixedFixture(220, 500, 5);
@@ -150,7 +153,7 @@ describe("2D viewport keeps the instances of nodes that stay visible", () => {
 		const edgeSteps = patched.mock.results.filter((result) => result.value === true).length;
 		expect(edgeSteps).toBeGreaterThanOrEqual(edgesKept[0]);
 		expect(edgeSteps).toBeLessThanOrEqual(edgesKept[1]);
-	});
+	}, RANDOM_WALK_TIMEOUT_MS);
 
 	test("a selection colour survives the camera moving while the node stays visible", () => {
 		const data = mixedFixture(60, 120, 9);

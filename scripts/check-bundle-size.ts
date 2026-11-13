@@ -17,9 +17,10 @@ import { dirname, join } from "node:path";
 // 12 800 for the lod entry since glyph colours, count labels, click to zoom and the split and merge animation: 12.2 KiB at that change.
 // 56 900 for the main entry: the node blend attribute and shader (about 0.5 KiB, for cluster LOD glyph colours) took it to 56 571 bytes, with a small margin. A split of the main bundle is planned.
 // 15 400 for the lod entry since opening huge graphs (worker client, two-step tree build, typed-array source): 14.7 KiB at that change, 12.2 KiB before.
+// 57 300 for the main entry: edge buffers now grow on demand (resize, shrink and a lazy edge id map), 55.7 KiB at that change.
 // 10 500 for the layout-multilevel entry: the force layout chunk it shares with layout (5.9 KiB) plus coarsening and level refinement (3.0 KiB).
 const BUDGETS = [
-	{ file: "dist/index.js", gzipBytes: 56_900 },
+	{ file: "dist/index.js", gzipBytes: 57_300 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout.js", gzipBytes: 7_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },

@@ -57,9 +57,12 @@ import { type PickableEdgeSegment, pickableSegment, pickClosestEdgeIndex } from 
 import {
 	createEdgeGeometry,
 	createEdgeMaterial,
+	createEdgeMesh,
 	EDGE_INSTANCE_ATTRIBUTES,
 	EDGE_RENDER_ORDER,
+	edgeGeometryCapacity,
 	getInstancedAttribute,
+	resizeEdgeGeometry,
 	writeEdgeMarkerInstance,
 	writeEdgeSegmentInstance,
 } from "./edge-rendering";
@@ -245,6 +248,10 @@ function disposeMaterial(material: Material | Material[]) {
 const SUB_PIXEL_EDGE_PIXELS = 0.75;
 /** Spare edge instances after the budgeted layer, for the selection overlay. */
 const OVERLAY_INSTANCE_RESERVE = 32_768;
+/** Edge instance slots allocated before the first pass says how many are drawn. */
+const INITIAL_EDGE_INSTANCES = 1_024;
+/** Slots held beyond the ones in use, so a small pass does not reallocate on the next appended edge. */
+const MIN_EDGE_HEADROOM = 1_024;
 const NO_PINNED_EDGES: ReadonlySet<number> = new Set();
 
 /** One warning per page when a context cannot run depth of field; diagnostics report it per instance. */
@@ -482,13 +489,20 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		source: GraphraumData<NodeAttributes, EdgeAttributes>,
 		compiled: ReturnType<typeof compileGraph<NodeAttributes, EdgeAttributes>>,
 	) {
+		// Without a visual mapper the compiled visual is the node's or edge's own fields, so the objects
+		// the caller passed are kept as they are. Copying them cost two objects per node and one per
+		// edge, which at millions of elements was most of the heap. The engine never edits them in place.
 		this.data = {
-			edges: source.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] })),
-			nodes: source.nodes.map((node, index) => ({
-				...node,
-				...compiled.nodeVisuals[index],
-				position: { ...node.position },
-			})),
+			edges: this.visuals?.edge
+				? source.edges.map((edge, index) => ({ ...edge, ...compiled.edgeVisuals[index] }))
+				: source.edges.slice(),
+			nodes: this.visuals?.node
+				? source.nodes.map((node, index) => ({
+						...node,
+						...compiled.nodeVisuals[index],
+						position: { ...node.position },
+					}))
+				: source.nodes.slice(),
 		};
 		this.nodeIds = compiled.nodeIds;
 		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
@@ -643,6 +657,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.markNodeInstances([[firstNodeSlot, total.nodes]], total.nodes, false);
 
 		// Edges: new segments take the first slots after the old ones, so the markers move up to make room.
+		this.reserveEdgeInstances(segmentsTotal + markersTotal, segmentsBefore + markersBefore);
 		const edgeGeometry = edgeMesh.geometry;
 		if (packed.segments.length > 0 && markersBefore > 0) {
 			for (const name of EDGE_INSTANCE_ATTRIBUTES) {
@@ -710,9 +725,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.edgePoolCapacity = capacities.edgeInstanceCapacity;
 		this.edgeInstanceCapacity =
 			capacities.edgeInstanceCapacity + Math.min(OVERLAY_INSTANCE_RESERVE, capacities.edgeInstanceCapacity);
-		const edgeGeometry = createEdgeGeometry(this.edgeInstanceCapacity);
+		// Room for the slots in use grows with the first and later passes (`reserveEdgeInstances`); the
+		// capacity above is only the most a pass may ever use.
+		const edgeGeometry = createEdgeGeometry(Math.min(INITIAL_EDGE_INSTANCES, this.edgeInstanceCapacity));
 		const edgeMaterial = createEdgeMaterial();
-		const edgeMesh = new InstancedMesh(edgeGeometry, edgeMaterial, this.edgeInstanceCapacity);
+		const edgeMesh = createEdgeMesh(edgeGeometry, edgeMaterial);
 		edgeMesh.frustumCulled = false;
 		edgeMesh.renderOrder = EDGE_RENDER_ORDER;
 		this.edgeMesh = edgeMesh;
@@ -994,10 +1011,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	/** Edge ID to compiled index, rebuilt only when the edge list is replaced. */
 	private edgeIndicesById(): ReadonlyMap<string, number> {
 		if (this.edgeIndexCache.edges !== this.data.edges) {
-			this.edgeIndexCache = {
-				edges: this.data.edges,
-				indices: new Map(this.data.edges.map((edge, index) => [edge.id, index])),
-			};
+			const indices = new Map<string, number>();
+			for (const [index, edge] of this.data.edges.entries()) indices.set(edge.id, index);
+			this.edgeIndexCache = { edges: this.data.edges, indices };
 		}
 		return this.edgeIndexCache.indices;
 	}
@@ -2490,6 +2506,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.visibleEdgeLayouts = buildVisibleEdgeLayouts(packed.segments, packed.markers, packed.segments.length);
 			this.pickableEdgeSegments = [];
 			this.visibleEdgeSegmentEdgeIndices = [];
+			this.fitEdgeInstances(packed.segments.length + packed.markers.length);
 			const distinctEdgeCount = this.writeEdgeInstances(packed, {
 				markerStart: packed.segments.length,
 				segmentStart: 0,
@@ -2696,9 +2713,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	/** Selected edges and every edge of a selected, focused or hovered node: never culled or budgeted away. */
 	private pinnedEdgeIndices(): ReadonlySet<number> {
 		const pinned = new Set<number>();
-		const edgeIndices = this.edgeIndicesById();
+		// The id map holds every edge id, so it is built only when an edge is selected.
+		const edgeIndices = this.selectedEdgeIds.size > 0 ? this.edgeIndicesById() : null;
 		for (const id of this.selectedEdgeIds) {
-			const edgeIndex = edgeIndices.get(id);
+			const edgeIndex = edgeIndices?.get(id);
 			if (edgeIndex !== undefined) pinned.add(edgeIndex);
 		}
 		for (const ids of [this.selectedNodeIds, this.focusedNodeIds, this.hoveredNodeIds]) {
@@ -2785,6 +2803,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		packed: { markers: readonly EdgeMarkerInstance[]; segments: readonly EdgeSegmentInstance[] },
 		start: { markerStart: number; segmentStart: number },
 	): number {
+		this.reserveEdgeInstances(
+			Math.max(start.segmentStart + packed.segments.length, start.markerStart + packed.markers.length),
+		);
 		const edgeGeometry = (this.edgeMesh as InstancedMesh).geometry;
 		const minHitSlop = Math.max(4, this.theme.edgeWidth);
 		const distinctEdges = new Set<number>();
@@ -2897,6 +2918,37 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	/** Flags the edge instances in `[start, end)` for upload; `clear` drops the ranges flagged before. */
+	/**
+	 * Re-sizes the edge buffers to hold `used` slots in use plus headroom for the selection overlay and
+	 * later camera moves, keeping nothing: a full pass writes every slot again. Memory follows the edges
+	 * drawn, not the edge count or the budget, and shrinks when a pass needs far less than is held.
+	 */
+	private fitEdgeInstances(used: number) {
+		const { edgeMesh } = this;
+		if (!edgeMesh) return;
+		const wanted = Math.min(this.edgeInstanceCapacity, used + Math.max(used >> 2, MIN_EDGE_HEADROOM));
+		const held = edgeGeometryCapacity(edgeMesh.geometry);
+		if (wanted <= held && held <= wanted * 4) return;
+		this.swapEdgeGeometry(wanted, 0);
+	}
+
+	/** Makes room for `slots` slots, growing geometrically and keeping the first `keep` slots written. */
+	private reserveEdgeInstances(slots: number, keep = slots) {
+		const { edgeMesh } = this;
+		if (!edgeMesh) return;
+		const held = edgeGeometryCapacity(edgeMesh.geometry);
+		if (slots <= held) return;
+		this.swapEdgeGeometry(Math.min(this.edgeInstanceCapacity, Math.max(slots, held * 2)), keep);
+	}
+
+	private swapEdgeGeometry(capacity: number, keep: number) {
+		const { edgeMesh } = this;
+		if (!edgeMesh) return;
+		const previous = edgeMesh.geometry;
+		edgeMesh.geometry = resizeEdgeGeometry(previous, capacity, keep);
+		previous.dispose();
+	}
+
 	private markEdgeInstances(start: number, end: number, clear: boolean) {
 		for (const name of EDGE_INSTANCE_ATTRIBUTES) {
 			const attribute = getInstancedAttribute((this.edgeMesh as InstancedMesh).geometry, name);

@@ -1,4 +1,4 @@
-import { type BufferGeometry, InstancedBufferAttribute, PlaneGeometry, ShaderMaterial } from "three";
+import { type BufferGeometry, InstancedBufferAttribute, InstancedMesh, PlaneGeometry, ShaderMaterial } from "three";
 import { createColorResolver } from "./color-cache";
 
 import type { EdgeMarkerInstance, EdgeSegmentInstance } from "./edge-materialize";
@@ -225,6 +225,39 @@ export function createEdgeGeometry(capacity: number): BufferGeometry {
 	geometry.setAttribute("instanceStyle", new InstancedBufferAttribute(new Float32Array(capacity), 1));
 	geometry.setAttribute("instanceTrim", new InstancedBufferAttribute(new Float32Array(capacity * 2), 2));
 	return geometry;
+}
+
+/** Instance slots the edge geometry has room for right now. */
+export function edgeGeometryCapacity(geometry: BufferGeometry): number {
+	return getInstancedAttribute(geometry, "instanceKind").count;
+}
+
+/**
+ * A new edge geometry with room for `capacity` slots, holding the first `keep` slots of `geometry`.
+ * The caller swaps it onto the mesh and disposes the old one, which frees its GPU buffers.
+ */
+export function resizeEdgeGeometry(geometry: BufferGeometry, capacity: number, keep: number): BufferGeometry {
+	const next = createEdgeGeometry(capacity);
+	const kept = Math.min(keep, capacity, edgeGeometryCapacity(geometry));
+	for (const name of EDGE_INSTANCE_ATTRIBUTES) {
+		const source = getInstancedAttribute(geometry, name);
+		const target = getInstancedAttribute(next, name);
+		target.array.set(source.array.subarray(0, kept * source.itemSize));
+	}
+	return next;
+}
+
+/**
+ * The edge mesh. Edges are drawn from their own instance attributes, so the shader never reads a
+ * per-instance matrix; only 3D picking raycasts the instances, and there every instance sits at the
+ * origin. `InstancedMesh` would hold 16 floats per slot for that (more memory than all the other
+ * edge attributes together), so it keeps one entry and answers every slot with the identity.
+ */
+export function createEdgeMesh(geometry: BufferGeometry, material: ShaderMaterial): InstancedMesh {
+	const mesh = new InstancedMesh(geometry, material, 1);
+	mesh.count = 0;
+	mesh.getMatrixAt = (_index, matrix) => matrix.identity();
+	return mesh;
 }
 
 /**

@@ -73,11 +73,6 @@ body.playground {
 	display: none;
 }
 
-/* Depth of field only exists in 3D, so its controls leave the bar in 2D. */
-.app[data-mode="2d"] .dof {
-	display: none;
-}
-
 .dof .short-label {
 	display: none;
 }

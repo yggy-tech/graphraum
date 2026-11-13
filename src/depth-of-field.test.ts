@@ -23,11 +23,16 @@ describe("resolveDepthOfFieldOptions", () => {
 			enabled: false,
 			farDistance: Number.POSITIVE_INFINITY,
 			focus: "selection",
+			innerRadius: 0.15,
 			maxBlur: 12,
 			minBlur: 0,
+			mode: "depth",
 			nearDistance: 0,
 			nearStrength: null,
+			outerRadius: 0.65,
 			strength: 0.5,
+			vignette: false,
+			vignetteStrength: 0.35,
 			transition: { durationMs: 400, easing: "easeInOut" },
 		});
 		expect(resolveDepthOfFieldOptions({})).toEqual(DEPTH_OF_FIELD_DEFAULTS);

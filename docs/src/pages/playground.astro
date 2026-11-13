@@ -195,7 +195,7 @@ const selects = [
 				<button type="button" data-mode-button="3d">3D</button>
 			</div>
 			<div class="seg dof" role="group" aria-label="Depth of field">
-				<button type="button" data-dof-toggle aria-pressed="true" title="In 3D, keep the selected node sharp and blur the graph with its distance. Rotate the graph to see it." aria-label="Depth of field"><span class="long-label">Depth of field</span><span class="short-label">Depth</span></button>
+				<button type="button" data-dof-toggle aria-pressed="true" title="Keep the selected node sharp and blur the rest. Pick depth of field (3D) or a radial blur (2D and 3D) in Lens." aria-label="Focus blur"><span class="long-label">Focus blur</span><span class="short-label">Blur</span></button>
 				<button type="button" data-lens-open aria-expanded="false" aria-controls="lens">Lens</button>
 			</div>
 			<div class="grow"></div>
@@ -245,14 +245,21 @@ const selects = [
 			<label class="check"><input type="checkbox" name="overlay" checked /> <span>Focus labels and toolbar</span></label>
 		</form>
 
-		<form id="lens" class="settings lens" hidden aria-label="Depth of field settings">
+		<form id="lens" class="settings lens" hidden aria-label="Focus blur settings">
 			<div class="settings-head">
-				<p class="settings-note">Depth of field in 3D. Select a node, then orbit or zoom.</p>
+				<p class="settings-note">Select a node. Depth of field needs 3D, so orbit or zoom. Radial blur also works in 2D.</p>
 				<button type="button" class="gbtn small" data-lens-close>Close</button>
 			</div>
 			<div class="settings-grid">
 				<label class="span">
-					<span>Strength <output name="strengthValue">0.5</output></span>
+					<span>Mode</span>
+					<select name="mode">
+						<option value="depth" selected>Depth of field (3D)</option>
+						<option value="radial">Radial blur (2D and 3D)</option>
+					</select>
+				</label>
+				<label class="span">
+					<span>Strength (depth) <output name="strengthValue">0.5</output></span>
 					<input type="range" name="strength" min="0" max="1" step="0.05" value="0.5" />
 				</label>
 				<label>
@@ -283,6 +290,7 @@ const selects = [
 					</select>
 				</label>
 			</div>
+			<label class="check"><input type="checkbox" name="vignette" /> <span>Vignette (radial blur)</span></label>
 			<label class="check"><input type="checkbox" name="orbit" /> <span>Orbit the camera</span></label>
 		</form>
 

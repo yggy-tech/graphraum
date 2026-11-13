@@ -22,7 +22,6 @@ import {
 	WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-
 import { autoRotateSpeedFor, resolveAutoOrbitOptions } from "./auto-orbit";
 import { AutoOrbitLoop } from "./auto-orbit-loop";
 import { applyPerspectiveContainerAspect, containerAspect } from "./camera-aspect";
@@ -123,6 +122,15 @@ import { resolveNodeStroke } from "./node-stroke";
 import { type PreparedNodeUpdate, prepareNodeUpdates } from "./node-updates";
 import { configureControlsForMode } from "./orbit-controls-mode";
 import { GraphraumOverlay } from "./overlay";
+import { RadialCrispLayer } from "./radial-crisp-layer";
+import {
+	crispEdgeIndices,
+	crispNodeIndices,
+	RADIAL_MIN_BLUR_PIXELS,
+	type RadialFocusFrame,
+	vignetteTone,
+} from "./radial-focus";
+import { RadialFocusPass } from "./radial-focus-pass";
 import { resolveSceneDrawSetup, resolveSceneOptions, SCENE_DEFAULTS, sceneLightColours, sunDirection } from "./scene";
 import { type Bounds2D, SpatialGrid2D } from "./spatial-grid-2d";
 import { applyLabelVariables, resolveStyleExtras, STYLE_DEFAULTS, type StyleExtras } from "./style";
@@ -378,6 +386,8 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	/** The same for `nearStrength`, faded alongside. */
 	private readonly depthOfFieldNearStrength = new Tween(0);
 	private depthOfFieldPass: DepthOfFieldPass | null = null;
+	private radialFocusPass: RadialFocusPass | null = null;
+	private radialCrispLayer: RadialCrispLayer | null = null;
 	private depthOfFieldStatus: GraphraumDepthOfFieldStatus = "off";
 	private focusLens: ResolvedFocusLensOptions = FOCUS_LENS_DEFAULTS;
 	/** Size factor shown for each node, by node index; 0 means not set yet. Sized on demand. */
@@ -1390,8 +1400,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	 * moves over `transition` when the selection changes; with nothing selected the blur fades out.
 	 * `prefers-reduced-motion: reduce` jumps. Resolves `true` when the blur reaches the new strength
 	 * and `false` when a later call or `destroy()` interrupts the fade. While it blurs each frame adds
-	 * four draw calls; disabled, or with nothing to blur, it costs nothing. A no-op in 2D. Picking
-	 * and DOM overlays are unaffected. Throws for invalid values.
+	 * four draw calls; disabled, or with nothing to blur, it costs nothing. The `"depth"` mode is a
+	 * no-op in 2D. `mode: "radial"` keeps the selection and its neighbours crisp and blurs the rest by
+	 * screen distance from the selection, in 2D and 3D, with an optional `vignette`; switching `mode`
+	 * live swaps the effect. Picking and DOM overlays are unaffected. Throws for invalid values.
 	 */
 	setDepthOfField(options: GraphraumDepthOfFieldOptions, update: GraphraumDepthOfFieldUpdate = {}): Promise<boolean> {
 		const animate = update.animate ?? true;
@@ -1412,7 +1424,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	private depthOfFieldTargetStrength() {
-		return this.depthOfField.enabled ? this.depthOfField.strength : 0;
+		const { enabled, mode, strength } = this.depthOfField;
+		if (!enabled) return 0;
+		// Radial mode fades its whole effect in and out; the strength only scales depth of field.
+		return mode === "radial" ? 1 : strength;
 	}
 
 	private depthOfFieldTargetNearStrength() {
@@ -1983,6 +1998,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.depthOfFieldStrength.cancel();
 		this.depthOfFieldNearStrength.cancel();
 		this.disposeDepthOfFieldPass();
+		this.disposeRadialFocusPass();
 		this.disposeGraphObjects();
 		this.renderer.dispose();
 		this.renderer.domElement.remove();
@@ -2013,8 +2029,21 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const query = timer?.context.createQuery() ?? null;
 		if (timer && query) timer.context.beginQuery(timer.extension.TIME_ELAPSED_EXT, query);
 		const startedAt = performance.now();
-		const depthOfField = this.prepareDepthOfField(startedAt);
-		if (depthOfField && this.depthOfFieldPass && this.camera instanceof PerspectiveCamera) {
+		const radial = this.depthOfField.mode === "radial";
+		const radialFocus = radial ? this.prepareRadialFocus(startedAt) : null;
+		const depthOfField = radial ? null : this.prepareDepthOfField(startedAt);
+		// Only the pass of the current mode keeps its render targets.
+		if (radial) this.disposeDepthOfFieldPass();
+		else this.disposeRadialFocusPass();
+		if (radialFocus && this.radialFocusPass) {
+			this.renderer.info.autoReset = false;
+			this.renderer.info.reset();
+			try {
+				this.radialFocusPass.render(this.renderer, this.scene, this.radialCrispScene(), this.camera, radialFocus);
+			} finally {
+				this.renderer.info.autoReset = true;
+			}
+		} else if (depthOfField && this.depthOfFieldPass && this.camera instanceof PerspectiveCamera) {
 			// Several render calls make one frame; count them together so gpuDrawCalls stays per frame.
 			this.renderer.info.autoReset = false;
 			this.renderer.info.reset();
@@ -2119,6 +2148,121 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				return node ? [{ x: node.position.x, y: node.position.y, z: node.position.z ?? 0 }] : [];
 			}),
 		);
+	}
+
+	/**
+	 * Decides whether this frame runs the radial focus and records why in the diagnostics status.
+	 * Mirrors `prepareDepthOfField`: a fade or focus move requests more frames and ends on its own.
+	 */
+	private prepareRadialFocus(nowMs: number): RadialFocusFrame | null {
+		const options = this.depthOfField;
+		const fadeTween = this.depthOfFieldStrength;
+		const nearTween = this.depthOfFieldNearStrength;
+		if (!options.enabled && fadeTween.settled && nearTween.settled) {
+			this.depthOfFieldStatus = "off";
+			this.disposeRadialFocusPass();
+			return null;
+		}
+		if (!RadialFocusPass.isSupported(this.renderer)) {
+			fadeTween.jump();
+			nearTween.jump();
+			this.depthOfFieldStatus = options.enabled ? "unsupported" : "off";
+			if (options.enabled && !warnedDepthOfFieldUnsupported) {
+				warnedDepthOfFieldUnsupported = true;
+				console.warn(
+					'graphraum: the radial focus needs a WebGL 2 context and is turned off for this canvas. getDiagnostics().depthOfField reports "unsupported".',
+				);
+			}
+			return null;
+		}
+		const fade = fadeTween.sample(nowMs);
+		nearTween.sample(nowMs);
+		if (!fadeTween.settled || !nearTween.settled) this.requestRender();
+		this.camera.updateMatrixWorld();
+		const focus = this.depthOfFieldFocus.evaluate(nowMs, this.selectionFocusPoint(), prefersReducedMotion());
+		if (!focus.settled) this.requestRender();
+		const amount = fade * focus.amount;
+		const maxBlurPixels = options.maxBlur * this.renderer.getPixelRatio();
+		if (!focus.point || amount * maxBlurPixels < RADIAL_MIN_BLUR_PIXELS) {
+			this.depthOfFieldStatus = options.enabled ? "inactive" : "off";
+			return null;
+		}
+		const { x: width, y: height } = this.renderer.getDrawingBufferSize(new Vector2());
+		const ndc = new Vector3(focus.point.x, focus.point.y, focus.point.z).project(this.camera);
+		this.radialFocusPass ??= new RadialFocusPass(this.antialias);
+		this.depthOfFieldStatus = "active";
+		return {
+			amount,
+			focusX: (ndc.x * 0.5 + 0.5) * width,
+			focusY: (ndc.y * 0.5 + 0.5) * height,
+			innerPixels: options.innerRadius * height,
+			maxBlurPixels,
+			outerPixels: options.outerRadius * height,
+			vignette: options.vignette ? options.vignetteStrength * amount : 0,
+			vignetteTone: vignetteTone(this.solidBackground()),
+		};
+	}
+
+	/** The theme background when it is a plain colour; `null` for transparent and image backgrounds. */
+	private solidBackground(): string | null {
+		const background = normalizeGraphraumBackground(this.theme.background);
+		return typeof background === "string" ? background : null;
+	}
+
+	/**
+	 * Rewrites the crisp meshes for this frame: the selected, focused and hovered nodes, their one-hop
+	 * neighbours and the edges between them. Null when nothing is selected or the nodes are aggregated.
+	 */
+	private radialCrispScene(): Scene | null {
+		const { nodeMesh } = this;
+		if (!nodeMesh || !this.nodeSlotsPlain) return null;
+		const toIndices = (ids: Iterable<string>) =>
+			[...ids].flatMap((id) => {
+				const index = this.nodeIndices.get(id);
+				return index === undefined ? [] : [index];
+			});
+		const expanding = toIndices([...this.selectedNodeIds, ...this.focusedNodeIds]);
+		const anchors = [...expanding, ...toIndices(this.hoveredNodeIds)];
+		if (anchors.length === 0) return null;
+		const crispNodes = crispNodeIndices(anchors, expanding, (index) =>
+			(this.incidentEdgeIndices[index] ?? []).flatMap((edgeIndex) => {
+				const source = this.edgeNodeIndices[edgeIndex * 2];
+				const target = this.edgeNodeIndices[edgeIndex * 2 + 1];
+				const other = source === index ? target : source;
+				return other === undefined ? [] : [other];
+			}),
+		);
+		const edgeIndices = this.selectedEdgeIds.size > 0 ? this.edgeIndicesById() : null;
+		const crispEdges = crispEdgeIndices(
+			crispNodes,
+			(index) => this.incidentEdgeIndices[index] ?? [],
+			this.edgeNodeIndices,
+			[...this.selectedEdgeIds].flatMap((id) => {
+				const edgeIndex = edgeIndices?.get(id);
+				return edgeIndex === undefined ? [] : [edgeIndex];
+			}),
+		);
+		const layer = this.radialCrispLayer ?? new RadialCrispLayer();
+		this.radialCrispLayer = layer;
+		layer.sync(
+			{ edgeMesh: this.edgeMesh, nodeMesh },
+			[...crispNodes].flatMap((index) => {
+				const slot = this.visibleNodeSlot(index);
+				return slot === undefined ? [] : [slot];
+			}),
+			[...crispEdges].flatMap((edgeIndex) => {
+				const layout = this.visibleEdgeLayouts.get(edgeIndex);
+				return layout ? [layout] : [];
+			}),
+		);
+		return layer.scene;
+	}
+
+	private disposeRadialFocusPass() {
+		this.radialFocusPass?.dispose();
+		this.radialFocusPass = null;
+		this.radialCrispLayer?.dispose();
+		this.radialCrispLayer = null;
 	}
 
 	private disposeDepthOfFieldPass() {

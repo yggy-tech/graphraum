@@ -96,7 +96,7 @@ export function startPlayground() {
 		});
 	}
 
-	/** Depth of field is a no-op in 2D, so the same settings apply to every scene and mode. */
+	/** Depth of field is a no-op in 2D; the radial blur works in both, so the same settings apply to every scene and mode. */
 	function applyDepthOfField(animate = true) {
 		const values = new FormData(lens);
 		const strength = Number(values.get("strength"));
@@ -106,6 +106,8 @@ export function startPlayground() {
 			{
 				enabled: dofToggle.getAttribute("aria-pressed") === "true",
 				maxBlur: Number(values.get("maxBlur")),
+				mode: values.get("mode") === "radial" ? "radial" : "depth",
+				vignette: values.get("vignette") === "on",
 				strength,
 				transition: {
 					durationMs: Number(values.get("durationMs")),

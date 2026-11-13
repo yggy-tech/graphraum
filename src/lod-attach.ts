@@ -232,7 +232,7 @@ export function attachClusterLod(
 		return node;
 	};
 
-	const snapshotOf = (cut: ClusterCut): { drawn: DrawnSet; keys: string[] } => {
+	const snapshotOf = (cut: ClusterCut): DrawnSet => {
 		const keys = [...Array.from(cut.clusters, clusterKey), ...Array.from(cut.nodes, nodeKey)];
 		const nodes = new Map<string, GraphraumNode>();
 		const ids: string[] = [];
@@ -254,7 +254,7 @@ export function attachClusterLod(
 			const id = `${prefix}edge:${source}>${target}`;
 			edges.set(id, { id, source, target, ...edgeStyle(cut.edgeWeight[edge] as number) });
 		}
-		return { drawn: { edges, nodes }, keys };
+		return { edges, nodes };
 	};
 
 	let diagnostics: ClusterLodDiagnostics = {
@@ -385,7 +385,7 @@ export function attachClusterLod(
 	}
 
 	function apply(cut: ClusterCut, startedAt: number) {
-		const { drawn: next, keys } = snapshotOf(cut);
+		const next = snapshotOf(cut);
 		const after: CutElements = { clusters: new Set(cut.clusters), nodes: new Set(cut.nodes) };
 		const animate = transitionMs > 0 && !reducedMotion();
 		const plan = animate ? planTransition(tree, committed, after, centroidOf) : null;
@@ -453,7 +453,7 @@ export function attachClusterLod(
 		const startedAt = performance.now();
 		const cut = cutter(wholeTree, options);
 		lastCutKey = cutKey(cut);
-		const { drawn: first } = snapshotOf(cut);
+		const first = snapshotOf(cut);
 		committed = { clusters: new Set(cut.clusters), nodes: new Set(cut.nodes) };
 		applying = true;
 		try {

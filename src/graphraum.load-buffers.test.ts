@@ -1,4 +1,4 @@
-import type { BufferAttribute, InstancedMesh } from "three";
+import { type BufferAttribute, InstancedBufferAttribute, type InstancedMesh } from "three";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 vi.mock("three", async (importOriginal) => {
@@ -70,6 +70,41 @@ function meshArrays(mesh: InstancedMesh) {
 	];
 }
 
+/**
+ * Edge slots the buffers had before they were sized to what is drawn: 1,024 edges at 26 slots each,
+ * plus the same again for the overlay. The recorded hash still covers that many zero-padded slots,
+ * so the used slots are proven identical and the buffers are no longer the size they were.
+ */
+const FORMER_EDGE_SLOTS = 53_248;
+
+function paddedTo(array: Float32Array, length: number): Float32Array {
+	const padded = new Float32Array(length);
+	padded.set(array);
+	return padded;
+}
+
+/** What `InstancedMesh` held per slot: the identity matrix. */
+function identityMatrices(slots: number): Float32Array {
+	const matrices = new Float32Array(slots * 16);
+	for (let slot = 0; slot < slots; slot += 1) {
+		for (const diagonal of [0, 5, 10, 15]) matrices[slot * 16 + diagonal] = 1;
+	}
+	return matrices;
+}
+
+function formerEdgeMeshArrays(mesh: InstancedMesh) {
+	const attributes = Object.values(mesh.geometry.attributes) as BufferAttribute[];
+	return [
+		identityMatrices(FORMER_EDGE_SLOTS),
+		...attributes.map((attribute) =>
+			attribute instanceof InstancedBufferAttribute
+				? paddedTo(attribute.array as Float32Array, FORMER_EDGE_SLOTS * attribute.itemSize)
+				: attribute.array,
+		),
+		new Float32Array([mesh.count]),
+	];
+}
+
 function bufferHashes(mode: "2d" | "3d") {
 	const graph = new Graphraum(new FakeElement(800, 600) as unknown as HTMLElement, { mode });
 	graphs.push(graph);
@@ -78,7 +113,7 @@ function bufferHashes(mode: "2d" | "3d") {
 	const pickMesh = Reflect.get(graph, "nodePickMesh") as InstancedMesh;
 	const edgeMesh = Reflect.get(graph, "edgeMesh") as InstancedMesh;
 	return {
-		edges: hash(meshArrays(edgeMesh)),
+		edges: hash(formerEdgeMeshArrays(edgeMesh)),
 		nodePick: hash([pickMesh.instanceMatrix.array]),
 		nodes: hash(meshArrays(nodeMesh)),
 	};

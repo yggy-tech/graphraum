@@ -242,12 +242,17 @@ export interface GraphraumDepthOfFieldOptions {
     enabled?: boolean;
     farDistance?: number;
     focus?: "selection" | number;
+    innerRadius?: number;
     maxBlur?: number;
     minBlur?: number;
+    mode?: GraphraumFocusMode;
     nearDistance?: number;
     nearStrength?: number;
+    outerRadius?: number;
     strength?: number;
     transition?: GraphraumDepthOfFieldTransition;
+    vignette?: boolean;
+    vignetteStrength?: number;
 }
 
 // @public
@@ -405,6 +410,9 @@ export interface GraphraumFocusLensOptions {
     labelThreshold?: number;
     reach?: number;
 }
+
+// @public
+export type GraphraumFocusMode = "depth" | "radial";
 
 // @public
 export interface GraphraumIconAtlas {

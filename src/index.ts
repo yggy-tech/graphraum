@@ -62,6 +62,7 @@ export type {
 	GraphraumEdgeVisual,
 	GraphraumFlyToOptions,
 	GraphraumFocusLensOptions,
+	GraphraumFocusMode,
 	GraphraumInteractionQuality,
 	GraphraumInteractionQualityOptions,
 	GraphraumLabelCandidate,

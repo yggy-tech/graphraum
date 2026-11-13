@@ -14,6 +14,16 @@ const fakes = vi.hoisted(() => ({
 	}[],
 	passes: 0,
 	disposed: 0,
+	radial: [] as {
+		amount: number;
+		focusX: number;
+		focusY: number;
+		innerPixels: number;
+		vignette: number;
+		crisp: unknown;
+	}[],
+	radialPasses: 0,
+	radialDisposed: 0,
 	supported: true,
 }));
 
@@ -35,6 +45,9 @@ vi.mock("three", async (importOriginal) => {
 		dispose() {}
 		getContext() {
 			return {};
+		}
+		getDrawingBufferSize(target: { set(x: number, y: number): unknown }) {
+			return target.set(1600, 1200);
 		}
 		getPixelRatio() {
 			return 2;
@@ -62,6 +75,29 @@ vi.mock("./depth-of-field-pass", () => ({
 		}
 		render(_renderer: unknown, _scene: unknown, _camera: unknown, _edges: unknown, frame: (typeof fakes.frames)[0]) {
 			fakes.frames.push({ ...frame });
+		}
+	},
+}));
+
+vi.mock("./radial-focus-pass", () => ({
+	RadialFocusPass: class {
+		static isSupported() {
+			return fakes.supported;
+		}
+		constructor() {
+			fakes.radialPasses += 1;
+		}
+		dispose() {
+			fakes.radialDisposed += 1;
+		}
+		render(
+			_renderer: unknown,
+			_scene: unknown,
+			crisp: { children: { count: number }[] } | null,
+			_camera: unknown,
+			frame: (typeof fakes.radial)[0],
+		) {
+			fakes.radial.push({ ...frame, crisp: crisp?.children.map((mesh) => mesh.count) ?? null });
 		}
 	},
 }));
@@ -110,6 +146,9 @@ beforeEach(() => {
 	fakes.directRenders = 0;
 	fakes.passes = 0;
 	fakes.disposed = 0;
+	fakes.radial = [];
+	fakes.radialPasses = 0;
+	fakes.radialDisposed = 0;
 	fakes.supported = true;
 	reducedMotion = false;
 	vi.stubGlobal("window", {
@@ -388,5 +427,97 @@ describe("depth of field", () => {
 		runFrame();
 		expect(graph.getDiagnostics().depthOfField).toBe("active");
 		expect([graph.pick(400, 300), graph.pickHit(10, 10)]).toEqual(before);
+	});
+});
+
+describe("radial focus", () => {
+	const radial = { enabled: true, mode: "radial", ...instant } as const;
+
+	test("depth mode stays the default and never builds the radial pass", () => {
+		const graph = createGraph({ depthOfField: { enabled: true, ...instant } });
+		graph.setSelection(["a"]);
+		runFrame();
+		expect(fakes.passes).toBe(1);
+		expect(fakes.radialPasses).toBe(0);
+	});
+
+	test("stays inactive with nothing selected", () => {
+		const graph = createGraph({ depthOfField: radial });
+		graph.render();
+		runFrame();
+		expect(graph.getDiagnostics().depthOfField).toBe("inactive");
+		expect(fakes.radialPasses).toBe(0);
+		expect(fakes.directRenders).toBe(1);
+	});
+
+	test("runs in 2D and 3D and puts the focus on the selected node in device pixels", () => {
+		for (const mode of ["2d", "3d"] as const) {
+			fakes.radial = [];
+			const graph = createGraph({ depthOfField: { ...radial, innerRadius: 0.1, outerRadius: 0.5 }, mode });
+			graph.setSelection(["a"]);
+			runFrame();
+			expect(graph.getDiagnostics().depthOfField).toBe("active");
+			const frame = fakes.radial.at(-1);
+			expect(frame?.amount).toBe(1);
+			// The focus is the selected node's screen position in device pixels (pixel ratio 2, y up).
+			const screen = graph.getNodeScreenPosition("a");
+			expect(frame?.focusX).toBeCloseTo((screen?.x ?? 0) * 2, 0);
+			expect(frame?.focusY).toBeCloseTo(1200 - (screen?.y ?? 0) * 2, 0);
+			expect(frame?.innerPixels).toBeCloseTo(120);
+			expect(frame?.vignette).toBe(0);
+		}
+	});
+
+	test("the vignette is opt in and fades with the effect", () => {
+		const graph = createGraph({ depthOfField: { ...radial, vignette: true, vignetteStrength: 0.4 } });
+		graph.setSelection(["a"]);
+		runFrame();
+		expect(fakes.radial.at(-1)?.vignette).toBeCloseTo(0.4);
+	});
+
+	test("switching mode live swaps the pass and releases the other", async () => {
+		const graph = createGraph({ depthOfField: { enabled: true, ...instant } });
+		graph.setSelection(["a"]);
+		runFrame();
+		expect(fakes.passes).toBe(1);
+		await graph.setDepthOfField({ mode: "radial" }, { animate: false });
+		runFrame();
+		expect(fakes.radialPasses).toBe(1);
+		expect(fakes.disposed).toBe(1);
+		await graph.setDepthOfField({ mode: "depth" }, { animate: false });
+		runFrame();
+		expect(fakes.radialDisposed).toBe(1);
+		expect(fakes.passes).toBe(2);
+	});
+
+	test("disabling fades the blur out and then releases the pass", async () => {
+		const graph = createGraph({ depthOfField: { ...radial, transition: { durationMs: 200 } } });
+		graph.setSelection(["a"]);
+		settle();
+		const done = graph.setDepthOfField({ enabled: false });
+		settle();
+		expect(await done).toBe(true);
+		graph.render();
+		runFrame();
+		expect(graph.getDiagnostics().depthOfField).toBe("off");
+		expect(fakes.radialPasses).toBe(1);
+		expect(fakes.radialDisposed).toBe(1);
+	});
+
+	test("an unsupported context renders directly", () => {
+		fakes.supported = false;
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const graph = createGraph({ depthOfField: radial });
+		graph.setSelection(["a"]);
+		runFrame();
+		expect(graph.getDiagnostics().depthOfField).toBe("unsupported");
+		expect(fakes.directRenders).toBeGreaterThan(0);
+	});
+
+	test("rejects invalid radial options", () => {
+		const graph = createGraph();
+		expect(() => graph.setDepthOfField({ mode: "spiral" as never })).toThrow(/mode/);
+		expect(() => graph.setDepthOfField({ innerRadius: 0.5, outerRadius: 0.2 })).toThrow(/innerRadius/);
+		expect(() => graph.setDepthOfField({ vignetteStrength: 2 })).toThrow(/vignetteStrength/);
 	});
 });

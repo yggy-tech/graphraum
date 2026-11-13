@@ -21,8 +21,9 @@ import { dirname, join } from "node:path";
 // 10 500 for the layout-multilevel entry: the force layout chunk it shares with layout (5.9 KiB) plus coarsening and level refinement (3.0 KiB).
 // 14 000 for the layout-multilevel entry since parallel refinement and the changed-groups warm start: 13.3 KiB at that change (region split, worker pool, exchange, warm start), 0.4 KiB of margin.
 // 7 800 for the layout-multilevel-worker entry (the region worker): the shared force layout chunk plus 0.9 KiB of its own, 7.3 KiB at that change. It loads in the workers, not on the page.
+// 61 500 for the main entry since the radial focus blur: its two shaders, the crisp layer, option checks and the pass, 4.2 KiB gzip over the 56 653 bytes before (60 953 now). It joins depth of field, so a split of the main bundle is the way to win this back.
 const BUDGETS = [
-	{ file: "dist/index.js", gzipBytes: 57_300 },
+	{ file: "dist/index.js", gzipBytes: 61_500 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout.js", gzipBytes: 7_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },

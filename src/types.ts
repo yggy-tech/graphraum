@@ -452,7 +452,14 @@ export interface GraphraumDepthOfFieldTransition {
 }
 
 /**
- * Opt-in 3D depth of field. The focal plane follows the selection, so selected nodes stay sharp and
+ * How the focus effect blurs: `"depth"` blurs by distance from the focal plane (3D only), `"radial"`
+ * keeps the selection and its neighbours crisp and blurs the rest by screen distance from the
+ * selection (2D and 3D).
+ */
+export type GraphraumFocusMode = "depth" | "radial";
+
+/**
+ * Opt-in focus blur. The default `"depth"` mode is a 3D depth of field. The focal plane follows the selection, so selected nodes stay sharp and
  * the rest of the graph blurs with its distance from them, in front and behind, like a thin lens:
  * the closer the camera is to the focus, the shallower the depth of field. A no-op in 2D. See
  * `Graphraum.setDepthOfField`.
@@ -460,6 +467,25 @@ export interface GraphraumDepthOfFieldTransition {
 export interface GraphraumDepthOfFieldOptions {
 	/** Default `false`. While disabled no extra passes or render targets exist. Toggling fades the blur. */
 	enabled?: boolean;
+	/**
+	 * Default `"depth"`. `"radial"` leaves the selected, focused and hovered nodes and their one-hop
+	 * neighbours crisp, with the edges between them, and blurs everything else (including edges) more
+	 * the farther it is from the selection on screen. It works in 2D and 3D, ignores `focus`,
+	 * `strength`, `nearStrength`, `minBlur`, `nearDistance` and `farDistance`, and uses `maxBlur` as the
+	 * largest blur.
+	 */
+	mode?: GraphraumFocusMode;
+	/** Radial mode: radius in viewport heights around the selection that stays crisp. Default 0.15. */
+	innerRadius?: number;
+	/** Radial mode: radius in viewport heights at which the blur reaches `maxBlur`. Default 0.65. */
+	outerRadius?: number;
+	/**
+	 * Radial mode: darken toward the viewport edges, fading with the focus. In a dark theme it
+	 * darkens the background tone, in a light theme it dims toward it. Default `false`.
+	 */
+	vignette?: boolean;
+	/** Radial mode: vignette strength, 0..1. Default 0.35. */
+	vignetteStrength?: number;
 	/**
 	 * `"selection"` (default) focuses the mean position of the selected nodes and fades the blur out
 	 * when nothing is selected. A number fixes the focal plane at that camera distance in world units.

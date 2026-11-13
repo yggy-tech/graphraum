@@ -185,6 +185,24 @@ Picking, `getNodeScreenPosition` and DOM overlays such as labels, toolbars and f
 
 In 2D there is no depth to focus on, so depth of field does nothing there; `setMode("3d")` brings it back. If the WebGL context cannot run it, frames render without it and graphraum logs one console warning. `getDiagnostics().depthOfField` reports `"off"`, `"inactive"`, `"active"` or `"unsupported"`.
 
+### Radial blur
+
+`mode: "radial"` is a second way to focus, in 2D and 3D. The selected, focused and hovered nodes and their one-hop neighbours stay crisp, with the edges between them. Everything else, edges included, blurs more the farther it is from the selection on screen, smoothly, with no ring. It ignores `focus` and `strength`; `maxBlur` is the largest blur.
+
+```ts
+graph.setDepthOfField({
+	enabled: true,
+	mode: "radial",
+	innerRadius: 0.15, // viewport heights around the selection that stay crisp
+	outerRadius: 0.65, // viewport heights at which the blur reaches maxBlur
+	maxBlur: 12, // CSS pixels
+	vignette: true, // darken toward the viewport edges, off by default
+	vignetteStrength: 0.35,
+});
+```
+
+The vignette is theme aware: on a dark background it darkens the edges, on a light one it dims them toward the background tone. It fades with the blur. Switching `mode` live swaps the effect; enabling and disabling fade like depth of field. Each frame adds 3 draw calls plus the crisp nodes and edges, and the crisp set is capped at 1,024 nodes. With density clusters on, nothing is kept crisp.
+
 ## Lit and toon shading
 
 In 3D, nodes can look like objects in a lit space instead of flat discs. One call sets the look:

@@ -1,5 +1,5 @@
 import { easeInOutCubic, flightProgress } from "./camera-flight";
-import type { GraphraumDepthOfFieldOptions, GraphraumEasing } from "./types";
+import type { GraphraumDepthOfFieldOptions, GraphraumEasing, GraphraumFocusMode } from "./types";
 
 export type EasingFunction = (t: number) => number;
 
@@ -7,12 +7,17 @@ export interface ResolvedDepthOfFieldOptions {
 	readonly enabled: boolean;
 	readonly farDistance: number;
 	readonly focus: "selection" | number;
+	readonly innerRadius: number;
 	readonly maxBlur: number;
 	readonly minBlur: number;
+	readonly mode: GraphraumFocusMode;
 	readonly nearDistance: number;
 	/** `null` follows `strength`. */
 	readonly nearStrength: number | null;
+	readonly outerRadius: number;
 	readonly strength: number;
+	readonly vignette: boolean;
+	readonly vignetteStrength: number;
 	readonly transition: { readonly durationMs: number; readonly easing: GraphraumEasing };
 }
 
@@ -20,11 +25,16 @@ export const DEPTH_OF_FIELD_DEFAULTS: ResolvedDepthOfFieldOptions = {
 	enabled: false,
 	farDistance: Number.POSITIVE_INFINITY,
 	focus: "selection",
+	innerRadius: 0.15,
 	maxBlur: 12,
 	minBlur: 0,
+	mode: "depth",
 	nearDistance: 0,
 	nearStrength: null,
+	outerRadius: 0.65,
 	strength: 0.5,
+	vignette: false,
+	vignetteStrength: 0.35,
 	transition: { durationMs: 400, easing: "easeInOut" },
 };
 
@@ -71,11 +81,16 @@ export function resolveDepthOfFieldOptions(
 		enabled: options.enabled ?? base.enabled,
 		farDistance: options.farDistance ?? base.farDistance,
 		focus: options.focus ?? base.focus,
+		innerRadius: options.innerRadius ?? base.innerRadius,
 		maxBlur: options.maxBlur ?? base.maxBlur,
 		minBlur: options.minBlur ?? base.minBlur,
+		mode: options.mode ?? base.mode,
 		nearDistance: options.nearDistance ?? base.nearDistance,
 		nearStrength: options.nearStrength ?? base.nearStrength,
+		outerRadius: options.outerRadius ?? base.outerRadius,
 		strength: options.strength ?? base.strength,
+		vignette: options.vignette ?? base.vignette,
+		vignetteStrength: options.vignetteStrength ?? base.vignetteStrength,
 		transition: {
 			durationMs: options.transition?.durationMs ?? base.transition.durationMs,
 			easing: options.transition?.easing ?? base.transition.easing,
@@ -85,6 +100,7 @@ export function resolveDepthOfFieldOptions(
 	if (typeof enabled !== "boolean") {
 		throw new Error(`Depth of field enabled must be a boolean; received ${String(enabled)}.`);
 	}
+	validateRadialOptions(resolved);
 	if (!isNonNegativeNumber(strength) || strength > 1) {
 		throw new Error(`Depth of field strength must be a number from 0 to 1; received ${String(strength)}.`);
 	}
@@ -122,6 +138,31 @@ export function resolveDepthOfFieldOptions(
 		);
 	}
 	return resolved;
+}
+
+function validateRadialOptions({
+	innerRadius,
+	mode,
+	outerRadius,
+	vignette,
+	vignetteStrength,
+}: ResolvedDepthOfFieldOptions) {
+	if (mode !== "depth" && mode !== "radial") {
+		throw new Error(`Depth of field mode must be "depth" or "radial"; received ${String(mode)}.`);
+	}
+	if (typeof vignette !== "boolean") {
+		throw new Error(`Depth of field vignette must be a boolean; received ${String(vignette)}.`);
+	}
+	if (!isNonNegativeNumber(vignetteStrength) || vignetteStrength > 1) {
+		throw new Error(
+			`Depth of field vignetteStrength must be a number from 0 to 1; received ${String(vignetteStrength)}.`,
+		);
+	}
+	if (!isNonNegativeNumber(innerRadius) || !isNonNegativeNumber(outerRadius) || outerRadius <= innerRadius) {
+		throw new Error(
+			`Depth of field innerRadius must be a non-negative viewport fraction below outerRadius; received ${String(innerRadius)} and ${String(outerRadius)}.`,
+		);
+	}
 }
 
 /**

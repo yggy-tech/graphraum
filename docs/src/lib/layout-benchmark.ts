@@ -130,6 +130,8 @@ export async function measureProgressiveForceLayout(options: {
 	dimensions: 2 | 3;
 	edges: readonly { source: string; target: string }[];
 	iterations?: number;
+	/** Options of the multilevel algorithm, such as `workers` (see `layout-worker.ts`). */
+	multilevel?: { workers?: number };
 	nextFrame: () => Promise<unknown>;
 	nodeCount: number;
 	now?: () => number;
@@ -158,6 +160,7 @@ export async function measureProgressiveForceLayout(options: {
 			iterations,
 			layout: "force",
 			maxFps: 30,
+			multilevel: options.multilevel,
 			nodeCount: options.nodeCount,
 			run,
 			settings,

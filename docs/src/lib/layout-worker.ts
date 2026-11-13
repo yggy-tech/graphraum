@@ -1,5 +1,5 @@
 import { computeForcePositions, createForceSimulation, type ForceSettings } from "../../../src/force-layout";
-import { computeMultilevelForcePositions, type MultilevelOptions } from "../../../src/layout-multilevel";
+import { computeMultilevelForcePositionsAsync, type ParallelMultilevelOptions } from "../../../src/layout-multilevel";
 import { normalizeExtent, spreadClusters } from "./stress-layout";
 
 /** Where a multilevel layout spent its time, in milliseconds, and how many coarse levels it built. */
@@ -21,7 +21,7 @@ type LayoutRequest = {
 	layout: LayoutName;
 	maxFps: number;
 	/** Options of the `"multilevel"` algorithm. */
-	multilevel?: MultilevelOptions;
+	multilevel?: ParallelMultilevelOptions;
 	nodeCount: number;
 	run: number;
 	settings: ForceSettings;
@@ -121,8 +121,14 @@ function postNextBatch(run: number) {
 	);
 }
 
-workerScope.addEventListener("message", ({ data }) => {
+/** The newest `start`: an older one still computing drops its result. */
+let latestRun = 0;
+
+workerScope.addEventListener("message", async ({ data, origin }) => {
+	// A dedicated worker only hears the page that started it; its messages carry an empty origin.
+	if (origin !== "") return;
 	if (data.type === "start") {
+		latestRun = data.run;
 		stopLiveLayout();
 		if (data.layout === "force-live") {
 			startLiveLayout(data);
@@ -145,7 +151,9 @@ workerScope.addEventListener("message", ({ data }) => {
 			};
 			if (data.algorithm === "multilevel") {
 				const phases = { coarsenMs: 0, coarsestMs: 0, levels: 0, refineMs: 0 };
-				positions = computeMultilevelForcePositions(forceRequest, {
+				positions = await computeMultilevelForcePositionsAsync(forceRequest, {
+					createWorker: () =>
+						new Worker(new URL("../../../src/layout-multilevel-worker.ts", import.meta.url), { type: "module" }),
 					...data.multilevel,
 					onPreview: (preview) =>
 						workerScope.postMessage(
@@ -159,6 +167,7 @@ workerScope.addEventListener("message", ({ data }) => {
 				});
 				multilevelPhases = phases;
 			} else positions = computeForcePositions(forceRequest);
+			if (latestRun !== data.run) return;
 			if (data.clusters) normalizeExtent(spreadClusters(positions, data.clusters), data.nodeCount);
 			computeMilliseconds = performance.now() - computeStartedAt;
 		}

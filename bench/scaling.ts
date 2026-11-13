@@ -4,6 +4,12 @@ import type { BenchEnvironment } from "./types";
 /** Node counts of the scaling ladder; edges are always 3x nodes. */
 export const SCALING_SIZES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_000_000, 5_000_000] as const;
 
+/**
+ * The edge-t multilevel layout series stop at 1M: at 5M the single-thread series crashes the tab (memory)
+ * and the parallel one does not finish within the 300 s case limit.
+ */
+export const EDGE_T_LAYOUT_SIZES = SCALING_SIZES.filter((nodes) => nodes <= 1_000_000);
+
 /** The cluster LOD series run the same ladder; at 1M and 5M the plain renderer cannot draw everything. */
 export const LOD_SCALING_SIZES = SCALING_SIZES;
 
@@ -25,6 +31,31 @@ export interface ScalingSeriesSpec {
 	/** Ladder sizes of this family; the default ladder when absent. */
 	sizes?: readonly number[];
 	title: string;
+}
+
+/** The six charts of a multilevel layout family: total, first useful frame and the four phases. */
+function multilevelSeries(
+	caseSeries: string,
+	id: string,
+	title: string,
+	sizes?: readonly number[],
+): ScalingSeriesSpec[] {
+	const charts = [
+		["", "totalMs", "total ms"],
+		["-first-useful", "firstUsefulFrameMs", "first useful frame ms"],
+		["-coarsen", "coarsenMs", "coarsening ms"],
+		["-coarsest", "coarsestMs", "coarsest layout ms"],
+		["-refine", "refineMs", "refinement ms"],
+		["-transfer", "transferMs", "edge transfer ms"],
+	] as const;
+	return charts.map(([suffix, metric, label]) => ({
+		caseSeries,
+		id: `${id}${suffix}`,
+		metric,
+		phase: "cold",
+		...(sizes ? { sizes } : {}),
+		title: `${title}, ${label}`,
+	}));
 }
 
 export const SCALING_SERIES: readonly ScalingSeriesSpec[] = [
@@ -126,48 +157,19 @@ export const SCALING_SERIES: readonly ScalingSeriesSpec[] = [
 		phase: "cold",
 		title: "Worker force layout, first useful frame ms",
 	},
-	{
-		caseSeries: "layout-multilevel",
-		id: "layout-multilevel",
-		metric: "totalMs",
-		phase: "cold",
-		title: "Worker multilevel force layout, total ms",
-	},
-	{
-		caseSeries: "layout-multilevel",
-		id: "layout-multilevel-first-useful",
-		metric: "firstUsefulFrameMs",
-		phase: "cold",
-		title: "Worker multilevel force layout, first useful frame ms",
-	},
-	{
-		caseSeries: "layout-multilevel",
-		id: "layout-multilevel-coarsen",
-		metric: "coarsenMs",
-		phase: "cold",
-		title: "Multilevel layout, coarsening ms",
-	},
-	{
-		caseSeries: "layout-multilevel",
-		id: "layout-multilevel-coarsest",
-		metric: "coarsestMs",
-		phase: "cold",
-		title: "Multilevel layout, coarsest layout ms",
-	},
-	{
-		caseSeries: "layout-multilevel",
-		id: "layout-multilevel-refine",
-		metric: "refineMs",
-		phase: "cold",
-		title: "Multilevel layout, refinement ms",
-	},
-	{
-		caseSeries: "layout-multilevel",
-		id: "layout-multilevel-transfer",
-		metric: "transferMs",
-		phase: "cold",
-		title: "Multilevel layout, edge transfer ms",
-	},
+	...multilevelSeries("layout-multilevel", "layout-multilevel", "Worker multilevel force layout"),
+	...multilevelSeries(
+		"layout-multilevel-edge-t",
+		"layout-multilevel-edge-t",
+		"Worker multilevel edge-t layout, one thread",
+		EDGE_T_LAYOUT_SIZES,
+	),
+	...multilevelSeries(
+		"layout-multilevel-edge-t-parallel",
+		"layout-multilevel-edge-t-parallel",
+		"Worker multilevel edge-t layout, 8 refinement workers",
+		EDGE_T_LAYOUT_SIZES,
+	),
 ];
 
 export interface ScalingPoint {

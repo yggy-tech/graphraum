@@ -11,6 +11,7 @@ export default defineConfig({
 		"src/lod.ts",
 		"src/lod-worker.ts",
 		"src/layout-multilevel.ts",
+		"src/layout-multilevel-worker.ts",
 		"src/icons.ts",
 	],
 	format: ["esm"],

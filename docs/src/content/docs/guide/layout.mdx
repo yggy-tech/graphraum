@@ -182,10 +182,16 @@ It takes the same request as `computeForcePositions()` (both layout styles, `clu
 **Limits.**
 
 - Graphs with at most `coarsestSize` nodes, and graphs where almost nothing can be merged (no edges), use the plain force layout.
-- With `warmStart: true` the call behaves like `computeForcePositions()`: a layout that already settled needs no coarse pass. Refining only the groups that moved is not implemented yet.
+- With `warmStart: true` there is no coarse pass: only the changed part settles (see below).
 - Many small clusters keep the coarsest level large, because groups never merge across clusters.
 - A few steps per level replace the long schedule, so the result is a good layout, not an identical one. Compare with the plain layout on your graph before you switch.
-- It runs on one thread. Run it in a worker for large graphs, like the plain layout.
+- `computeMultilevelForcePositions()` runs on one thread. Run it in a worker for large graphs, like the plain layout.
+
+**Workers.** `computeMultilevelForcePositionsAsync()` takes the same request and options and refines the large levels (20,000 nodes or more) of an `"edge-t"` layout with workers. Each worker moves one region of the picture; it draws the same random push samples a single thread would, over all nodes, and the regions swap positions every two steps, so the layout stays close to the single-thread one. The coarsening and the coarsest layout stay on one thread. Options: `workers` (0 or 1 is one thread; default one fewer than the logical cores, at most 8), `createWorker` (starts `layout-multilevel-worker.js`; bundlers such as Vite find it next to the entry by default) and `sharedMemory` (default on when the page is cross-origin isolated). The `"classic"` style, small graphs, hosts without workers and a failing worker all fall back to one thread. The result is deterministic for a `seed` and a worker count.
+
+On a sparse random graph with about 3 edges per node (median of 3 runs, `bun run bench`, Apple M5 Pro, 8 workers, machine busy with other work), the refinement took 1,094 ms instead of 1,826 ms at 1,000,000 nodes and 360 ms instead of 450 ms at 300,000 nodes. At 100,000 nodes it was on par (150 ms against 144 ms), and the whole layout time did not change because loading the result into the page dominates. Stress, edge length spread and neighbourhood overlap matched the single-thread layout within 0.1% at 100,000 nodes; below about 40,000 nodes no worker starts and the result is identical. At 5,000,000 nodes neither version fits in the browser.
+
+**Warm start.** With `warmStart: true` and `initialPositions`, only the changed part settles; every other node keeps its position exactly. New nodes (a NaN start position) begin at the mean of their placed neighbours. Pass `previous: { edges, nodeCount, anchors }` of the earlier layout and nodes whose edges or anchors changed count as well, together with their neighbours up to two hops away. If more than half of the graph changed, the whole graph settles.
 
 ### Unfolding long chains
 

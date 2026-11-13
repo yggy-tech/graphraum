@@ -384,6 +384,26 @@ function degreesOf(edges: Uint32Array, nodeCount: number) {
 	return degrees;
 }
 
+/** Slot of every owned node in `owned`, -1 for the others. */
+function ownedSlots(owned: Uint32Array, nodeCount: number) {
+	const slots = new Int32Array(nodeCount).fill(-1);
+	for (let slot = 0; slot < owned.length; slot += 1) {
+		const node = owned[slot] ?? nodeCount;
+		if (Number.isSafeInteger(node) && node >= 0 && node < nodeCount) slots[node] = slot;
+	}
+	return slots;
+}
+
+/** {@link degreesOf} for the owned nodes only, by slot. */
+function degreesOfSlots(edges: Uint32Array, slotOf: Int32Array, slotCount: number) {
+	const degrees = new Uint32Array(slotCount);
+	for (const index of edges) {
+		const slot = slotOf[index] ?? -1;
+		if (slot >= 0) degrees[slot] += 1;
+	}
+	return degrees;
+}
+
 /** Node strengths are stored per node; `defaultStrength` covers nodes added without one. */
 interface AnchorState {
 	/** Mean of the anchored nodes' raw positions, per axis. */
@@ -556,11 +576,42 @@ export interface ForceSimulation {
 }
 
 export function createForceSimulation(request: ForceLayoutRequest): ForceSimulation {
+	return buildForceSimulation(request);
+}
+
+/**
+ * A simulation that moves only the `owned` nodes (ascending ids); every other node keeps its start
+ * position and still pushes and pulls the owned ones. `edges` may be limited to the edges that touch an
+ * owned node. Used by the multilevel layout to refine regions in parallel and to refine only the changed
+ * part of a warm start. The result cannot grow (`addNodes()` and `addEdges()` throw) and is not
+ * re-centred, since a region cannot see the whole graph.
+ */
+export function createRegionForceSimulation(request: ForceLayoutRequest, owned: Uint32Array): ForceSimulation {
+	return buildForceSimulation(request, owned);
+}
+
+/** True when every node has finite X and Y (and Z in 3D) in `start`: the default start would be overwritten. */
+function isCompleteStart(start: Float32Array, request: ForceLayoutRequest) {
+	if (start.length !== request.nodeCount * 3) return false;
+	for (let node = 0; node < request.nodeCount; node += 1) {
+		const finite =
+			Number.isFinite(start[node * 3]) &&
+			Number.isFinite(start[node * 3 + 1]) &&
+			(request.dimensions === 2 || Number.isFinite(start[node * 3 + 2]));
+		if (!finite) return false;
+	}
+	return true;
+}
+
+function buildForceSimulation(request: ForceLayoutRequest, owned?: Uint32Array): ForceSimulation {
 	let settings = normalizeForceSettings(request.settings);
 	let nodeCount = request.nodeCount;
 	let edges = new Uint32Array(request.edges);
 	if (edges.length % 2 !== 0) throw new Error("Edges must contain source/target pairs.");
-	let degrees = degreesOf(edges, nodeCount);
+	// A region simulation keeps forces, velocities and degrees only for its owned nodes, by slot (the
+	// node's place in `owned`), so its step touches dense memory; `slotOf` maps a node to its slot or -1.
+	const slotOf = owned ? ownedSlots(owned, nodeCount) : null;
+	let degrees = owned && slotOf ? degreesOfSlots(edges, slotOf, owned.length) : degreesOf(edges, nodeCount);
 	const edgeCount = edges.length / 2;
 	let linkDistances = normalizePerEdgeArray("linkDistances", request.linkDistances, edgeCount, 1, 500);
 	let springStrengths = normalizePerEdgeArray("springStrengths", request.springStrengths, edgeCount, 0.0001, 0.05);
@@ -570,7 +621,15 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		assertDenseClusterIds(request.clusters, request.nodeCount);
 		clusters = new Uint32Array(request.clusters);
 	}
-	let positions = clusters ? clusteredInitialPositions({ ...request, clusters }) : initialPositions(request);
+	// A warm start from a complete set of positions overwrites the default start, so it is not built.
+	const skipDefaultStart = Boolean(
+		request.warmStart && request.initialPositions && isCompleteStart(request.initialPositions, request),
+	);
+	let positions = skipDefaultStart
+		? new Float32Array(nodeCount * 3)
+		: clusters
+			? clusteredInitialPositions({ ...request, clusters })
+			: initialPositions(request);
 	let anchorState: AnchorState | null = request.anchors
 		? createAnchorState(request, request.anchors, settings.linkDistance)
 		: null;
@@ -578,8 +637,9 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 	if (request.warmStart && anchorState) seedAtAnchors(positions, anchorState, settings.anchorStrength);
 	if (request.initialPositions) applyInitialPositions(positions, request, request.initialPositions);
 	if (!request.warmStart && anchorState) seedAtAnchors(positions, anchorState, settings.anchorStrength);
-	let velocities = new Float32Array(positions.length);
-	let forces = new Float32Array(positions.length);
+	const activeCount = () => (owned ? owned.length : nodeCount);
+	let velocities = new Float32Array(activeCount() * 3);
+	let forces = new Float32Array(activeCount() * 3);
 	let iteration = 0;
 	// Per-step scratch for cluster centroids; reallocated only when a new cluster id appears.
 	let clusterCount = clusters ? clusterCountOf(clusters) : 0;
@@ -607,8 +667,10 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 	}
 	/** `"classic"`: 8 sampled nodes per node, capped inverse-square push. */
 	function applyClassicRepulsion(alpha: number) {
-		for (let index = 0; index < nodeCount; index += 1) {
+		for (let slot = 0, active = activeCount(); slot < active; slot += 1) {
+			const index = owned ? (owned[slot] ?? 0) : slot;
 			const offset = index * 3;
+			const slotOffset = slot * 3;
 			for (let sample = 0; sample < 8; sample += 1) {
 				const targetIndex = Math.floor(random(index * 97 + sample * 17 + iteration * 13) * nodeCount);
 				if (targetIndex === index) continue;
@@ -618,9 +680,9 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 				const dz = request.dimensions === 3 ? (positions[offset + 2] ?? 0) - (positions[target + 2] ?? 0) : 0;
 				const distanceSquared = dx * dx + dy * dy + dz * dz + 16;
 				const scale = (Math.min(2, settings.repulsion / distanceSquared) * alpha) / Math.sqrt(distanceSquared);
-				forces[offset] += dx * scale;
-				forces[offset + 1] += dy * scale;
-				forces[offset + 2] += dz * scale;
+				forces[slotOffset] += dx * scale;
+				forces[slotOffset + 1] += dy * scale;
+				forces[slotOffset + 2] += dz * scale;
 			}
 		}
 	}
@@ -646,11 +708,13 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 		const stepSeed = hash32(iteration + 0x5bd1e995);
 		// A cluster's push from other clusters shrinks with its size: with the full push a small cluster is
 		// driven far from the rest by the mass around it, leaving a wider empty margin than a large one (#192).
-		for (let index = 0; index < nodeCount; index += 1) {
+		for (let slot = 0, active = activeCount(); slot < active; slot += 1) {
+			const index = owned ? (owned[slot] ?? 0) : slot;
 			const offset = index * 3;
+			const slotOffset = slot * 3;
 			const cluster = clusters?.[index];
 			const ownScale = (((clusterSizes[cluster ?? 0] ?? 0) * clusterCount) / nodeCount) ** 0.25;
-			const degree = Math.max(1, degrees[index] ?? 0);
+			const degree = Math.max(1, degrees[slot] ?? 0);
 			const draws = Math.min(MAX_EDGE_T_DRAWS_PER_NODE, samples * degree);
 			// Each draw stands for `degree / draws` edge ends, so a capped hub keeps its expected push.
 			const weight = (strength * degree) / draws;
@@ -667,9 +731,9 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 				const r = distance / unit;
 				const kernel = nu === 1 ? r / (1 + r * r) : r / (1 + (r * r) / nu) ** exponent;
 				const scale = (weight * kernel * (cluster === clusters?.[targetIndex] ? 1 : ownScale)) / distance;
-				forces[offset] += dx * scale;
-				forces[offset + 1] += dy * scale;
-				forces[offset + 2] += dz * scale;
+				forces[slotOffset] += dx * scale;
+				forces[slotOffset + 1] += dy * scale;
+				forces[slotOffset + 2] += dz * scale;
 			}
 		}
 	}
@@ -700,6 +764,7 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			return positions;
 		},
 		addNodes(count: number, initial?: Float32Array, addedClusters?: Uint32Array, addedAnchors?: ForceAnchors) {
+			if (owned) throw new Error("A region simulation cannot grow.");
 			if (!Number.isSafeInteger(count) || count < 1) throw new Error("Count must be a positive integer.");
 			if (initial && initial.length !== count * 3) {
 				throw new Error("Initial positions must be count * 3.");
@@ -782,6 +847,7 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			return start;
 		},
 		addEdges(nextEdges: Uint32Array) {
+			if (owned) throw new Error("A region simulation cannot grow.");
 			if (nextEdges.length % 2 !== 0) throw new Error("Edges must contain source/target pairs.");
 			for (const index of nextEdges) {
 				if (index >= nodeCount) throw new Error(`Edge references missing node: ${index}`);
@@ -814,27 +880,30 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			const anchors = anchorState && settings.anchorStrength > 0 ? anchorState : null;
 			const anchorPull = settings.anchorStrength * alpha;
 			if (clusters) updateClusterCentroids(clusters);
-			for (let index = 0; index < nodeCount; index += 1) {
+			for (let slot = 0, active = activeCount(); slot < active; slot += 1) {
+				const index = owned ? (owned[slot] ?? 0) : slot;
 				const offset = index * 3;
+				const slotOffset = slot * 3;
 				// In 2D the z force is never read: z velocity stays 0.
 				for (let axis = 0; axis < 3; axis += 1) {
-					forces[offset + axis] = -(positions[offset + axis] ?? 0) * settings.centerAttraction * alpha;
+					forces[slotOffset + axis] = -(positions[offset + axis] ?? 0) * settings.centerAttraction * alpha;
 				}
 				if (pullClusters) {
 					const centroid = (pullClusters[index] ?? 0) * 3;
 					for (let axis = 0; axis < request.dimensions; axis += 1) {
-						forces[offset + axis] +=
+						forces[slotOffset + axis] +=
 							((clusterCentroids[centroid + axis] ?? 0) - (positions[offset + axis] ?? 0)) * clusterPull;
 					}
 				}
 			}
 			if (anchors) {
-				for (let index = 0; index < nodeCount; index += 1) {
+				for (let slot = 0, active = activeCount(); slot < active; slot += 1) {
+					const index = owned ? (owned[slot] ?? 0) : slot;
 					const offset = index * 3;
 					if (Number.isNaN(anchors.targets[offset])) continue;
 					const pull = anchorPull * (anchors.strengths[index] ?? 0);
 					for (let axis = 0; axis < request.dimensions; axis += 1) {
-						forces[offset + axis] += ((anchors.targets[offset + axis] ?? 0) - (positions[offset + axis] ?? 0)) * pull;
+						forces[slot * 3 + axis] += ((anchors.targets[offset + axis] ?? 0) - (positions[offset + axis] ?? 0)) * pull;
 					}
 				}
 			}
@@ -843,8 +912,10 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 			const springGain = preset.springGain;
 			for (let index = 0; index < edges.length; index += 2) {
 				const edgeIndex = index / 2;
-				const source = (edges[index] ?? 0) * 3;
-				const target = (edges[index + 1] ?? 0) * 3;
+				const sourceNode = edges[index] ?? 0;
+				const targetNode = edges[index + 1] ?? 0;
+				const source = sourceNode * 3;
+				const target = targetNode * 3;
 				const dx = (positions[target] ?? 0) - (positions[source] ?? 0);
 				const dy = (positions[target + 1] ?? 0) - (positions[source + 1] ?? 0);
 				const dz = request.dimensions === 3 ? (positions[target + 2] ?? 0) - (positions[source + 2] ?? 0) : 0;
@@ -852,19 +923,29 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 				const linkDistance = linkDistances?.[edgeIndex] ?? settings.linkDistance;
 				const springStrength = (springStrengths?.[edgeIndex] ?? settings.springStrength) * springGain;
 				const force = Math.max(-1, Math.min(1, (distance - linkDistance) * springStrength * alpha)) / distance;
-				forces[source] += dx * force;
-				forces[source + 1] += dy * force;
-				forces[target] -= dx * force;
-				forces[target + 1] -= dy * force;
-				forces[source + 2] += dz * force;
-				forces[target + 2] -= dz * force;
+				const sourceSlot = slotOf ? (slotOf[sourceNode] ?? -1) : sourceNode;
+				if (sourceSlot >= 0) {
+					forces[sourceSlot * 3] += dx * force;
+					forces[sourceSlot * 3 + 1] += dy * force;
+					forces[sourceSlot * 3 + 2] += dz * force;
+				}
+				const targetSlot = slotOf ? (slotOf[targetNode] ?? -1) : targetNode;
+				if (targetSlot >= 0) {
+					forces[targetSlot * 3] -= dx * force;
+					forces[targetSlot * 3 + 1] -= dy * force;
+					forces[targetSlot * 3 + 2] -= dz * force;
+				}
 			}
-			for (let index = 0; index < nodeCount; index += 1) {
+			for (let slot = 0, active = activeCount(); slot < active; slot += 1) {
+				const index = owned ? (owned[slot] ?? 0) : slot;
 				const offset = index * 3;
-				let vx = ((velocities[offset] ?? 0) + (forces[offset] ?? 0)) * settings.damping;
-				let vy = ((velocities[offset + 1] ?? 0) + (forces[offset + 1] ?? 0)) * settings.damping;
+				const slotOffset = slot * 3;
+				let vx = ((velocities[slotOffset] ?? 0) + (forces[slotOffset] ?? 0)) * settings.damping;
+				let vy = ((velocities[slotOffset + 1] ?? 0) + (forces[slotOffset + 1] ?? 0)) * settings.damping;
 				let vz =
-					request.dimensions === 3 ? ((velocities[offset + 2] ?? 0) + (forces[offset + 2] ?? 0)) * settings.damping : 0;
+					request.dimensions === 3
+						? ((velocities[slotOffset + 2] ?? 0) + (forces[slotOffset + 2] ?? 0)) * settings.damping
+						: 0;
 				const speed = Math.hypot(vx, vy, vz);
 				const maxSpeed = 0.5 + alpha * 8;
 				if (speed > maxSpeed) {
@@ -873,12 +954,16 @@ export function createForceSimulation(request: ForceLayoutRequest): ForceSimulat
 					vy *= scale;
 					vz *= scale;
 				}
-				velocities[offset] = vx;
-				velocities[offset + 1] = vy;
-				velocities[offset + 2] = vz;
+				velocities[slotOffset] = vx;
+				velocities[slotOffset + 1] = vy;
+				velocities[slotOffset + 2] = vz;
 				positions[offset] = (positions[offset] ?? 0) + vx;
 				positions[offset + 1] = (positions[offset + 1] ?? 0) + vy;
 				positions[offset + 2] = request.dimensions === 3 ? (positions[offset + 2] ?? 0) + vz : 0;
+			}
+			if (owned) {
+				iteration += 1;
+				return;
 			}
 			const center = [0, 0, 0];
 			for (let index = 0; index < nodeCount; index += 1) {

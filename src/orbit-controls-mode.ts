@@ -11,6 +11,8 @@ import type { GraphraumMode } from "./types";
  */
 export function configureControlsForMode(controls: OrbitControls, mode: GraphraumMode): void {
 	controls.enableRotate = mode === "3d";
+	// Wheel and pinch zoom keep the point under the pointer in place instead of zooming into the centre.
+	controls.zoomToCursor = true;
 	if (mode === "2d") {
 		controls.minZoom = 0.01;
 		controls.mouseButtons.LEFT = MOUSE.PAN;

@@ -8,6 +8,9 @@
 export function computeMultilevelForcePositions(request: ForceLayoutRequest, options?: MultilevelOptions): Float32Array;
 
 // @public
+export function computeMultilevelForcePositionsAsync(request: ForceLayoutRequest, options?: ParallelMultilevelOptions): Promise<Float32Array>;
+
+// @public
 export interface ForceLayoutRequest {
     // Warning: (ae-forgotten-export) The symbol "ForceAnchors" needs to be exported by the entry point layout-multilevel.d.ts
     anchors?: ForceAnchors;
@@ -35,6 +38,7 @@ export interface MultilevelOptions {
     levels?: number;
     onPreview?: (positions: Float32Array) => void;
     onProgress?: (progress: MultilevelProgress) => void;
+    previous?: PreviousLayout;
     refineSteps?: number;
     seed?: number;
 }
@@ -49,6 +53,20 @@ export interface MultilevelProgress {
     nodeCount: number;
     // (undocumented)
     phase: MultilevelPhase;
+}
+
+// @public
+export interface ParallelMultilevelOptions extends MultilevelOptions {
+    createWorker?: () => Worker;
+    sharedMemory?: boolean;
+    workers?: number;
+}
+
+// @public
+export interface PreviousLayout {
+    anchors?: ForceAnchors;
+    edges: Uint32Array;
+    nodeCount: number;
 }
 
 // (No @packageDocumentation comment for this package)

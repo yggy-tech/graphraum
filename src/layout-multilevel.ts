@@ -15,8 +15,17 @@ import {
 	type ForceLayoutRequest,
 } from "./force-layout";
 import { baseCoarseLevel, type CoarseLevel, coarsenGraph, levelEdges } from "./graph-coarsen";
+import {
+	type RegionJob,
+	RegionPool,
+	type RegionWorker,
+	refineInRegions,
+	regionCountFor,
+} from "./layout-multilevel-regions";
+import { computeWarmStartPositions, type PreviousLayout } from "./layout-multilevel-warm";
 
 export type { ForceLayoutRequest } from "./force-layout";
+export type { PreviousLayout } from "./layout-multilevel-warm";
 
 /** The phases {@link MultilevelOptions.onProgress} reports. */
 export type MultilevelPhase = "coarsen" | "coarsest" | "refine";
@@ -32,7 +41,7 @@ export interface MultilevelProgress {
 	phase: MultilevelPhase;
 }
 
-/** Tuning for {@link computeMultilevelForcePositions}; every field is optional. */
+/** Tuning for {@link computeMultilevelForcePositions} and {@link computeMultilevelForcePositionsAsync}; every field is optional. */
 export interface MultilevelOptions {
 	/**
 	 * Stop coarsening at this many super-nodes, an integer from 8 to 5 000. Fewer is faster but gives the
@@ -49,6 +58,12 @@ export interface MultilevelOptions {
 	onPreview?: (positions: Float32Array) => void;
 	/** Called after the coarsening, the coarsest layout and each refined level, for timing. */
 	onProgress?: (progress: MultilevelProgress) => void;
+	/**
+	 * With `warmStart`: the graph and anchors the start positions were laid out for. Nodes whose edges or
+	 * anchors differ, new nodes and their neighbourhoods are refined; every other node keeps its position.
+	 * Omitted: only the new nodes (a NaN start position) count as changed.
+	 */
+	previous?: PreviousLayout;
 	/**
 	 * Force steps on the full graph after the coarsest layout, an integer from 1 to 16. Each coarser
 	 * level gets one more (they are smaller, and the global shape is set there), capped at 16.
@@ -162,25 +177,56 @@ function prolong(
 	return positions;
 }
 
-/**
- * Multilevel force layout for large graphs: `nodeCount * 3` positions (Z stays 0 in 2D), like
- * `computeForcePositions()` and taking the same request: both layout styles, `clusters`, `anchors`,
- * `initialPositions`, `settings`, `linkDistances` and `springStrengths` (the last two apply to the full
- * graph). Groups never merge across `clusters`. `initialPositions` and `anchors` are averaged per group
- * to start the coarsest layout. `iterations` sets the coarsest layout; `warmStart` skips the coarse
- * levels and behaves like `computeForcePositions()`, since a settled layout needs no coarse pass.
- * Graphs of at most `coarsestSize` nodes also use the plain force layout. Deterministic for a `seed`.
- */
-export function computeMultilevelForcePositions(
+/** Extra tuning for {@link computeMultilevelForcePositionsAsync}; every field is optional. */
+export interface ParallelMultilevelOptions extends MultilevelOptions {
+	/**
+	 * Starts the workers, one per region. Omitted: a module worker on `layout-multilevel-worker.js` next
+	 * to this file, which bundlers such as Vite pick up. A function that throws, or a worker that fails,
+	 * falls back to one thread.
+	 */
+	createWorker?: () => Worker;
+	/**
+	 * Share positions between the workers through a `SharedArrayBuffer` instead of posting them every two
+	 * steps. Omitted: on when the page is cross-origin isolated. `true` without `SharedArrayBuffer` is
+	 * ignored.
+	 */
+	sharedMemory?: boolean;
+	/**
+	 * Workers that refine the large levels of an `"edge-t"` layout, an integer from 0 to 32; 0 or 1 is
+	 * one thread. Omitted: one fewer than the logical cores, at most 8, and 0 where there are no workers.
+	 * The `"classic"` style gains nothing from workers and ignores this.
+	 */
+	workers?: number;
+}
+
+/** What the driver of a multilevel layout does for each refined level. */
+interface RefineJob extends RegionJob {
+	level: CoarseLevel;
+}
+
+const DEFAULT_WORKERS = 8;
+/** The smallest level worth the exchange of positions: below it one thread is faster. */
+const MIN_PARALLEL_NODES = 20_000;
+
+/** Runs the steps of a job on this thread. */
+function refineHere(job: RefineJob) {
+	const simulation = createForceSimulation(job.request);
+	for (const alpha of job.alphas) simulation.step(alpha);
+	return simulation.positions;
+}
+
+/** The levels of a multilevel layout as a coroutine: it yields each refinement and gets the positions back. */
+function* planMultilevel(
 	request: ForceLayoutRequest,
-	options: MultilevelOptions = {},
-): Float32Array {
+	options: MultilevelOptions,
+): Generator<RefineJob, Float32Array, Float32Array> {
 	const coarsestSize = integerOption("coarsestSize", options.coarsestSize, DEFAULT_COARSEST_SIZE, 8, 5_000);
 	const maxLevels = integerOption("levels", options.levels, 32, 1, 32);
 	const refineSteps = integerOption("refineSteps", options.refineSteps, DEFAULT_REFINE_STEPS, 1, 16);
 	const seed = integerOption("seed", options.seed, 0, 0, 0xffff_ffff);
 	if (request.edges.length % 2 !== 0) throw new Error("Edges must contain source/target pairs.");
-	if (request.warmStart || request.nodeCount <= coarsestSize) return computeForcePositions(request);
+	if (request.warmStart) return computeWarmStartPositions(request, options.previous);
+	if (request.nodeCount <= coarsestSize) return computeForcePositions(request);
 
 	const { dimensions } = request;
 	const report = (phase: MultilevelPhase, level: number, nodeCount: number, startedAt: number) =>
@@ -209,7 +255,7 @@ export function computeMultilevelForcePositions(
 	const coarsest = levels[top] as CoarseLevel;
 	const coarsestStartedAt = performance.now();
 	const coarsestEdges = levelEdges(coarsest);
-	let positions = computeForcePositions({
+	let positions: Float32Array = computeForcePositions({
 		anchors: inputs[top]?.anchors,
 		clusters: coarsest.groups ?? undefined,
 		dimensions,
@@ -253,26 +299,128 @@ export function computeMultilevelForcePositions(
 		);
 		const own = level === 0;
 		const edges = own ? { edges: request.edges, weights: null } : levelEdges(fine);
-		const simulation = createForceSimulation({
-			anchors: inputs[level]?.anchors,
-			clusters: own ? request.clusters : (fine.groups ?? undefined),
-			dimensions,
-			edges: edges.edges,
-			initialPositions: start,
-			linkDistances: own ? request.linkDistances : undefined,
-			nodeCount: fine.nodeCount,
-			settings: request.settings,
-			springStrengths: own
-				? request.springStrengths
-				: weightedSprings(edges.weights as Float32Array, settings.springStrength),
-			warmStart: true,
-		});
 		const steps = Math.min(MAX_LEVEL_STEPS, (refineSteps + level) * (style.iterationScale > 1 ? 2 : 1));
-		for (let step = 0; step < steps; step += 1) simulation.step(REFINE_ALPHA * (1 - step / steps));
-		positions = simulation.positions;
+		positions = yield {
+			alphas: Array.from({ length: steps }, (_, step) => REFINE_ALPHA * (1 - step / steps)),
+			level: fine,
+			nodeWeights: drawWeights(fine, settings.negativeSamples),
+			request: {
+				anchors: inputs[level]?.anchors,
+				clusters: own ? request.clusters : (fine.groups ?? undefined),
+				dimensions,
+				edges: edges.edges,
+				initialPositions: start,
+				linkDistances: own ? request.linkDistances : undefined,
+				nodeCount: fine.nodeCount,
+				settings: request.settings,
+				springStrengths: own
+					? request.springStrengths
+					: weightedSprings(edges.weights as Float32Array, settings.springStrength),
+				warmStart: true,
+			},
+		};
 		report("refine", level, fine.nodeCount, refineStartedAt);
 	}
 	return positions;
+}
+
+/** The cost of a node in the `"edge-t"` step: its draws, which grow with its degree up to a cap. */
+function drawWeights(level: CoarseLevel, negativeSamples: number) {
+	const weights = new Float32Array(level.nodeCount);
+	for (let node = 0; node < level.nodeCount; node += 1) {
+		const degree = Math.max(1, (level.rowPtr[node + 1] ?? 0) - (level.rowPtr[node] ?? 0));
+		weights[node] = 1 + Math.min(32, negativeSamples * degree);
+	}
+	return weights;
+}
+
+/**
+ * Multilevel force layout for large graphs: `nodeCount * 3` positions (Z stays 0 in 2D), like
+ * `computeForcePositions()` and taking the same request: both layout styles, `clusters`, `anchors`,
+ * `initialPositions`, `settings`, `linkDistances` and `springStrengths` (the last two apply to the full
+ * graph). Groups never merge across `clusters`. `initialPositions` and `anchors` are averaged per group
+ * to start the coarsest layout. `iterations` sets the coarsest layout. With `warmStart` the coarse levels
+ * are skipped and only the changed part of the graph settles (see {@link MultilevelOptions.previous}).
+ * Graphs of at most `coarsestSize` nodes also use the plain force layout. Deterministic for a `seed`.
+ * Runs on this thread; {@link computeMultilevelForcePositionsAsync} spreads the large levels over workers.
+ */
+export function computeMultilevelForcePositions(
+	request: ForceLayoutRequest,
+	options: MultilevelOptions = {},
+): Float32Array {
+	const plan = planMultilevel(request, options);
+	let step = plan.next();
+	while (!step.done) step = plan.next(refineHere(step.value));
+	return step.value;
+}
+
+function canShareMemory() {
+	const scope = globalThis as { crossOriginIsolated?: boolean };
+	return typeof SharedArrayBuffer !== "undefined" && scope.crossOriginIsolated === true;
+}
+
+function defaultWorkerCount() {
+	if (typeof Worker === "undefined") return 0;
+	const cores = (globalThis as { navigator?: { hardwareConcurrency?: number } }).navigator?.hardwareConcurrency ?? 1;
+	return Math.max(0, Math.min(DEFAULT_WORKERS, cores - 1));
+}
+
+/**
+ * {@link computeMultilevelForcePositions} with the large levels of an `"edge-t"` layout refined by
+ * workers. Each worker moves one spatial region and draws the same repulsion samples a single thread
+ * would, over all nodes; the regions swap positions every two steps, so the result stays close to the
+ * single-thread layout (the layout guide has the numbers) and is deterministic for a `seed` and a worker
+ * count. Levels under 20 000 nodes, the `"classic"` style, `workers` of 0 or 1, and hosts without
+ * workers run on this thread, as does everything after a worker fails. The coarsening and the coarsest
+ * layout stay on this thread.
+ */
+export async function computeMultilevelForcePositionsAsync(
+	request: ForceLayoutRequest,
+	options: ParallelMultilevelOptions = {},
+): Promise<Float32Array> {
+	const workers = integerOption("workers", options.workers, defaultWorkerCount(), 0, 32);
+	const style = request.settings?.layoutStyle ?? DEFAULT_FORCE_SETTINGS.layoutStyle;
+	const createWorker = options.createWorker ?? defaultWorkerFactory();
+	const regionLimit =
+		request.warmStart || style !== "edge-t" || !createWorker ? 1 : regionCountFor(request.nodeCount, workers);
+	// Started now so the workers load while this thread coarsens.
+	let pool: RegionPool | null = null;
+	if (regionLimit > 1 && createWorker) {
+		try {
+			pool = new RegionPool(createWorker as () => RegionWorker, regionLimit);
+		} catch {
+			pool = null;
+		}
+	}
+	const shared = options.sharedMemory ?? canShareMemory();
+	try {
+		const plan = planMultilevel(request, options);
+		let step = plan.next();
+		while (!step.done) {
+			const job = step.value;
+			const regions = pool ? Math.min(pool.size, regionCountFor(job.request.nodeCount, workers)) : 1;
+			let positions: Float32Array | undefined;
+			if (pool && regions > 1 && job.request.nodeCount >= MIN_PARALLEL_NODES) {
+				try {
+					positions = await refineInRegions(job, pool, regions, {
+						shared: shared && typeof SharedArrayBuffer !== "undefined",
+					});
+				} catch {
+					pool.dispose();
+					pool = null;
+				}
+			}
+			step = plan.next(positions ?? refineHere(job));
+		}
+		return step.value;
+	} finally {
+		pool?.dispose();
+	}
+}
+
+function defaultWorkerFactory(): (() => Worker) | undefined {
+	if (typeof Worker === "undefined") return undefined;
+	return () => new Worker(new URL("./layout-multilevel-worker.js", import.meta.url), { type: "module" });
 }
 
 /** Heavier merged edges pull harder, up to 8 times the base spring. */

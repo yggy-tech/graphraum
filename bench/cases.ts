@@ -1,9 +1,10 @@
 import { BENCHMARK_NODE_COLORS, createFixture } from "../docs/src/lib/benchmark";
 import { measureProgressiveForceLayout } from "../docs/src/lib/layout-benchmark";
 import { Graphraum, type GraphraumData, type GraphraumMode, type GraphraumThemeName } from "../src";
+import { DEFAULT_FORCE_SETTINGS, forceIterationCount } from "../src/force-layout";
 import { attachClusterLod, buildClusterTree, nodeColorKeys, openClusterLod } from "../src/lod";
 import { MAX_PIXEL_RATIO, nextFrame, sampleFrames } from "./measure";
-import { LOD_INSTANT_SIZES, LOD_SCALING_SIZES, SCALING_SIZES, scalingCaseId } from "./scaling";
+import { EDGE_T_LAYOUT_SIZES, LOD_INSTANT_SIZES, LOD_SCALING_SIZES, SCALING_SIZES, scalingCaseId } from "./scaling";
 import type { CaseDescriptor, CaseRunResult } from "./types";
 
 export interface BenchCase {
@@ -228,19 +229,38 @@ function glowCase(glowNodes: number, theme: GraphraumThemeName, mode: GraphraumM
 const MULTILEVEL_PROTOCOL =
 	" With the multilevel algorithm the worker coarsens the graph, lays out the coarsest level, posts a rough preview of the whole graph (the first useful frame) and refines the finer levels; coarsen, coarsest and refine are the worker's own time in those phases.";
 
-function layoutCase(nodes: number, algorithm: "classic" | "multilevel" = "classic"): BenchCase {
+/** Workers of the parallel series: fixed, so the series does not change with the machine it runs on. */
+const PARALLEL_BENCH_WORKERS = 8;
+
+/** The multilevel layout in the `"edge-t"` style, on one thread or on workers. */
+interface EdgeTLayoutVariant {
+	/** Case id part and series name suffix. */
+	name: "edge-t" | "edge-t-parallel";
+	/** Workers for the refinement; 1 is one thread. */
+	workers: number;
+}
+
+const EDGE_T_PROTOCOL =
+	" The layout style is edge-t. The parallel series refines the large levels with up to 8 workers started by the layout worker (the layout worker's own thread only coordinates); the single-thread series runs the same layout with workers set to 1.";
+
+function layoutCase(
+	nodes: number,
+	algorithm: "classic" | "multilevel" = "classic",
+	variant?: EdgeTLayoutVariant,
+): BenchCase {
 	const multilevel = algorithm === "multilevel";
 	return {
 		descriptor: {
 			edges: nodes * 3,
 			group: "layout",
-			id: `layout-${multilevel ? "multilevel-" : ""}3d-${nodes}`,
+			id: `layout-${multilevel ? "multilevel-" : ""}${variant ? `${variant.name}-` : ""}3d-${nodes}`,
 			mode: "3d",
 			nodes,
 			protocol:
 				"One force layout in the docs layout worker, streamed back in batches and applied to a mounted graph. Startup is Worker construction on the main thread, transfer is packing and posting the edge buffer, compute is the worker's own solve time, first useful frame is start to the first applied batch, total is start to the last batch." +
-				(multilevel ? MULTILEVEL_PROTOCOL : ""),
-			title: `Worker ${multilevel ? "multilevel " : ""}force layout ${nodes.toLocaleString("en-US")}`,
+				(multilevel ? MULTILEVEL_PROTOCOL : "") +
+				(variant ? EDGE_T_PROTOCOL : ""),
+			title: `Worker ${multilevel ? "multilevel " : ""}${variant ? `${variant.name} ` : ""}force layout ${nodes.toLocaleString("en-US")}`,
 		},
 		async run(container) {
 			const { data, fixtureMs } = plainFixture(nodes);
@@ -252,6 +272,13 @@ function layoutCase(nodes: number, algorithm: "classic" | "multilevel" = "classi
 					new Worker(new URL("../docs/src/lib/layout-worker.ts", import.meta.url), { type: "module" }),
 				dimensions: 3,
 				edges: data.edges,
+				...(variant
+					? {
+							iterations: forceIterationCount(nodes) * 8,
+							multilevel: { workers: variant.workers },
+							settings: { ...DEFAULT_FORCE_SETTINGS, layoutStyle: "edge-t" as const },
+						}
+					: {}),
 				nextFrame,
 				nodeCount: nodes,
 			});
@@ -375,16 +402,20 @@ function scalingLoadCase(nodes: number): BenchCase {
 	};
 }
 
-function scalingLayoutCase(nodes: number, algorithm: "classic" | "multilevel" = "classic"): BenchCase {
-	const base = layoutCase(nodes, algorithm);
+function scalingLayoutCase(
+	nodes: number,
+	algorithm: "classic" | "multilevel" = "classic",
+	variant?: EdgeTLayoutVariant,
+): BenchCase {
+	const base = layoutCase(nodes, algorithm, variant);
 	const multilevel = algorithm === "multilevel";
 	return {
 		descriptor: scalingDescriptor(
-			multilevel ? "layout-multilevel" : "layout",
+			multilevel ? `layout-multilevel${variant ? `-${variant.name}` : ""}` : "layout",
 			nodes,
 			"3d",
 			base.descriptor.protocol,
-			multilevel ? "Worker multilevel force layout" : "Worker force layout",
+			multilevel ? `Worker multilevel ${variant ? `${variant.name} ` : ""}force layout` : "Worker force layout",
 		),
 		run: base.run,
 	};
@@ -603,6 +634,12 @@ const scalingCases: readonly BenchCase[] = SCALING_SIZES.flatMap((nodes) => [
 	scalingLoadCase(nodes),
 	scalingLayoutCase(nodes),
 	scalingLayoutCase(nodes, "multilevel"),
+	...(EDGE_T_LAYOUT_SIZES.includes(nodes)
+		? [
+				scalingLayoutCase(nodes, "multilevel", { name: "edge-t", workers: 1 }),
+				scalingLayoutCase(nodes, "multilevel", { name: "edge-t-parallel", workers: PARALLEL_BENCH_WORKERS }),
+			]
+		: []),
 ]);
 
 function panDriver(graph: Graphraum) {

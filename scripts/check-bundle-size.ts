@@ -19,13 +19,16 @@ import { dirname, join } from "node:path";
 // 15 400 for the lod entry since opening huge graphs (worker client, two-step tree build, typed-array source): 14.7 KiB at that change, 12.2 KiB before.
 // 57 300 for the main entry: edge buffers now grow on demand (resize, shrink and a lazy edge id map), 55.7 KiB at that change.
 // 10 500 for the layout-multilevel entry: the force layout chunk it shares with layout (5.9 KiB) plus coarsening and level refinement (3.0 KiB).
+// 14 000 for the layout-multilevel entry since parallel refinement and the changed-groups warm start: 13.3 KiB at that change (region split, worker pool, exchange, warm start), 0.4 KiB of margin.
+// 7 800 for the layout-multilevel-worker entry (the region worker): the shared force layout chunk plus 0.9 KiB of its own, 7.3 KiB at that change. It loads in the workers, not on the page.
 const BUDGETS = [
 	{ file: "dist/index.js", gzipBytes: 57_300 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout.js", gzipBytes: 7_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },
 	{ file: "dist/lod.js", gzipBytes: 15_400 },
-	{ file: "dist/layout-multilevel.js", gzipBytes: 10_500 },
+	{ file: "dist/layout-multilevel.js", gzipBytes: 14_000 },
+	{ file: "dist/layout-multilevel-worker.js", gzipBytes: 7_800 },
 	{ file: "dist/icons.js", gzipBytes: 1_500 },
 ];
 

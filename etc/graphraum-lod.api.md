@@ -49,6 +49,15 @@ export interface ClusterGlyphInfo {
     radius: number;
 }
 
+// @public
+export interface ClusterLodArrays {
+    colors: Uint32Array | undefined;
+    // (undocumented)
+    dimensions: 2 | 3;
+    edges: Uint32Array;
+    positions: Float32Array;
+}
+
 // @public (undocumented)
 export interface ClusterLodDiagnostics {
     cutDepth: number;
@@ -121,7 +130,7 @@ export interface ClusterLodOptions extends ClusterCutOptions {
     // Warning: (ae-forgotten-export) The symbol "GraphraumNodeVisual" needs to be exported by the entry point lod.d.ts
     aggregateStyle?: (info: ClusterGlyphInfo) => GraphraumNodeVisual;
     clickToZoom?: boolean;
-    data: GraphraumData;
+    data?: GraphraumData;
     element: HTMLElement;
     fit?: boolean;
     idPrefix?: string;
@@ -130,8 +139,29 @@ export interface ClusterLodOptions extends ClusterCutOptions {
     onCut?: (diagnostics: ClusterLodDiagnostics) => void;
     prefersReducedMotion?: () => boolean;
     schedule?: (callback: (nowMilliseconds: number) => void) => () => void;
+    source?: ClusterLodSource;
     transitionMilliseconds?: number;
     zoomMilliseconds?: number;
+}
+
+// @public
+export interface ClusterLodSource {
+    // Warning: (ae-forgotten-export) The symbol "GraphraumEdge" needs to be exported by the entry point lod.d.ts
+    edge(index: number): GraphraumEdge;
+    indexOf?(id: string): number | undefined;
+    // Warning: (ae-forgotten-export) The symbol "GraphraumNode" needs to be exported by the entry point lod.d.ts
+    node(index: number): GraphraumNode;
+    // (undocumented)
+    nodeCount: number;
+}
+
+// @public (undocumented)
+export interface ClusterLodTimings {
+    buildCoarseMilliseconds: number;
+    // (undocumented)
+    buildEdgesMilliseconds: number | null;
+    completeMilliseconds: number | null;
+    firstCutMilliseconds: number;
 }
 
 // @public
@@ -190,8 +220,15 @@ export interface ClusterTreeInput {
     weights?: Float32Array | Float64Array;
 }
 
+// @public (undocumented)
+export interface ClusterTreeJobOptions {
+    createWorker?: () => Worker;
+    transfer?: boolean;
+    worker?: boolean;
+}
+
 // @public
-export function clusterTreeTransferables(tree: ClusterTree): ArrayBuffer[];
+export function clusterTreeTransferables(tree: object): ArrayBuffer[];
 
 // @public
 export type ClusterView = {
@@ -221,6 +258,9 @@ export type ClusterView = {
 };
 
 // @public
+export const colorKeyHex: (key: number) => string;
+
+// @public
 export function createClusterCutter(tree: ClusterTree): (view: ClusterView, cutOptions?: ClusterCutOptions) => ClusterCut;
 
 // Warning: (ae-forgotten-export) The symbol "Projector" needs to be exported by the entry point lod.d.ts
@@ -239,9 +279,32 @@ export function nodeColorKeys(nodes: readonly {
     color?: GraphraumColor;
 }[]): Uint32Array;
 
+// @public
+export function openClusterLod(graph: ClusterLodGraph, input: ClusterTreeInput, options: OpenClusterLodOptions): Promise<OpenedClusterLod>;
+
+// @public (undocumented)
+export interface OpenClusterLodOptions extends Omit<ClusterLodOptions, "data" | "source">, ClusterTreeJobOptions {
+    edge?: (index: number, arrays: ClusterLodArrays) => GraphraumEdge;
+    node?: (index: number, arrays: ClusterLodArrays) => GraphraumNode;
+    signal?: AbortSignal;
+}
+
+// @public (undocumented)
+export interface OpenedClusterLod extends ClusterLodHandle {
+    arrays: ClusterLodArrays;
+    complete: Promise<void>;
+    // (undocumented)
+    getTimings(): ClusterLodTimings;
+    tree: ClusterTree;
+    usedWorker: boolean;
+}
+
+// @public
+export function serveClusterTreeWorker(scope: unknown): void;
+
 // Warnings were encountered during analysis:
 //
-// dist/lod.d.ts:151:3 - (ae-forgotten-export) The symbol "GraphraumColor" needs to be exported by the entry point lod.d.ts
+// dist/lod.d.ts:284:3 - (ae-forgotten-export) The symbol "GraphraumColor" needs to be exported by the entry point lod.d.ts
 
 // (No @packageDocumentation comment for this package)
 

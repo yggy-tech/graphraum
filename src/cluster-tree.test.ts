@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { buildClusterTree, clusterMembers, clusterTreeTransferables } from "./cluster-tree";
+import { createClusterCutter } from "./cluster-cut";
+import { buildClusterTree, clusterMembers, clusterTreeTransferables, startClusterTree } from "./cluster-tree";
 import { randomEdges, scatter } from "./test-support/cluster-fixtures";
 
 describe.each([2, 3] as const)("cluster tree in %iD", (dimensions) => {
@@ -145,5 +146,43 @@ describe("input", () => {
 		const buffers = clusterTreeTransferables(tree);
 		expect(new Set(buffers).size).toBe(buffers.length);
 		expect(buffers.length).toBeGreaterThan(10);
+	});
+});
+
+describe("startClusterTree", () => {
+	const count = 2000;
+	const positions = scatter(count, 2);
+	const edges = randomEdges(count, 6000);
+
+	test("starts with every node and shape but no edges, and completes to the same tree as buildClusterTree", () => {
+		const build = startClusterTree({ dimensions: 2, edges, positions });
+		expect(build.tree.clusterCount).toBeGreaterThan(1);
+		expect(build.tree.adjacencyTarget.length).toBe(0);
+		expect(build.tree.nodeEdgeNeighbor.length).toBe(0);
+		expect(build.tree.nodeEdgeStart.length).toBe(count + 1);
+		const whole = buildClusterTree({ dimensions: 2, edges, positions });
+		Object.assign(build.tree, build.completeEdges());
+		for (const [key, value] of Object.entries(whole)) {
+			const other = (build.tree as unknown as Record<string, unknown>)[key];
+			if (ArrayBuffer.isView(value))
+				expect(Array.from(value as unknown as number[]), key).toEqual(Array.from(other as number[]));
+			else expect(other, key).toEqual(value);
+		}
+	});
+
+	test("a cut of the tree without edges draws no edges, and with them draws some", () => {
+		const build = startClusterTree({ dimensions: 2, edges, positions });
+		const view = { center: { x: 450, y: 450 }, height: 600, mode: "2d", visibleHeight: 1000, width: 800 } as const;
+		const cut = createClusterCutter(build.tree)(view, { maxDrawnNodes: 100 });
+		expect(cut.clusters.length).toBeGreaterThan(1);
+		expect(cut.edgeWeight.length).toBe(0);
+		Object.assign(build.tree, build.completeEdges());
+		expect(createClusterCutter(build.tree)(view, { maxDrawnNodes: 100 }).edgeWeight.length).toBeGreaterThan(0);
+	});
+
+	test("transferables list each buffer once", () => {
+		const tree = buildClusterTree({ dimensions: 2, positions });
+		const buffers = clusterTreeTransferables({ a: tree.order, b: tree.order, c: tree.centroid });
+		expect(buffers).toHaveLength(2);
 	});
 });

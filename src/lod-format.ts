@@ -39,7 +39,8 @@ export function nodeColorKeys(nodes: readonly { color?: GraphraumColor }[]): Uin
 	return Uint32Array.from(nodes, (node) => colorKey(node.color));
 }
 
-const hex = (key: number) => `#${key.toString(16).padStart(6, "0")}`;
+/** `#rrggbb` of a 0xRRGGBB key. */
+export const colorKeyHex = (key: number) => `#${key.toString(16).padStart(6, "0")}`;
 
 /** A colour above this share of a cluster is shown alone. */
 const DOMINANT_SHARE = 0.8;
@@ -55,10 +56,10 @@ export function clusterFill(
 	if (!colorCount || !keys) return {};
 	const members = tree.memberCount[cluster] as number;
 	const share = (slot: number) => (colorCount[cluster * 3 + slot] as number) / members;
-	const color = hex(keys[cluster * 3] as number);
+	const color = colorKeyHex(keys[cluster * 3] as number);
 	if (share(0) >= DOMINANT_SHARE) return { color };
 	const blend = [1, 2]
 		.filter((slot) => share(slot) >= MINIMUM_SHARE)
-		.map((slot) => ({ color: hex(keys[cluster * 3 + slot] as number), weight: share(slot) }));
+		.map((slot) => ({ color: colorKeyHex(keys[cluster * 3 + slot] as number), weight: share(slot) }));
 	return blend.length > 0 ? { blend, color } : { color };
 }

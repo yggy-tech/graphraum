@@ -413,51 +413,99 @@ function aggregateEdges(
 	};
 }
 
-/** Builds the cluster tree. Run it in a worker for large graphs and post the result (see `clusterTreeTransferables`). */
-export function buildClusterTree(input: ClusterTreeInput): ClusterTree {
+/** The parts of a tree that need the edges. A tree starts without them and gets them from `ClusterTreeBuild.completeEdges()`. */
+export type ClusterTreeEdges = Pick<
+	ClusterTree,
+	| "adjacencyCount"
+	| "adjacencyStart"
+	| "adjacencyTarget"
+	| "adjacencyWeight"
+	| "edgeWeights"
+	| "leafOf"
+	| "nodeEdgeIndex"
+	| "nodeEdgeNeighbor"
+	| "nodeEdgeStart"
+>;
+
+export interface ClusterTreeBuild {
+	/** Builds the edge parts. Assign them to `tree` (`Object.assign(tree, completeEdges())`) to finish it. */
+	completeEdges(): ClusterTreeEdges;
+	/** The tree with its nodes, shapes and colours; it has no edges yet, so a cut of it draws none. */
+	tree: ClusterTree;
+}
+
+/**
+ * Builds the tree in two steps so a view can open early: the first step sorts the nodes and shapes
+ * the clusters (a fraction of the total), the second aggregates the edges, which dominates at millions of edges.
+ */
+export function startClusterTree(input: ClusterTreeInput): ClusterTreeBuild {
 	const { leafSize, maxNeighbors, nodeCount } = assertInput(input);
 	const { dimensions, positions } = input;
 	const { bitsPerAxis, codes, order } = sortAlongCurve(positions, dimensions, nodeCount);
 	const skeleton = buildSkeleton(codes, dimensions, bitsPerAxis, leafSize);
 	const { centroid, radius } = computeShapes(skeleton, positions, order, dimensions);
-	const edgeWeights = input.weights ? Float32Array.from(input.weights) : null;
-	const nodeEdges = buildNodeEdges(nodeCount, input.edges);
-	const aggregated = aggregateEdges(skeleton, order, nodeEdges, edgeWeights, maxNeighbors);
 	const summary = input.colors ? summarizeColors(skeleton, order, input.colors) : null;
-	return {
-		colorCount: summary?.counts ?? null,
-		colorKey: summary?.keys ?? null,
-		adjacencyCount: aggregated.adjacencyCount,
-		adjacencyStart: aggregated.adjacencyStart,
-		adjacencyTarget: aggregated.adjacencyTarget,
-		adjacencyWeight: aggregated.adjacencyWeight,
+	const clusterCount = skeleton.parent.length;
+	const tree: ClusterTree = {
+		adjacencyCount: new Uint32Array(clusterCount),
+		adjacencyStart: new Uint32Array(clusterCount),
+		adjacencyTarget: new Uint32Array(0),
+		adjacencyWeight: new Float32Array(0),
 		centroid,
 		childCount: Uint32Array.from(skeleton.childCount),
 		childStart: Uint32Array.from(skeleton.childStart),
-		clusterCount: skeleton.parent.length,
+		clusterCount,
+		colorCount: summary?.counts ?? null,
+		colorKey: summary?.keys ?? null,
 		depth: Uint8Array.from(skeleton.depth),
 		dimensions,
-		edgeWeights,
-		leafOf: aggregated.leafOf,
+		edgeWeights: null,
+		leafOf: new Uint32Array(0),
 		leafSize,
 		memberCount: Uint32Array.from(skeleton.memberCount),
 		memberStart: Uint32Array.from(skeleton.memberStart),
 		nodeCount,
-		nodeEdgeIndex: nodeEdges.index,
-		nodeEdgeNeighbor: nodeEdges.neighbor,
-		nodeEdgeStart: nodeEdges.start,
+		nodeEdgeIndex: new Uint32Array(0),
+		nodeEdgeNeighbor: new Uint32Array(0),
+		nodeEdgeStart: new Uint32Array(nodeCount + 1),
 		order,
 		parent: Int32Array.from(skeleton.parent),
 		positions: Float32Array.from(positions),
 		radius,
 	};
+	return {
+		completeEdges() {
+			const edgeWeights = input.weights ? Float32Array.from(input.weights) : null;
+			const nodeEdges = buildNodeEdges(nodeCount, input.edges);
+			const aggregated = aggregateEdges(skeleton, order, nodeEdges, edgeWeights, maxNeighbors);
+			return {
+				adjacencyCount: aggregated.adjacencyCount,
+				adjacencyStart: aggregated.adjacencyStart,
+				adjacencyTarget: aggregated.adjacencyTarget,
+				adjacencyWeight: aggregated.adjacencyWeight,
+				edgeWeights,
+				leafOf: aggregated.leafOf,
+				nodeEdgeIndex: nodeEdges.index,
+				nodeEdgeNeighbor: nodeEdges.neighbor,
+				nodeEdgeStart: nodeEdges.start,
+			};
+		},
+		tree,
+	};
 }
 
-/** The buffers of a tree, for the transfer list of `postMessage` so a worker hands the tree over without copying it. */
-export function clusterTreeTransferables(tree: ClusterTree): ArrayBuffer[] {
-	return Object.values(tree)
+/** Builds the cluster tree. Run it in a worker for large graphs (see `openClusterLod`, or `clusterTreeTransferables` to post a tree yourself). */
+export function buildClusterTree(input: ClusterTreeInput): ClusterTree {
+	const { completeEdges, tree } = startClusterTree(input);
+	return Object.assign(tree, completeEdges());
+}
+
+/** The buffers of a tree or of its edge parts, for the transfer list of `postMessage` so a worker hands them over without copying. */
+export function clusterTreeTransferables(tree: object): ArrayBuffer[] {
+	const buffers = Object.values(tree)
 		.filter((value): value is ArrayBufferView => ArrayBuffer.isView(value))
 		.map((view) => view.buffer as ArrayBuffer);
+	return [...new Set(buffers)];
 }
 
 /** The node indices in cluster `cluster`. */

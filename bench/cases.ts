@@ -1,7 +1,7 @@
-import { createFixture } from "../docs/src/lib/benchmark";
+import { BENCHMARK_NODE_COLORS, createFixture } from "../docs/src/lib/benchmark";
 import { measureProgressiveForceLayout } from "../docs/src/lib/layout-benchmark";
 import { Graphraum, type GraphraumData, type GraphraumMode, type GraphraumThemeName } from "../src";
-import { attachClusterLod, buildClusterTree, nodeColorKeys } from "../src/lod";
+import { attachClusterLod, buildClusterTree, nodeColorKeys, openClusterLod } from "../src/lod";
 import { MAX_PIXEL_RATIO, nextFrame, sampleFrames } from "./measure";
 import { LOD_INSTANT_SIZES, LOD_SCALING_SIZES, SCALING_SIZES, scalingCaseId } from "./scaling";
 import type { CaseDescriptor, CaseRunResult } from "./types";
@@ -464,7 +464,113 @@ function lodScalingCase(
 	};
 }
 
+/** The ladder fixture as typed arrays only (same grid, colours and edges as `createFixture`), so 5M nodes never become objects. */
+function typedFixture(nodes: number, dimensions: 2 | 3) {
+	const columns = Math.ceil(Math.sqrt(nodes));
+	const palette = nodeColorKeys(BENCHMARK_NODE_COLORS.map((color) => ({ color })));
+	const positions = new Float32Array(nodes * dimensions);
+	const colors = new Uint32Array(nodes);
+	for (let index = 0; index < nodes; index += 1) {
+		const row = Math.floor(index / columns);
+		positions[index * dimensions] = (index % columns) * 12;
+		positions[index * dimensions + 1] = row * 12;
+		if (dimensions === 3) positions[index * 3 + 2] = ((index * 17) % 101) - 50;
+		colors[index] = palette[(index * 7 + row * 3) % palette.length] as number;
+	}
+	const edges = new Uint32Array(nodes * 6);
+	for (let edge = 0; edge < nodes * 3; edge += 1) {
+		edges[edge * 2] = edge % nodes;
+		edges[edge * 2 + 1] = (edge * 97 + 13) % nodes;
+	}
+	return { colors, dimensions, edges, positions };
+}
+
+const heapMegabytes = () => {
+	const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+	return memory ? memory.usedJSHeapSize / 1_048_576 : null;
+};
+
+/** LOD first load: typed arrays straight into the cluster view, the tree built in a worker, no plain setData of the graph. */
+function lodFirstLoadCase(series: "lodfirst2d" | "lodfirst3d", nodes: number): BenchCase {
+	const mode: GraphraumMode = series.endsWith("2d") ? "2d" : "3d";
+	return {
+		descriptor: scalingDescriptor(
+			series,
+			nodes,
+			mode,
+			"Fresh page, typed-array fixture (not timed). openClusterLod() builds the tree in a module worker and draws the cut: firstFrameMs is the call until the first LOD frame after the coarse tree, completeMs until the aggregate edges are drawn, workerBuildMs the worker's own build time (clusters plus edges). peakHeapMb is the highest main-thread JS heap sampled every 25 ms (typed arrays are outside it); maxFrameGapMs is the longest gap between frames while opening.",
+			`LOD first load, ${mode === "2d" ? "2D" : "3D"}`,
+		),
+		async run(container) {
+			const fixtureStartedAt = performance.now();
+			const input = typedFixture(nodes, mode === "2d" ? 2 : 3);
+			const fixtureMs = performance.now() - fixtureStartedAt;
+			await nextFrame();
+			const heapBefore = heapMegabytes();
+			let peakHeap = heapBefore ?? 0;
+			const sampler = setInterval(() => {
+				peakHeap = Math.max(peakHeap, heapMegabytes() ?? 0);
+			}, 25);
+			let maxGap = 0;
+			let watching = true;
+			let previous = performance.now();
+			const watch = () => {
+				const now = performance.now();
+				maxGap = Math.max(maxGap, now - previous);
+				previous = now;
+				if (watching) requestAnimationFrame(watch);
+			};
+			requestAnimationFrame(watch);
+			const constructionStartedAt = performance.now();
+			const graph = new Graphraum(container, { maxPixelRatio: MAX_PIXEL_RATIO, mode });
+			const constructMs = performance.now() - constructionStartedAt;
+			const startedAt = performance.now();
+			const lod = await openClusterLod(graph, input, {
+				createWorker: () => new Worker(new URL("../src/lod-worker.ts", import.meta.url), { type: "module" }),
+				element: container,
+				prefersReducedMotion: () => false,
+			});
+			await nextFrame();
+			const firstFrameMs = performance.now() - startedAt;
+			const firstHeap = heapMegabytes();
+			await lod.complete;
+			await nextFrame();
+			watching = false;
+			clearInterval(sampler);
+			const timings = lod.getTimings();
+			const drawn = lod.getDiagnostics();
+			const finalHeap = heapMegabytes();
+			lod.detach();
+			graph.destroy();
+			return {
+				cold: {
+					completeMs: timings.completeMilliseconds,
+					constructMs,
+					drawnAggregates: drawn.drawnAggregates,
+					drawnEdges: drawn.drawnEdges,
+					drawnNodes: drawn.drawnNodes,
+					firstCutMs: timings.firstCutMilliseconds,
+					firstFrameMs,
+					fixtureMs,
+					heapAfterFirstFrameMb: firstHeap,
+					heapFinalMb: finalHeap,
+					maxFrameGapMs: maxGap,
+					peakHeapMb: heapBefore === null ? null : peakHeap,
+					workerBuildMs: timings.buildCoarseMilliseconds + (timings.buildEdgesMilliseconds ?? 0),
+					workerCoarseMs: timings.buildCoarseMilliseconds,
+					workerEdgesMs: timings.buildEdgesMilliseconds,
+				},
+				warm: {},
+			};
+		},
+	};
+}
+
 const lodCases: readonly BenchCase[] = [
+	...LOD_SCALING_SIZES.flatMap((nodes) => [
+		lodFirstLoadCase("lodfirst2d", nodes),
+		lodFirstLoadCase("lodfirst3d", nodes),
+	]),
 	...LOD_SCALING_SIZES.flatMap((nodes) => [
 		lodScalingCase("lodpan2d", nodes, true),
 		lodScalingCase("lodorbit3d", nodes, true),

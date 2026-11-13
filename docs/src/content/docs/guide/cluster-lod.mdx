@@ -27,7 +27,7 @@ lod.detach(); // stops following the camera; call it before graph.destroy()
 
 `data` is the full `GraphraumData` you built the tree from: node `i` has the position `i` of the tree, and edge `k` is the pair `k`. graphraum draws only the cut, so never call `setData()` yourself while the layer is attached.
 
-To see it, run `bun run dev:lod` in the repository: 200,000 coloured blobs, `?n=500000` for more, `?mode=3d` for 3D, `?animate=0` to switch the animation off.
+To see it, run `bun run dev:lod` in the repository: 200,000 coloured blobs, `?n=5000000` for five million, `?mode=3d` for 3D, `?animate=0` to switch the animation off, `?worker=0` to build on the main thread.
 
 ## When to use it
 
@@ -35,7 +35,37 @@ To see it, run `bun run dev:lod` in the repository: 200,000 coloured blobs, `?n=
 - Skip it below a few tens of thousands of nodes. The plain renderer shows every node and every selected edge, and is simpler.
 - The graph needs positions up front. Compute them in a worker with the [layout helpers](/guide/layout/) or on your server.
 
-## Build the tree in a worker
+## Open a huge graph straight into the cluster view
+
+Above a few hundred thousand nodes, do not build a `GraphraumData` at all. `openClusterLod()` takes the graph as typed arrays, builds the tree in a module worker, and draws only the cut:
+
+```ts
+import { Graphraum } from "@yggy-tech/graphraum";
+import { openClusterLod } from "@yggy-tech/graphraum/lod";
+
+const graph = new Graphraum(container, { mode: "2d" });
+const lod = await openClusterLod(
+  graph,
+  { dimensions: 2, positions, edges, colors }, // Float32Array, Uint32Array pairs, optional Uint32Array 0xRRGGBB
+  {
+    element: container,
+    // A real node's details come from you, only for nodes inside the cut.
+    node: (index, arrays) => ({ id: ids[index], label: names[index], position: { x: arrays.positions[index * 2], y: arrays.positions[index * 2 + 1] } }),
+  },
+);
+await lod.complete; // the aggregate edges are in
+```
+
+The promise resolves with the first cut drawn, built from the coarse tree: regions and glyphs show first, and the edges between them follow when `lod.complete` resolves (`lod.getTimings()` has both times and the worker's build time). The renderer never receives more than `maxDrawnNodes` nodes and `maxDrawnEdges` edges. The full graph stays in typed arrays: no object per node, so five million nodes and fifteen million edges need a few hundred megabytes, not gigabytes.
+
+- **Worker.** The package finds `lod-worker.js` next to the bundle by default. Bundlers that do not follow `new URL(..., import.meta.url)` inside a dependency (Vite's dependency pre-bundling, for one) need `createWorker: () => new Worker(new URL("./my-worker.ts", import.meta.url), { type: "module" })`, where `my-worker.ts` is `serveClusterTreeWorker(self)` from the same entry. `worker: false` builds on the main thread, with a paint between the two steps; that is also the fallback when workers are missing.
+- **Transfer.** By default the arrays are handed to the worker and detach on your side. Read positions, colours and edges through `lod.arrays`. With `transfer: false` the worker gets copies and you keep yours, at the price of the copy; a worker that fails to start then falls back to the main thread.
+- **Real nodes.** `node(index, arrays)` and `edge(index, arrays)` default to ids `n<index>` and `e<index>` with the position and colour from the arrays. Pass your own to add labels or sizes. `lod.resolve(id)`, `members()`, `frameCluster()` and `zoomToCluster()` work as before, from the arrays.
+- **Cancel.** Pass `signal` to stop opening; afterwards `lod.detach()` also stops the worker.
+
+At 1,000,000 nodes and 3,000,000 edges the first cut was drawn about 0.2 seconds after the call (Apple M5 Pro, headless Chromium, one run); see the scaling ladder for the full range.
+
+## Build the tree in a worker yourself
 
 The tree is plain typed arrays. `buildClusterTree()` takes about 0.7 seconds for a million nodes and three million edges on a laptop, so run it in a worker and hand the result over:
 

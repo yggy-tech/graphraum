@@ -14,6 +14,7 @@ function fakeCanvas() {
 		addEventListener: register,
 		clientHeight: 600,
 		clientWidth: 800,
+		getBoundingClientRect: () => ({ height: 600, left: 0, top: 0, width: 800 }),
 		getRootNode: () => ({ addEventListener: () => {}, removeEventListener: () => {} }),
 		ownerDocument: { addEventListener: register, removeEventListener: () => {} },
 		releasePointerCapture: () => {},
@@ -58,5 +59,9 @@ describe("configureControlsForMode", () => {
 
 		expect(controls.enableRotate).toBe(true);
 		expect(controls.touches.ONE).toBe(TOUCH.ROTATE);
+	});
+
+	test("zooms toward the pointer in 2D and 3D", () => {
+		for (const mode of ["2d", "3d"] as const) expect(controlsFor(mode).controls.zoomToCursor).toBe(true);
 	});
 });

@@ -108,49 +108,56 @@ const CONFIGS: readonly {
 ];
 
 describe("2D viewport keeps the instances of nodes that stay visible", () => {
-	test.each(CONFIGS)("$name: random pan and zoom draws what a full rewrite draws", ({ edgesKept, options, reused }) => {
-		const random = seededRandom(97);
-		const data = mixedFixture(220, 500, 5);
-		const graph = createGraph(options);
-		const twin = createGraph(options);
-		graph.setData(data);
-		twin.setData(data);
-		const written = vi.spyOn(internals(graph) as unknown as NodeInternals, "writeNodeInstance");
-		let zoom = 2;
-		let x = 0;
-		let y = 0;
-		let reusedSteps = 0;
-		const patched = vi.spyOn(internals(graph) as unknown as NodeInternals, "patchEdgeSlots");
-		for (let step = 0; step < 120; step += 1) {
-			if (random() < 0.5) {
-				x += (random() - 0.5) * 120;
-				y += (random() - 0.5) * 120;
-			} else {
-				zoom = Math.min(30, Math.max(0.6, zoom * (0.7 + random() * 0.7)));
-			}
-			viewAt(graph, zoom, x, y);
-			viewAt(twin, zoom, x, y);
-			const before = written.mock.calls.length;
-			internals(graph).handleViewChange();
-			const writes = written.mock.calls.length - before;
-			internals(twin).materializeViewport();
+	// Hundreds of seeded camera moves, each compared with a full rewrite: under 1 s locally, about 5 s on CI runners.
+	const RANDOM_WALK_TIMEOUT_MS = 30_000;
 
-			const drawn = drawnNodes(graph);
-			expect([...drawn.keys()].sort(), `step ${step}`).toEqual([...drawnNodes(twin).keys()].sort());
-			expect(drawn, `step ${step}`).toEqual(drawnNodes(twin));
-			expect(edgeInstancesByEdge(graph), `step ${step}`).toEqual(edgeInstancesByEdge(twin));
-			expect(unusedVisibleSlots(graph), `step ${step}`).toBe(0);
-			expect(pickable(graph), `step ${step}`).toEqual(pickable(twin));
-			expect(edgeDiagnostics(graph), `step ${step}`).toEqual(edgeDiagnostics(twin));
-			expect(graph.getDiagnostics().visibleNodes).toBe(twin.getDiagnostics().visibleNodes);
-			if (writes < drawn.size) reusedSteps += 1;
-		}
-		expect(reusedSteps).toBeGreaterThanOrEqual(reused[0]);
-		expect(reusedSteps).toBeLessThanOrEqual(reused[1]);
-		const edgeSteps = patched.mock.results.filter((result) => result.value === true).length;
-		expect(edgeSteps).toBeGreaterThanOrEqual(edgesKept[0]);
-		expect(edgeSteps).toBeLessThanOrEqual(edgesKept[1]);
-	});
+	test.each(CONFIGS)(
+		"$name: random pan and zoom draws what a full rewrite draws",
+		({ edgesKept, options, reused }) => {
+			const random = seededRandom(97);
+			const data = mixedFixture(220, 500, 5);
+			const graph = createGraph(options);
+			const twin = createGraph(options);
+			graph.setData(data);
+			twin.setData(data);
+			const written = vi.spyOn(internals(graph) as unknown as NodeInternals, "writeNodeInstance");
+			let zoom = 2;
+			let x = 0;
+			let y = 0;
+			let reusedSteps = 0;
+			const patched = vi.spyOn(internals(graph) as unknown as NodeInternals, "patchEdgeSlots");
+			for (let step = 0; step < 120; step += 1) {
+				if (random() < 0.5) {
+					x += (random() - 0.5) * 120;
+					y += (random() - 0.5) * 120;
+				} else {
+					zoom = Math.min(30, Math.max(0.6, zoom * (0.7 + random() * 0.7)));
+				}
+				viewAt(graph, zoom, x, y);
+				viewAt(twin, zoom, x, y);
+				const before = written.mock.calls.length;
+				internals(graph).handleViewChange();
+				const writes = written.mock.calls.length - before;
+				internals(twin).materializeViewport();
+
+				const drawn = drawnNodes(graph);
+				expect([...drawn.keys()].sort(), `step ${step}`).toEqual([...drawnNodes(twin).keys()].sort());
+				expect(drawn, `step ${step}`).toEqual(drawnNodes(twin));
+				expect(edgeInstancesByEdge(graph), `step ${step}`).toEqual(edgeInstancesByEdge(twin));
+				expect(unusedVisibleSlots(graph), `step ${step}`).toBe(0);
+				expect(pickable(graph), `step ${step}`).toEqual(pickable(twin));
+				expect(edgeDiagnostics(graph), `step ${step}`).toEqual(edgeDiagnostics(twin));
+				expect(graph.getDiagnostics().visibleNodes).toBe(twin.getDiagnostics().visibleNodes);
+				if (writes < drawn.size) reusedSteps += 1;
+			}
+			expect(reusedSteps).toBeGreaterThanOrEqual(reused[0]);
+			expect(reusedSteps).toBeLessThanOrEqual(reused[1]);
+			const edgeSteps = patched.mock.results.filter((result) => result.value === true).length;
+			expect(edgeSteps).toBeGreaterThanOrEqual(edgesKept[0]);
+			expect(edgeSteps).toBeLessThanOrEqual(edgesKept[1]);
+		},
+		RANDOM_WALK_TIMEOUT_MS,
+	);
 
 	test("a selection colour survives the camera moving while the node stays visible", () => {
 		const data = mixedFixture(60, 120, 9);

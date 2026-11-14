@@ -5,7 +5,7 @@
 ```ts
 
 // @public
-export function attachClusterLod(graph: ClusterLodGraph, tree: ClusterTree, options: ClusterLodOptions): ClusterLodHandle;
+export function attachClusterLod(graph: ClusterLodGraph, initialTree: ClusterTree, options: ClusterLodOptions): ClusterLodHandle;
 
 // @public
 export function buildClusterTree(input: ClusterTreeInput): ClusterTree;
@@ -110,6 +110,10 @@ export interface ClusterLodHandle {
     members(cluster: number): Uint32Array;
     refresh(): void;
     resolve(id: string): ClusterLodHit | null;
+    update(tree: ClusterTree, data: {
+        data?: GraphraumData;
+        source?: ClusterLodSource;
+    }): void;
     zoomToCluster(cluster: number): Promise<boolean>;
 }
 
@@ -141,6 +145,7 @@ export interface ClusterLodOptions extends ClusterCutOptions {
     schedule?: (callback: (nowMilliseconds: number) => void) => () => void;
     source?: ClusterLodSource;
     transitionMilliseconds?: number;
+    updateMilliseconds?: number;
     zoomMilliseconds?: number;
 }
 
@@ -304,7 +309,7 @@ export function serveClusterTreeWorker(scope: unknown): void;
 
 // Warnings were encountered during analysis:
 //
-// dist/lod.d.ts:284:3 - (ae-forgotten-export) The symbol "GraphraumColor" needs to be exported by the entry point lod.d.ts
+// dist/lod.d.ts:296:3 - (ae-forgotten-export) The symbol "GraphraumColor" needs to be exported by the entry point lod.d.ts
 
 // (No @packageDocumentation comment for this package)
 

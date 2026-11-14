@@ -94,6 +94,10 @@ When the cut changes, a cluster that splits shrinks away while its children grow
 
 Each swap goes through `applyDataPatch()`, which names only the nodes and edges that arrived or left, so a cut change does not rebuild the graph's buffers.
 
+## A graph that grows
+
+When more of the graph arrives, build a tree of everything loaded so far and hand it to `handle.update(tree, { data })` instead of attaching a new layer. The new data must start with the nodes of the old, in the same order, as an append does. Every glyph and node glides from the element it grew out of to its new place and size, new ones grow in and dropped ones shrink away, and the camera stays. It takes 600 ms (`updateMilliseconds`, 0 for none); a newer update picks up where the running one is. Rebuild every few hundred milliseconds rather than on every batch, so each move has time to read.
+
 ## Options
 
 | Option | Default | What it does |

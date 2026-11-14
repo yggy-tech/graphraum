@@ -16,6 +16,14 @@ import {
 	type TransitionPlan,
 	type Vec3,
 } from "./lod-transition";
+import {
+	DEFAULT_UPDATE_MS,
+	drawnElementOf,
+	type MorphTrack,
+	sampleMorph,
+	trackIsStill,
+	voteDrawnElement,
+} from "./lod-update";
 import type {
 	GraphraumCameraState,
 	GraphraumData,
@@ -78,6 +86,8 @@ export interface ClusterLodOptions extends ClusterCutOptions {
 	schedule?: (callback: (nowMilliseconds: number) => void) => () => void;
 	/** Length of the split and merge animation in milliseconds; 0 swaps at once. Default 200. */
 	transitionMilliseconds?: number;
+	/** Time `update` takes to move the drawn elements from the old tree to the new one, in milliseconds. Default 600; 0 swaps at once. */
+	updateMilliseconds?: number;
 	/** Length of the zoom after a click in milliseconds. Default 450. */
 	zoomMilliseconds?: number;
 }
@@ -114,6 +124,13 @@ export interface ClusterLodHandle {
 	refresh(): void;
 	/** Maps an id from `pick` or `pickHit` to a cluster or a real node, or null for an id this layer did not draw. */
 	resolve(id: string): ClusterLodHit | null;
+	/**
+	 * Moves the layer to a tree built from a grown graph, keeping the camera. The new data must start
+	 * with the nodes of the old, in the same order (a stream appends). Every glyph and node glides from
+	 * what it grew out of to its new place and size, new ones grow in and dropped ones shrink away, so
+	 * a stream reads as one graph growing rather than a new picture per batch.
+	 */
+	update(tree: ClusterTree, data: { data?: GraphraumData; source?: ClusterLodSource }): void;
 	/** Moves the camera to frame a cluster, animated unless reduced motion is on. Resolves false when something else moved the camera first. */
 	zoomToCluster(cluster: number): Promise<boolean>;
 }
@@ -160,6 +177,17 @@ function defaultSchedule(callback: (nowMilliseconds: number) => void) {
 	return () => cancelAnimationFrame(handle);
 }
 
+interface ActiveMorph {
+	cancel: () => void;
+	/** What the graph holds once the morph is done. */
+	next: DrawnSet;
+	/** Resting node of every tracked id: where a staying element ends, or the leaving one as it was. */
+	rest: Map<string, GraphraumNode>;
+	/** Place and size each tracked id was last drawn at, so a newer update starts from there. */
+	shown: Map<string, { position: Vec3; scale: number }>;
+	tracks: MorphTrack[];
+}
+
 interface ActiveTransition {
 	cancel: () => void;
 	/** Final node of every animated key, entering and growing ones at their resting place. */
@@ -176,11 +204,12 @@ interface ActiveTransition {
  */
 export function attachClusterLod(
 	graph: ClusterLodGraph,
-	tree: ClusterTree,
+	initialTree: ClusterTree,
 	options: ClusterLodOptions,
 ): ClusterLodHandle {
+	let tree = initialTree;
 	const { element } = options;
-	const store = lodSourceOf(options);
+	let store = lodSourceOf(options);
 	if (store.nodeCount !== tree.nodeCount) {
 		throw new Error("Cluster LOD data must have the nodes the tree was built from, in the same order.");
 	}
@@ -189,7 +218,7 @@ export function attachClusterLod(
 	const reducedMotion = options.prefersReducedMotion ?? systemPrefersReducedMotion;
 	const transitionMs = options.transitionMilliseconds ?? DEFAULT_TRANSITION_MS;
 	const zoomMs = options.zoomMilliseconds ?? DEFAULT_ZOOM_MS;
-	const cutter = createClusterCutter(tree);
+	let cutter = createClusterCutter(tree);
 	const nodeRadius = sampleNodeRadius(store);
 	// Ids of the real nodes asked for lately, so `resolve` finds an id the layer drew without a lookup over all nodes.
 	const indexById = new Map<string, number>();
@@ -271,6 +300,7 @@ export function attachClusterLod(
 	let drawn: DrawnSet = { edges: new Map(), nodes: new Map() };
 	let committed: CutElements = { clusters: new Set(), nodes: new Set() };
 	let transition: ActiveTransition | null = null;
+	let morph: ActiveMorph | null = null;
 	let pending = false;
 	let detached = false;
 	let applying = false;
@@ -283,7 +313,8 @@ export function attachClusterLod(
 	const aggregateItems = () =>
 		[...drawn.nodes.keys()]
 			.filter((id) => id.startsWith(prefix))
-			.map((id) => ({ count: tree.memberCount[Number(id.slice(prefix.length))] as number, id }));
+			.map((id) => ({ count: tree.memberCount[Number(id.slice(prefix.length))] ?? 0, id }))
+			.filter((item) => item.count > 0);
 
 	function recordCut(cut: ClusterCut, startedAt: number) {
 		diagnostics = {
@@ -422,7 +453,7 @@ export function attachClusterLod(
 
 	function update(force: boolean) {
 		if (detached || applying) return;
-		if (transition) {
+		if (transition || morph) {
 			pending = true;
 			return;
 		}
@@ -471,6 +502,142 @@ export function attachClusterLod(
 		update(false);
 		if (!transition) labels?.update();
 	});
+
+	const sizeOf = (node: GraphraumNode) => node.size ?? DEFAULT_NODE_SIZE;
+
+	/** What the graph shows now, by id: drawn nodes, with the place and size a running morph gave them. */
+	function shownNodes(): Map<string, GraphraumNode> {
+		if (!morph) return drawn.nodes;
+		const shown = new Map(drawn.nodes);
+		for (const [id, sample] of morph.shown) {
+			const node = morph.rest.get(id) ?? shown.get(id);
+			if (node) shown.set(id, { ...node, position: sample.position, ...scaledSize(node, sample.scale) });
+		}
+		return shown;
+	}
+
+	function finishMorph(active: ActiveMorph) {
+		active.cancel();
+		morph = null;
+		const finals: GraphraumNodeUpdate[] = [];
+		for (const track of active.tracks) {
+			if (track.toScale !== 1) continue;
+			finals.push(nodeUpdate(active.rest.get(track.id) as GraphraumNode, track.to, 1));
+		}
+		if (finals.length > 0) graph.updateNodes(finals);
+		swap(active.next);
+		labels?.setItems(aggregateItems());
+		labels?.update();
+		diagnostics = { ...diagnostics, transitioning: false };
+		if (pending) {
+			pending = false;
+			update(true);
+		}
+	}
+
+	function updateTree(nextTree: ClusterTree, data: { data?: GraphraumData; source?: ClusterLodSource }) {
+		if (detached) return;
+		const nextStore = lodSourceOf(data);
+		if (nextStore.nodeCount !== nextTree.nodeCount) {
+			throw new Error("Cluster LOD data must have the nodes the tree was built from, in the same order.");
+		}
+		if (nextTree.dimensions !== dims) throw new Error("Cluster LOD update must keep the tree's dimensions.");
+		if (nextTree.nodeCount < tree.nodeCount)
+			throw new Error("Cluster LOD update must keep every node of the old tree.");
+		pending = false;
+		if (transition) finishTransition(transition);
+		const shown = shownNodes();
+		if (morph) {
+			morph.cancel();
+			morph = null;
+		}
+		const oldTree = tree;
+		const oldCommitted = committed;
+		const oldStore = store;
+		const oldIdOf = (key: string) =>
+			key.startsWith("c") ? `${prefix}${key.slice(1)}` : oldStore.node(Number(key.slice(1))).id;
+
+		tree = nextTree;
+		store = nextStore;
+		cutter = createClusterCutter(tree);
+		indexById.clear();
+		const view = viewOf(graph.getCameraState(), element);
+		const startedAt = performance.now();
+		const cut = cutter(view, options);
+		lastViewKey = viewKey(view);
+		lastCutKey = cutKey(cut);
+		const next = snapshotOf(cut);
+		committed = { clusters: new Set(cut.clusters), nodes: new Set(cut.nodes) };
+		const durationMs = options.updateMilliseconds ?? DEFAULT_UPDATE_MS;
+		if (durationMs <= 0 || reducedMotion()) {
+			swap(next);
+			recordCut(cut, startedAt);
+			return;
+		}
+
+		const elementOf = (index: number) => drawnElementOf(oldTree, oldCommitted, index);
+		const tracks: MorphTrack[] = [];
+		const start = new Map(next.nodes);
+		const rest = new Map<string, GraphraumNode>();
+		const used = new Set<string>();
+		const follow = (id: string, fromKey: string | null) => {
+			const node = next.nodes.get(id) as GraphraumNode;
+			rest.set(id, node);
+			const fromId = fromKey === null ? null : oldIdOf(fromKey);
+			const from = fromId === null ? undefined : shown.get(fromId);
+			const to = { x: node.position.x, y: node.position.y, z: node.position.z ?? 0 };
+			if (fromId !== null && from) used.add(fromId);
+			const track: MorphTrack = from
+				? {
+						id,
+						from: { x: from.position.x, y: from.position.y, z: from.position.z ?? 0 },
+						fromScale: sizeOf(from) / sizeOf(node),
+						to,
+						toScale: 1,
+					}
+				: { id, from: to, fromScale: MINIMUM_SCALE, to, toScale: 1 };
+			if (trackIsStill(track)) return;
+			tracks.push(track);
+			start.set(id, { ...node, position: track.from, ...scaledSize(node, track.fromScale) });
+		};
+		for (const cluster of cut.clusters) {
+			follow(`${prefix}${cluster}`, voteDrawnElement(clusterMembers(tree, cluster), elementOf));
+		}
+		for (const index of cut.nodes) follow(store.node(index).id, elementOf(index));
+		for (const [id, node] of shown) {
+			if (next.nodes.has(id) || used.has(id)) continue;
+			const at = { x: node.position.x, y: node.position.y, z: node.position.z ?? 0 };
+			rest.set(id, node);
+			start.set(id, node);
+			tracks.push({ id, from: at, fromScale: 1, to: at, toScale: MINIMUM_SCALE });
+		}
+		swap({ edges: next.edges, nodes: start });
+		recordCut(cut, startedAt);
+		if (tracks.length === 0) return;
+		const active: ActiveMorph = { cancel: () => undefined, next, rest, shown: new Map(), tracks };
+		morph = active;
+		diagnostics = { ...diagnostics, transitioning: true };
+		let begun: number | null = null;
+		const tick = (now: number) => {
+			if (detached || morph !== active) return;
+			begun ??= now;
+			const progress = (now - begun) / durationMs;
+			if (progress >= 1) {
+				finishMorph(active);
+				return;
+			}
+			const updates: GraphraumNodeUpdate[] = [];
+			for (const track of tracks) {
+				const sample = sampleMorph(track, progress);
+				active.shown.set(track.id, sample);
+				updates.push(nodeUpdate(rest.get(track.id) as GraphraumNode, sample.position, sample.scale));
+			}
+			graph.updateNodes(updates);
+			labels?.update();
+			active.cancel = schedule(tick);
+		};
+		active.cancel = schedule(tick);
+	}
 
 	function frameCluster(cluster: number): GraphraumCameraState {
 		const center = centroidOf(cluster);
@@ -558,6 +725,7 @@ export function attachClusterLod(
 		detach() {
 			detached = true;
 			transition?.cancel();
+			morph?.cancel();
 			cancelZoom?.();
 			unsubscribe();
 			labels?.destroy();
@@ -569,6 +737,7 @@ export function attachClusterLod(
 		members: (cluster) => clusterMembers(tree, cluster),
 		refresh: () => update(true),
 		resolve,
+		update: updateTree,
 		zoomToCluster,
 	};
 }

@@ -217,6 +217,26 @@ export interface GraphraumDataPatch<NodeAttributes = undefined, EdgeAttributes =
 	removedEdgeIds?: readonly string[];
 }
 
+/** How nodes added by a patch appear. */
+export interface GraphraumEnterOptions {
+	/** Time one node takes to grow from nothing to its size, in milliseconds. Defaults to 420. */
+	durationMs?: number;
+	/**
+	 * Spread of the start times over the added nodes, in patch order, in milliseconds. Defaults to 0 (all
+	 * at once). A stream that adds a few hundred nodes at a time reads as continuous with a stagger
+	 * close to its patch interval.
+	 */
+	staggerMs?: number;
+}
+
+export interface GraphraumDataPatchOptions {
+	/**
+	 * Grow the added nodes in instead of showing them at once: `true` for the defaults, or the timing.
+	 * Ignored under reduced motion.
+	 */
+	enter?: boolean | GraphraumEnterOptions;
+}
+
 export interface GraphraumNodeVisual {
 	color?: GraphraumColor;
 	/**
@@ -606,8 +626,8 @@ export interface GraphraumAutoOrbitOptions {
 
 /** Options for `Graphraum.flyTo`. */
 export interface GraphraumFlyToOptions {
-	/** Nodes to frame, as `fitView({ nodeIds })` frames them. Unknown IDs are ignored. */
-	nodeIds: readonly string[];
+	/** Nodes to frame, as `fitView({ nodeIds })` frames them. Unknown IDs are ignored. Omitted: every drawn node. */
+	nodeIds?: readonly string[];
 	/** Flight time in milliseconds. 0 jumps. Defaults to 1200. */
 	durationMs?: number;
 	/** Multiplies the fitted 3D camera distance or 2D visible height; above 1 leaves air around the nodes. Defaults to 1. */

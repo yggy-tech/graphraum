@@ -92,7 +92,7 @@ export interface GraphologyRenderer<NodeAttributes, EdgeAttributes> {
 // @public
 export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     constructor(container: HTMLElement, options?: GraphraumOptions<NodeAttributes, EdgeAttributes>);
-    applyDataPatch(patch: GraphraumDataPatch<NodeAttributes, EdgeAttributes>): void;
+    applyDataPatch(patch: GraphraumDataPatch<NodeAttributes, EdgeAttributes>, options?: GraphraumDataPatchOptions): void;
     applyLayout(layout: GraphraumLayoutPositions): void;
     createOverlay(options?: GraphraumOverlayOptions): GraphraumOverlay<NodeAttributes, EdgeAttributes>;
     // (undocumented)
@@ -235,6 +235,11 @@ export interface GraphraumDataPatch<NodeAttributes = undefined, EdgeAttributes =
     removedEdgeIds?: readonly string[];
     // (undocumented)
     removedNodeIds?: readonly string[];
+}
+
+// @public (undocumented)
+export interface GraphraumDataPatchOptions {
+    enter?: boolean | GraphraumEnterOptions;
 }
 
 // @public
@@ -394,10 +399,16 @@ export interface GraphraumEdgeVisual {
 }
 
 // @public
+export interface GraphraumEnterOptions {
+    durationMs?: number;
+    staggerMs?: number;
+}
+
+// @public
 export interface GraphraumFlyToOptions {
     distanceScale?: number;
     durationMs?: number;
-    nodeIds: readonly string[];
+    nodeIds?: readonly string[];
 }
 
 // @public

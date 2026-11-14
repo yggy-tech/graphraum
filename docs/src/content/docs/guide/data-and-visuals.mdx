@@ -98,6 +98,19 @@ The mapper result overrides direct `color`, `shape`, `size`, `width`, `height`, 
 
 Edge `visual` fields work the same way: `color`, `width`, `opacity`, `style` (`solid`, `dashed`, `dotted`), `marker` (`none`, `triangle`), `markerSize`, `markerEnd` (`target`, `source`, `both`), `path` (`straight`, `quadratic`, `cubic`), and optional `controlPoints` override direct edge snapshot fields. Omit `controlPoints` to use auto-derived handles; provide exactly one point for `quadratic` or two for `cubic`. Endpoints come from the source and target node positions, so moving a node moves every incident edge automatically. Overview LOD forces straight segments.
 
+## Stream a graph in
+
+A graph that arrives in batches grows with `applyDataPatch()`, which costs in proportion to the batch and keeps the camera. Pass `enter` so the new nodes grow in where they land instead of appearing in one frame:
+
+```ts
+graph.applyDataPatch(
+  { addedNodes, addedEdges },
+  { enter: { durationMs: 420, staggerMs: 120 } },
+);
+```
+
+`durationMs` is how long one node takes to grow (420 by default). `staggerMs` spreads the start times over the batch in patch order, so a stream reads as continuous when it is close to the interval between batches. `enter: true` takes the defaults. Under `prefers-reduced-motion: reduce` nodes appear at once. To follow the growing graph, `graph.flyTo({ durationMs })` without `nodeIds` frames every drawn node. Run `bun run dev:stream` for a tunable example.
+
 ## Built-in node shapes
 
 Arbitrary HTML per node is not the dense rendering path: it would trade away batching, viewport materialization, and the 100k-node target. The `defineVisuals()` layer maps typed domain attributes to node and edge visuals once at ingestion, then compiles them into GPU buffers. Titles, properties, and host-owned action descriptors remain available by entity ID.

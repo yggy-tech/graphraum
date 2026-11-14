@@ -74,6 +74,7 @@ import {
 	patchVisibleEdgePaint,
 	type VisibleEdgeLayout,
 } from "./edge-viewport-patch";
+import { DEFAULT_ENTER_MS, enterScale } from "./enter-animation";
 import { fitPerspective, type PerspectiveFit } from "./fit-3d";
 import {
 	FOCUS_LENS_DEFAULTS,
@@ -143,12 +144,14 @@ import type {
 	GraphraumColor,
 	GraphraumData,
 	GraphraumDataPatch,
+	GraphraumDataPatchOptions,
 	GraphraumDepthOfFieldOptions,
 	GraphraumDepthOfFieldStatus,
 	GraphraumDepthOfFieldUpdate,
 	GraphraumDiagnostics,
 	GraphraumEdge,
 	GraphraumEdgeState,
+	GraphraumEnterOptions,
 	GraphraumFlyToOptions,
 	GraphraumFocusLensOptions,
 	GraphraumInteractionQualityOptions,
@@ -394,6 +397,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private lensScales = new Float32Array(0);
 	/** True once lens factors were written to the GPU, so turning the lens off knows to reset them. */
 	private lensApplied = false;
+	/** Nodes growing in after a patch, by id. */
+	private entering = new Map<string, { durationMs: number; startedAt: number }>();
+	/** True while the lens attribute may still hold enter progress that the next frame must reset. */
+	private enterDirty = false;
 	private readonly lensMatrix = new Matrix4();
 
 	constructor(container: HTMLElement, options: GraphraumOptions<NodeAttributes, EdgeAttributes> = {}) {
@@ -454,11 +461,18 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	setData(data: GraphraumData<NodeAttributes, EdgeAttributes>, options: GraphraumSetDataOptions = {}) {
 		const { fit = true } = options;
 		if (typeof fit !== "boolean") throw new Error("setData option fit must be a boolean.");
+		this.entering.clear();
+		this.enterDirty = true;
 		this.replaceData(data, fit);
 	}
 
 	/** Merge a topology patch without fitting or resetting the current camera. */
-	applyDataPatch(patch: GraphraumDataPatch<NodeAttributes, EdgeAttributes>) {
+	applyDataPatch(patch: GraphraumDataPatch<NodeAttributes, EdgeAttributes>, options: GraphraumDataPatchOptions = {}) {
+		this.applyPatchData(patch);
+		if (options.enter) this.startEnter(patch.addedNodes ?? [], options.enter === true ? {} : options.enter);
+	}
+
+	private applyPatchData(patch: GraphraumDataPatch<NodeAttributes, EdgeAttributes>) {
 		const addedNodeIds = new Set((patch.addedNodes ?? []).map((node) => node.id));
 		const addedEdgeIds = new Set((patch.addedEdges ?? []).map((edge) => edge.id));
 		if (addedNodeIds.size !== (patch.addedNodes ?? []).length) throw new Error("Duplicate added node ID.");
@@ -1286,6 +1300,59 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return this.focusLens.enabled ? Math.max(1, this.focusLens.centerScale) : 1;
 	}
 
+	/** Registers `nodes` to grow in, starting this frame and spread over the stagger in patch order. */
+	private startEnter(nodes: readonly { id: string }[], options: GraphraumEnterOptions) {
+		if (nodes.length === 0 || prefersReducedMotion()) return;
+		const durationMs = options.durationMs ?? DEFAULT_ENTER_MS;
+		const staggerMs = options.staggerMs ?? 0;
+		if (!Number.isFinite(durationMs) || durationMs < 0) throw new Error("Enter durationMs must be non-negative.");
+		if (!Number.isFinite(staggerMs) || staggerMs < 0) throw new Error("Enter staggerMs must be non-negative.");
+		if (durationMs === 0) return;
+		const now = performance.now();
+		const step = nodes.length > 1 ? staggerMs / (nodes.length - 1) : 0;
+		for (const [order, node] of nodes.entries()) {
+			this.entering.set(node.id, { durationMs, startedAt: now + order * step });
+		}
+		this.requestRender();
+	}
+
+	/**
+	 * Multiplies the drawn size of every growing node by its enter progress. Runs before each frame,
+	 * after the focus lens wrote its sizes, and asks for another frame until every node has grown.
+	 */
+	private updateEnter() {
+		if (this.entering.size === 0 && !this.enterDirty) return;
+		const attribute = this.nodeMesh?.geometry.getAttribute("instanceLens") as InstancedBufferAttribute | undefined;
+		if (!attribute) return;
+		const values = attribute.array as Float32Array;
+		const now = performance.now();
+		const indices = this.visibleNodeIndices;
+		const count = Math.min(indices.length, values.length);
+		let growing = false;
+		for (let slot = 0; slot < count; slot += 1) {
+			const node = this.data.nodes[indices[slot] as number];
+			// Without the lens the slots hold only enter progress, which may belong to the node a slot held before.
+			const base = this.lensApplied ? (values[slot] as number) : 1;
+			const entry = node ? this.entering.get(node.id) : undefined;
+			if (!entry) {
+				values[slot] = base;
+				continue;
+			}
+			const progress = (now - entry.startedAt) / entry.durationMs;
+			if (progress >= 1 && node) this.entering.delete(node.id);
+			else growing = true;
+			values[slot] = base * enterScale(progress);
+		}
+		for (const [id, entry] of this.entering) {
+			if (now - entry.startedAt >= entry.durationMs) this.entering.delete(id);
+		}
+		if (this.entering.size === 0 && !this.lensApplied) values.fill(1, count);
+		attribute.clearUpdateRanges();
+		attribute.needsUpdate = true;
+		this.enterDirty = this.entering.size > 0;
+		if (growing || this.entering.size > 0) this.requestRender();
+	}
+
 	private lensScaleOf(nodeIndex: number) {
 		return this.lensApplied ? (this.lensScales[nodeIndex] ?? 0) || 1 : 1;
 	}
@@ -2024,6 +2091,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private renderFrame() {
 		this.qualityGovernor?.frame();
 		this.updateFocusLens();
+		this.updateEnter();
 		this.readGpuTimers();
 		const timer = this.gpuTimer;
 		const query = timer?.context.createQuery() ?? null;

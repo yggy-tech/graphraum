@@ -165,6 +165,14 @@ describe("far look draw", () => {
 		expect(() => graph.setFarLook({ strength: 3 })).toThrow(/strength/);
 	});
 
+	test("a focus lens alone does not bring the halo in up close", () => {
+		const graph = createGraph({ focusLens: { enabled: true }, mode: "2d" });
+		graph.setData(smallNodes(300));
+		graph.setCameraState({ center: { x: 150, y: 50 }, mode: "2d", visibleHeight: 40 });
+		inner(graph).renderFrame();
+		expect(inScene(graph)).toBe(false);
+	});
+
 	test("stays off in 3D", () => {
 		const graph = createGraph({ mode: "3d" });
 		graph.setData(smallNodes(50));

@@ -2550,11 +2550,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 
 	/**
 	 * Whether any drawn node can be small enough on screen for the far look, so the extra draw call
-	 * (and the two-draw-call baseline) stays out up close. The density tier and the focus lens draw
-	 * nodes smaller than the data says, so they always count.
+	 * (and the two-draw-call baseline) stays out up close. The density tier draws blobs smaller than
+	 * the data says, so it always counts; the lens counts through its edge scale.
 	 */
 	private farLookReachable(unitsPerPixel: number): boolean {
-		if (this.densityLodActive || this.focusLens.enabled) return true;
+		if (this.densityLodActive) return true;
 		this.smallestNodeExtent ??= this.data.nodes.reduce(
 			(smallest, node) =>
 				Math.min(
@@ -2565,7 +2565,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 				),
 			Number.POSITIVE_INFINITY,
 		);
-		return 2 * this.smallestNodeExtent < this.farLookOptions.nearPixels * unitsPerPixel;
+		// The lens shrinks nodes at the edge of the view to `edgeScale` of their size.
+		const lens = this.focusLens.enabled ? Math.min(1, this.focusLens.edgeScale) : 1;
+		return 2 * this.smallestNodeExtent * lens < this.farLookOptions.nearPixels * unitsPerPixel;
 	}
 
 	private worldUnitsPerPixel(): number {

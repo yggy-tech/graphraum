@@ -24,8 +24,9 @@ import { dirname, join } from "node:path";
 // 61 500 for the main entry since the radial focus blur: its two shaders, the crisp layer, option checks and the pass, 4.2 KiB gzip over the 56 653 bytes before (60 953 now). It joins depth of field, so a split of the main bundle is the way to win this back.
 // 62 400 for the main entry since streamed nodes grow in (enter timing, per-frame growth over the lens attribute), 60.5 KiB at that change.
 // 16 800 for the lod entry since the layer moves to a grown tree (update, member vote, glide tracks), 16.0 KiB at that change.
+// 65 000 for the main entry since the far look and the shared view scale: the halo layer, its shaders and uniforms, the muted node colours, thin grey edges and option checks, 2.3 KiB gzip over the 61 526 bytes before.
 const BUDGETS = [
-	{ file: "dist/index.js", gzipBytes: 62_400 },
+	{ file: "dist/index.js", gzipBytes: 65_000 },
 	{ file: "dist/styles.js", gzipBytes: 1_500 },
 	{ file: "dist/layout.js", gzipBytes: 7_500 },
 	{ file: "dist/layout-start.js", gzipBytes: 4_500 },

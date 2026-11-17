@@ -15,7 +15,7 @@ describe("node rendering buffers", () => {
 		// Three injects `attribute vec3 instanceColor` when InstancedMesh.instanceColor exists.
 		// Redeclaring it in the ShaderMaterial source fails VALIDATE_STATUS with "redefinition".
 		expect(material.vertexShader).not.toContain("attribute vec3 instanceColor;");
-		expect(material.vertexShader).toContain("nodeColor = instanceColor;");
+		expect(material.vertexShader).toContain("mix(instanceColor");
 		material.dispose();
 	});
 

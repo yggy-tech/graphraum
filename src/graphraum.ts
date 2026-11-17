@@ -75,6 +75,8 @@ import {
 	type VisibleEdgeLayout,
 } from "./edge-viewport-patch";
 import { DEFAULT_ENTER_MS, enterScale } from "./enter-animation";
+import { FAR_LOOK_DEFAULTS, type ResolvedFarLookOptions, resolveFarLookOptions } from "./far-look";
+import { FarLookLayer } from "./far-look-rendering";
 import { fitPerspective, type PerspectiveFit } from "./fit-3d";
 import {
 	FOCUS_LENS_DEFAULTS,
@@ -152,6 +154,7 @@ import type {
 	GraphraumEdge,
 	GraphraumEdgeState,
 	GraphraumEnterOptions,
+	GraphraumFarLookOptions,
 	GraphraumFlyToOptions,
 	GraphraumFocusLensOptions,
 	GraphraumInteractionQualityOptions,
@@ -176,6 +179,7 @@ import type {
 	GraphraumVisualMapper,
 	ResolvedGraphraumSceneOptions,
 } from "./types";
+import { densityNodeExtent, visibleWorldHeight, worldUnitsPerPixel } from "./view-scale";
 import {
 	applyEdgeBudget,
 	collectIncidentEdges,
@@ -309,7 +313,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private nodePickMesh: InstancedMesh | null = null;
 	private edgeMesh: InstancedMesh | null = null;
 	private readonly glowLayer = new NodeGlowLayer(this.scene);
+	private readonly farLook = new FarLookLayer(this.scene);
+	private farLookOptions: ResolvedFarLookOptions = FAR_LOOK_DEFAULTS;
 	private hasGlowNodes = false;
+	/** Smallest node half extent in the data, or null until needed after a change of the nodes. */
+	private smallestNodeExtent: number | null = null;
 	private nodeCapacity = 0;
 	private edgeCapacity = 0;
 	private markerCapacity = 0;
@@ -455,6 +463,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.resizeObserver.observe(container);
 		this.resize();
 		if (options.interactionQuality !== undefined) this.setInteractionQuality(options.interactionQuality);
+		if (options.farLook !== undefined) this.farLookOptions = resolveFarLookOptions(options.farLook);
 	}
 
 	/** Replaces the whole graph. Fits the camera unless `options.fit` is `false`. */
@@ -530,6 +539,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		};
 		this.nodeIds = compiled.nodeIds;
 		this.hasGlowNodes = this.data.nodes.some(hasNodeGlow);
+		this.smallestNodeExtent = null;
 		this.nodeIndices = compiled.nodeIndices;
 		this.lensScales.fill(0);
 		this.edgeNodeIndices = compiled.edgeNodeIndices;
@@ -622,6 +632,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		const addedGlow = addedNodes.some(hasNodeGlow);
 		this.hasGlowNodes ||= addedGlow;
+		this.smallestNodeExtent = null;
 		for (const [id, presentation] of compiled.nodePresentations) this.nodePresentations.set(id, presentation);
 		for (const [id, presentation] of compiled.edgePresentations) this.edgePresentations.set(id, presentation);
 		if (this.materializeAppended(previous)) {
@@ -732,12 +743,13 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		this.nodeCapacity = Math.min(this.maxVisibleNodes, nextCapacity(data.nodes.length));
 		const nodeCapacity = this.nodeCapacity;
 		const nodeGeometry = createNodeGeometry(nodeCapacity);
-		const nodeMaterial = createNodeMaterial(this.mode === "3d");
+		const nodeMaterial = createNodeMaterial(this.mode === "3d", this.farLook.uniforms);
 		const nodeMesh = new InstancedMesh(nodeGeometry, nodeMaterial, nodeCapacity);
 		allocateNodeInstanceColors(nodeMesh, nodeCapacity);
 		nodeMesh.renderOrder = NODE_RENDER_ORDER;
 		this.nodeMesh = nodeMesh;
 		this.scene.add(nodeMesh);
+		this.farLook.attach(nodeMesh);
 
 		const nodePickMesh = new InstancedMesh(new SphereGeometry(1, 8, 6), new MeshBasicMaterial(), nodeCapacity);
 		this.nodePickMesh = nodePickMesh;
@@ -752,7 +764,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		// Room for the slots in use grows with the first and later passes (`reserveEdgeInstances`); the
 		// capacity above is only the most a pass may ever use.
 		const edgeGeometry = createEdgeGeometry(Math.min(INITIAL_EDGE_INSTANCES, this.edgeInstanceCapacity));
-		const edgeMaterial = createEdgeMaterial();
+		const edgeMaterial = createEdgeMaterial(this.farLook.uniforms);
 		const edgeMesh = createEdgeMesh(edgeGeometry, edgeMaterial);
 		edgeMesh.frustumCulled = false;
 		edgeMesh.renderOrder = EDGE_RENDER_ORDER;
@@ -901,6 +913,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		if (prepared.some((update) => update.shapeChanged)) nodeShape.needsUpdate = true;
 		if (prepared.some((update) => update.iconChanged)) nodeIcon.needsUpdate = true;
+		if (prepared.some((update) => update.sizeChanged)) this.smallestNodeExtent = null;
 		if (glowChanged) this.syncGlow();
 		else if (prepared.some((update) => update.positionChanged || update.sizeChanged || update.colorChanged)) {
 			this.glowLayer.rewrite(this.describeGlowNode);
@@ -952,12 +965,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const changed = changedIds(this.selectedEdgeIds, next);
 		this.selectedEdgeIds = next;
 		this.repaintEdgeStates(changed);
-		// Over the edge budget a selected edge is pinned: it joins the overlay, not the budgeted layer.
-		if (changed.length > 0 && this.edgeBudgetActive()) this.syncPinnedOverlay();
-	}
-
-	private edgeBudgetActive() {
-		return this.visibleEdgeCandidateCount > this.mainEdge.edges;
+		// A selected edge is pinned: whatever the layer left out (over the budget, in the density tier, or
+		// with both ends off screen) joins the overlay.
+		if (changed.length > 0) this.syncPinnedOverlay();
 	}
 
 	/**
@@ -1080,11 +1090,11 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	}
 
 	/**
-	 * Selected and focused nodes pin their edges, so over the edge budget a change redraws the overlay.
+	 * Selected and focused nodes pin their edges, so a change redraws the overlay.
 	 * Hover changes constantly, so it does so only for a hovered node with an edge the last frame left out.
 	 */
 	private nodeStateRepinsEdges(state: GraphraumNodeState, enteredNodeIds: readonly string[]): boolean {
-		if (state === "dimmed" || !this.edgeBudgetActive()) return false;
+		if (state === "dimmed") return false;
 		if (state !== "hovered") return true;
 		return enteredNodeIds.some((id) => {
 			const nodeIndex = this.nodeIndices.get(id);
@@ -1227,6 +1237,26 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			this.materializeViewport();
 		}
 		this.requestRender();
+	}
+
+	/**
+	 * Tunes the 2D far look, which eases in only as nodes shrink on screen (see `GraphraumFarLookOptions`),
+	 * the same for wheel zoom and for `fitView`. `false` turns it off; omitted fields keep their
+	 * value, so `{}` turns it back on. Invalid options throw before anything changes.
+	 */
+	setFarLook(options: GraphraumFarLookOptions | false) {
+		this.farLookOptions = resolveFarLookOptions(options, this.farLookOptions);
+		this.requestRender();
+	}
+
+	/**
+	 * World units one CSS pixel covers in 2D, with wheel zoom and fit framing both applied; the one
+	 * scale that culling, the density tier, edge tiers, picking and the far look read. Use it for
+	 * your own labels too. 3D has no single scale (it varies with depth), so there it is only a rough
+	 * guide, measured at the canvas's top-left corner.
+	 */
+	getWorldUnitsPerPixel(): number {
+		return this.worldUnitsPerPixel();
 	}
 
 	/**
@@ -1793,7 +1823,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			return {
 				center: { x: camera.position.x, y: camera.position.y },
 				mode: "2d",
-				visibleHeight: (camera.top - camera.bottom) / camera.zoom,
+				visibleHeight: visibleWorldHeight(camera),
 			};
 		}
 		const { target } = this.controls;
@@ -1930,7 +1960,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		distanceScale: number,
 	): CameraFlight {
 		const fit = orthographicFit(aspect, nodes);
-		const fromVisibleHeight = (camera.top - camera.bottom) / camera.zoom;
+		const fromVisibleHeight = visibleWorldHeight(camera);
 		const toVisibleHeight = fit.visibleHeight * distanceScale;
 		setOrthographicFrustum(camera, aspect, toVisibleHeight);
 		const fromZoom = toVisibleHeight / fromVisibleHeight;
@@ -2097,6 +2127,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const query = timer?.context.createQuery() ?? null;
 		if (timer && query) timer.context.beginQuery(timer.extension.TIME_ELAPSED_EXT, query);
 		const startedAt = performance.now();
+		this.updateFarLook();
 		const radial = this.depthOfField.mode === "radial";
 		const radialFocus = radial ? this.prepareRadialFocus(startedAt) : null;
 		const depthOfField = radial ? null : this.prepareDepthOfField(startedAt);
@@ -2506,11 +2537,42 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		return null;
 	}
 
+	/** Writes the shared scale to the far look uniforms; 2D only, because 3D has no one scale. */
+	private updateFarLook() {
+		const unitsPerPixel = this.camera instanceof OrthographicCamera ? this.worldUnitsPerPixel() : 0;
+		this.farLook.update(
+			unitsPerPixel,
+			this.farLookOptions,
+			glowBlendModeFor(this.theme.background) === "normal",
+			this.farLookReachable(unitsPerPixel),
+		);
+	}
+
+	/**
+	 * Whether any drawn node can be small enough on screen for the far look, so the extra draw call
+	 * (and the two-draw-call baseline) stays out up close. The density tier draws blobs smaller than
+	 * the data says, so it always counts; the lens counts through its edge scale.
+	 */
+	private farLookReachable(unitsPerPixel: number): boolean {
+		if (this.densityLodActive) return true;
+		this.smallestNodeExtent ??= this.data.nodes.reduce(
+			(smallest, node) =>
+				Math.min(
+					smallest,
+					(({ height, width }) => Math.min(width, height))(
+						resolveNodeAxes({ height: node.height, nodeId: node.id, size: node.size, width: node.width }),
+					),
+				),
+			Number.POSITIVE_INFINITY,
+		);
+		// The lens shrinks nodes at the edge of the view to `edgeScale` of their size.
+		const lens = this.focusLens.enabled ? Math.min(1, this.focusLens.edgeScale) : 1;
+		return 2 * this.smallestNodeExtent * lens < this.farLookOptions.nearPixels * unitsPerPixel;
+	}
+
 	private worldUnitsPerPixel(): number {
 		const width = Math.max(this.renderer.domElement.clientWidth, 1);
-		if (this.camera instanceof OrthographicCamera) {
-			return (this.camera.right - this.camera.left) / (width * this.camera.zoom);
-		}
+		if (this.camera instanceof OrthographicCamera) return worldUnitsPerPixel(this.camera, width);
 		const bounds = this.renderer.domElement.getBoundingClientRect();
 		const left = this.screenToWorld(bounds.left, bounds.top);
 		const right = this.screenToWorld(bounds.left + 1, bounds.top);
@@ -2701,7 +2763,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const visibleNodeIndices = nodeDelta ? nodeDelta.indices : materializedNodes.map(({ index }) => index);
 		if (!nodeDelta) this.edgeVisibility.live = false;
 		if (!(nodeDelta && this.patchEdgeSlots(nodeDelta))) {
-			const edgeCandidates = bounds
+			const incidentEdges = bounds
 				? // Candidate order, not slot order, so the edges pack as a full pass would.
 					collectIncidentEdges(
 						reuseSlots ? visibleNodeCandidates : visibleNodeIndices,
@@ -2709,6 +2771,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 						this.data.edges.length,
 					)
 				: this.data.edges.map((_, index) => index);
+			// The fallback when the overlay does not fit: the pinned edges with an end off screen join the layer.
+			const edgeCandidates =
+				pinnedInMain && bounds ? withPinnedEdges(incidentEdges, this.pinnedEdgeIndices()) : incidentEdges;
 			const { skippedSubPixel, visibleEdgeIndices } = this.budgetEdges(edgeCandidates, pinnedInMain);
 			if (!reuseSlots) this.writeAllNodeInstances(materializedNodes, visibleNodeIndices);
 
@@ -2804,6 +2869,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 	private patchEdgeSlots(delta: { entering: number[]; leaving: number[] }) {
 		const { edgeMesh, edgePool, edgeVisibility } = this;
 		if (!edgeMesh || !edgeVisibility.live) return false;
+		// The overlay sits past the layer's slots; an edge it drew may now enter the layer, and the
+		// pool may take its slots. The overlay is drawn again after this patch.
+		for (const edgeIndex of this.overlayEdgeIndices) this.visibleEdgeLayouts.delete(edgeIndex);
+		this.overlayEdgeIndices = [];
 		const entered = edgeVisibility.shift(delta.entering, 1, this.incidentEdgeIndices);
 		const left = edgeVisibility.shift(delta.leaving, -1, this.incidentEdgeIndices);
 		const candidates = this.visibleEdgeCandidateCount + entered.length - left.length;
@@ -2880,16 +2949,10 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		// Overlay entries sit past the main ones; segments are listed by slot, markers leave gaps.
 		this.pickableEdgeSegments.length = Math.min(this.pickableEdgeSegments.length, main.extent);
 		this.visibleEdgeSegmentEdgeIndices.length = Math.min(this.visibleEdgeSegmentEdgeIndices.length, main.extent);
-		const bounds = this.getViewportBounds2d();
-		const onScreen = (edgeIndex: number) =>
-			bounds === null ||
-			this.visibleNodeSlot(this.edgeNodeIndices[edgeIndex * 2] ?? -1) !== undefined ||
-			this.visibleNodeSlot(this.edgeNodeIndices[edgeIndex * 2 + 1] ?? -1) !== undefined;
-		const overlay = this.edgeBudgetActive()
-			? [...this.pinnedEdgeIndices()]
-					.filter((edgeIndex) => !this.visibleEdgeLayouts.has(edgeIndex) && onScreen(edgeIndex))
-					.sort((a, b) => a - b)
-			: [];
+		// Pinned edges are never culled: an end off screen only gets the edge clipped at the viewport.
+		const overlay = [...this.pinnedEdgeIndices()]
+			.filter((edgeIndex) => !this.visibleEdgeLayouts.has(edgeIndex))
+			.sort((a, b) => a - b);
 		const start = main.extent;
 		const packed = this.packEdges(overlay, this.edgeInstanceCapacity - start);
 		const segmentCount = packed.segments.length;
@@ -3193,6 +3256,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		}
 		nodeMesh.count = count;
 		nodePickMesh.count = count;
+		this.farLook.setCount(count);
 	}
 
 	private materializeNodes(indices: readonly number[], bounds: Bounds2D | null): readonly MaterializedNode[] {
@@ -3203,6 +3267,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			});
 		}
 		const aspect = Math.max(this.container.clientWidth, 1) / Math.max(this.container.clientHeight, 1);
+		const unitsPerPixel = this.worldUnitsPerPixel();
 		const columns = Math.max(1, Math.floor(Math.sqrt(this.nodeBudget * aspect)));
 		const rows = Math.max(1, Math.floor(this.nodeBudget / columns));
 		const cellWidth = Math.max((bounds.right - bounds.left) / columns, Number.EPSILON);
@@ -3239,12 +3304,18 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 			cluster.width = grownAxis;
 			cluster.height = grownAxis;
 		}
-		return [...clusters.values()].slice(0, this.nodeBudget);
+		// A blob never draws under a couple of pixels, however far out the camera is, so zooming out
+		// thins the picture out instead of making it vanish.
+		return [...clusters.values()].slice(0, this.nodeBudget).map((cluster) => {
+			const extent = densityNodeExtent(Math.max(cluster.width, cluster.height), unitsPerPixel);
+			return { ...cluster, height: extent, width: extent };
+		});
 	}
 
 	private disposeGraphObjects() {
 		this.nodeSlotsPlain = false;
 		this.glowLayer.dispose();
+		this.farLook.dispose();
 		this.pickableEdgeSegments = [];
 		this.visibleEdgeSegmentEdgeIndices = [];
 		this.visibleEdgeLayouts = new Map();
@@ -3302,6 +3373,14 @@ function setOrthographicFrustum(camera: OrthographicCamera, aspect: number, visi
 	camera.bottom = -visibleHeight / 2;
 	// Wheel zoom scales `camera.zoom`; the frustum frames the graph only at zoom 1.
 	camera.zoom = 1;
+}
+
+/** `edgeIndices` followed by the `pinned` ones it lacks. */
+function withPinnedEdges(edgeIndices: readonly number[], pinned: ReadonlySet<number>): readonly number[] {
+	if (pinned.size === 0) return edgeIndices;
+	const present = new Set(edgeIndices);
+	const missing = [...pinned].filter((edgeIndex) => !present.has(edgeIndex));
+	return missing.length === 0 ? edgeIndices : [...edgeIndices, ...missing];
 }
 
 function hasNodeGlow(node: { glow?: number }): boolean {

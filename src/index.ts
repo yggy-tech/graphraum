@@ -6,6 +6,14 @@ export {
 	trimEdgeEndpoints,
 } from "./edge-endpoint-attach";
 export { graphraumEdgePaths } from "./edge-styles";
+export type { ResolvedFarLookOptions } from "./far-look";
+export {
+	FAR_LOOK_DEFAULTS,
+	FAR_LOOK_FAR_PIXELS,
+	FAR_LOOK_NEAR_PIXELS,
+	FAR_LOOK_STRENGTH,
+	farLookAmount,
+} from "./far-look";
 export type { FocusLensResult, ResolvedFocusLensOptions } from "./focus-lens";
 export { FOCUS_LENS_DEFAULTS, focusLens, focusLensLabelAlpha, focusLensScale } from "./focus-lens";
 export type { GraphologyEdgeAttributes, GraphologyNodeAttributes, GraphologyRenderer } from "./graphology";
@@ -62,6 +70,7 @@ export type {
 	GraphraumEdgeStyle,
 	GraphraumEdgeVisual,
 	GraphraumEnterOptions,
+	GraphraumFarLookOptions,
 	GraphraumFlyToOptions,
 	GraphraumFocusLensOptions,
 	GraphraumFocusMode,
@@ -105,4 +114,5 @@ export type {
 	GraphraumVisualMapper,
 	ResolvedGraphraumSceneOptions,
 } from "./types";
+export { DENSITY_MIN_NODE_PIXELS, visibleWorldHeight, worldUnitsPerPixel } from "./view-scale";
 export { defineVisuals } from "./visuals";

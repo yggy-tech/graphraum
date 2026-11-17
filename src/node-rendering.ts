@@ -9,6 +9,7 @@ import {
 } from "three";
 
 import { createColorResolver } from "./color-cache";
+import { createFarLookUniforms, FAR_LOOK_NODE_GLSL, type FarLookUniforms } from "./far-look-rendering";
 import { DEFAULT_ICON_SCALE, type GraphraumIconAtlas, type GraphraumIconOptions } from "./node-icon";
 import { encodeNodeShape } from "./node-shapes";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
@@ -18,6 +19,8 @@ import type { GraphraumColor, GraphraumNodeBlend, GraphraumNodeShape, GraphraumS
 // InstancedMesh.instanceColor is set (USE_INSTANCING_COLOR). A second declaration
 // fails shader validate with "instanceColor : redefinition".
 const vertexShader = `
+${FAR_LOOK_NODE_GLSL}
+uniform float graphraumFarMute;
 attribute float instanceShape;
 attribute float instanceLens;
 attribute float instanceStrokeWidth;
@@ -42,7 +45,6 @@ varying float nodeRadius;
 #endif
 
 void main() {
-	nodeColor = instanceColor;
 	nodePoint = position.xy;
 	nodeShape = instanceShape;
 	nodeStrokeWidth = instanceStrokeWidth;
@@ -53,6 +55,10 @@ void main() {
 	vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
 	float scaleX = length(instanceMatrix[0].xyz) * instanceLens;
 	float scaleY = length(instanceMatrix[1].xyz) * instanceLens;
+	// Far out on a light background, colours fade toward their luminance (see far-look.ts).
+	float farAmount = graphraumFarAmount(2.0 * max(scaleX, scaleY));
+	float luminance = dot(instanceColor, vec3(0.2126, 0.7152, 0.0722));
+	nodeColor = mix(instanceColor, vec3(luminance), farAmount * graphraumFarMute);
 #ifdef GRAPHRAUM_ICONS
 	nodeIcon = instanceIcon;
 	nodeAspect = scaleX / scaleY;
@@ -266,7 +272,7 @@ export function allocateNodeInstanceColors(mesh: InstancedMesh, capacity: number
 /** After glow halos and edges, so node billboards always cover edges. */
 export const NODE_RENDER_ORDER = 1;
 
-export function createNodeMaterial(depthTest: boolean) {
+export function createNodeMaterial(depthTest: boolean, farLook: FarLookUniforms = createFarLookUniforms()) {
 	return new ShaderMaterial({
 		depthTest,
 		depthWrite: depthTest,
@@ -280,6 +286,7 @@ export function createNodeMaterial(depthTest: boolean) {
 			graphraumIconAtlas: { value: null },
 			graphraumIconGrid: { value: new Vector4(1, 1, 1, 0) },
 			graphraumIconTint: { value: new Vector3(-1, -1, -1) },
+			...farLook,
 		},
 		vertexShader,
 	});

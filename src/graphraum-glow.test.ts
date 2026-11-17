@@ -103,7 +103,8 @@ function glowMesh(): InstancedMesh | undefined {
 
 function createGraph(mode: GraphraumMode = "2d", options: GraphraumOptions = {}) {
 	const container = { append: () => {}, clientHeight: 600, clientWidth: 800 } as unknown as HTMLElement;
-	return new Graphraum(container, { ...options, mode });
+	// These tests count draw calls of the hub halos alone; the far look has its own tests.
+	return new Graphraum(container, { farLook: false, ...options, mode });
 }
 
 /** Moves nodes far outside the fitted 2D viewport so they stop being density candidates. */

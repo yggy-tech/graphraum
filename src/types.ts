@@ -590,6 +590,20 @@ export interface GraphraumInteractionQualityOptions {
 	targetFrameMs?: number;
 }
 
+/**
+ * Options for the far look, which eases in only when nodes shrink on screen, from wheel zoom or
+ * fit alike. Dark backgrounds get a soft additive glow per node. Light ones get "ink on paper": a
+ * soft multiply halo, colours muted a little toward their luminance and thin grey edges.
+ */
+export interface GraphraumFarLookOptions {
+	/** Node width in CSS pixels at and below which the look is at full strength. Default 3. */
+	farPixels?: number;
+	/** Node width in CSS pixels at and above which the look is off. Default 10. */
+	nearPixels?: number;
+	/** Peak halo opacity at full effect, 0 to 1. Default 0.2. */
+	strength?: number;
+}
+
 /** The quality tier in effect: `full` when the camera rests or the option is off. */
 export type GraphraumInteractionQuality = "full" | "minimal" | "reduced";
 
@@ -597,6 +611,8 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
 	antialias?: boolean;
 	/** Opt-in 3D depth of field; off by default. Change it later with `setDepthOfField`. */
 	depthOfField?: GraphraumDepthOfFieldOptions;
+	/** The 2D far look; on by default and `false` turns it off. Change it later with `setFarLook`. */
+	farLook?: GraphraumFarLookOptions | false;
 	/** Opt-in focus lens; off by default. Change it later with `setFocusLens`. */
 	focusLens?: GraphraumFocusLensOptions;
 	/** Opt-in lower quality while the camera moves; off by default. Change it later with `setInteractionQuality`. */

@@ -4,6 +4,7 @@ import { createColorResolver } from "./color-cache";
 import type { EdgeMarkerInstance, EdgeSegmentInstance } from "./edge-materialize";
 import type { EdgePaint } from "./edge-state";
 import { encodeEdgeStyle } from "./edge-styles";
+import { createFarLookUniforms, type FarLookUniforms } from "./far-look-rendering";
 import { OUTPUT_COLOR_SPACE_FRAGMENT } from "./shader-output";
 
 /**
@@ -20,6 +21,7 @@ attribute float instanceWidth;
 attribute float instanceStyle;
 attribute vec2 instanceTrim;
 uniform float sphereEnds;
+uniform float graphraumFarEdgeWidth;
 
 varying vec4 edgeColor;
 varying float edgeKind;
@@ -70,10 +72,12 @@ void main() {
 		}
 		vec2 perp = vec2(-dir.y, dir.x);
 		vec2 mid = (viewA.xy + viewB.xy) * 0.5;
-		vec2 offset = dir * position.x * len + perp * position.y * instanceWidth;
+		// Thinner while the light far look is on (graphraumFarEdgeWidth is 1 otherwise).
+		float segmentWidth = instanceWidth * graphraumFarEdgeWidth;
+		vec2 offset = dir * position.x * len + perp * position.y * segmentWidth;
 		float depth = mix(viewA.z, viewB.z, position.x + 0.5);
 		viewPosition = vec4(mid + offset, depth, 1.0);
-		edgeDashT = (position.x + 0.5) * len / max(instanceWidth * 4.0, 0.0001);
+		edgeDashT = (position.x + 0.5) * len / max(segmentWidth * 4.0, 0.0001);
 	} else {
 		// Marker: oriented triangle with its apex pinned to EndA, pointing
 		// along EndA -> EndB (the direction of travel), base trailing behind.
@@ -102,6 +106,8 @@ void main() {
 `;
 
 const fragmentShader = `
+uniform float graphraumFarEdge;
+uniform vec3 graphraumFarEdgeColor;
 varying vec4 edgeColor;
 varying float edgeKind;
 varying float edgeStyle;
@@ -124,7 +130,8 @@ void main() {
 		if (abs(edgeUv.y - 0.5) > halfWidth) discard;
 	}
 	if (edgeColor.a <= 0.0) discard;
-	gl_FragColor = edgeColor;
+	// Light far look: edges turn to one thin grey instead of piling up as a coloured haze.
+	gl_FragColor = vec4(mix(edgeColor.rgb, graphraumFarEdgeColor, graphraumFarEdge), edgeColor.a);
 	${OUTPUT_COLOR_SPACE_FRAGMENT}
 }
 `;
@@ -273,9 +280,9 @@ export const EDGE_RENDER_ORDER = -1;
  */
 export const EDGE_SCENE_RENDER_ORDER = 2;
 
-export function createEdgeMaterial(): ShaderMaterial {
+export function createEdgeMaterial(farLook: FarLookUniforms = createFarLookUniforms()): ShaderMaterial {
 	return new ShaderMaterial({
-		uniforms: { sphereEnds: { value: 0 } },
+		uniforms: { sphereEnds: { value: 0 }, ...farLook },
 		depthTest: false,
 		depthWrite: false,
 		fragmentShader,

@@ -33,6 +33,9 @@ export const DEFAULT_ENDPOINT_CLEARANCE = 0.75;
 // @public
 export function defineVisuals<NodeAttributes = undefined, EdgeAttributes = undefined>(visuals: GraphraumVisualMapper<NodeAttributes, EdgeAttributes>): GraphraumVisualMapper<NodeAttributes, EdgeAttributes>;
 
+// @public
+export const DENSITY_MIN_NODE_PIXELS = 2;
+
 // @public (undocumented)
 export type EndpointAttach = "boundary" | "center";
 
@@ -49,6 +52,21 @@ export interface EndpointOutline {
     // (undocumented)
     width?: number;
 }
+
+// @public (undocumented)
+export const FAR_LOOK_DEFAULTS: ResolvedFarLookOptions;
+
+// @public
+export const FAR_LOOK_FAR_PIXELS = 3;
+
+// @public
+export const FAR_LOOK_NEAR_PIXELS = 10;
+
+// @public
+export const FAR_LOOK_STRENGTH = 0.2;
+
+// @public
+export function farLookAmount(nodePixels: number, nearPixels: number, farPixels: number): number;
 
 // @public
 export const FOCUS_LENS_DEFAULTS: ResolvedFocusLensOptions;
@@ -120,6 +138,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     getScene(): ResolvedGraphraumSceneOptions;
     // (undocumented)
     getSelectedNodeIds(): readonly string[];
+    getWorldUnitsPerPixel(): number;
     onFocusChange(listener: () => void): () => boolean;
     onNodeDrag(listener: (event: GraphraumNodeDragEvent) => void): () => boolean;
     onViewChange(listener: () => void): () => boolean;
@@ -142,6 +161,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
     setEdgeColors(colors: ReadonlyMap<string, GraphraumColor> | Iterable<readonly [string, GraphraumColor]>): void;
     setEdgeSelection(edgeIds: Iterable<string>): void;
     setEdgeState(state: GraphraumEdgeState, edgeIds: Iterable<string>): void;
+    setFarLook(options: GraphraumFarLookOptions | false): void;
     setFocusLens(options: GraphraumFocusLensOptions): void;
     setIconAtlas(atlas: GraphraumIconAtlas | null, options?: GraphraumIconOptions): void;
     setInteractionQuality(options: GraphraumInteractionQualityOptions): void;
@@ -405,6 +425,13 @@ export interface GraphraumEnterOptions {
 }
 
 // @public
+export interface GraphraumFarLookOptions {
+    farPixels?: number;
+    nearPixels?: number;
+    strength?: number;
+}
+
+// @public
 export interface GraphraumFlyToOptions {
     distanceScale?: number;
     durationMs?: number;
@@ -606,6 +633,7 @@ export interface GraphraumOptions<NodeAttributes = undefined, EdgeAttributes = u
     // (undocumented)
     antialias?: boolean;
     depthOfField?: GraphraumDepthOfFieldOptions;
+    farLook?: GraphraumFarLookOptions | false;
     focusLens?: GraphraumFocusLensOptions;
     interactionQuality?: GraphraumInteractionQualityOptions;
     // (undocumented)
@@ -960,6 +988,18 @@ export function orderFocusNodeIds(input: {
 }): string[];
 
 // @public
+export interface ResolvedFarLookOptions {
+    // (undocumented)
+    readonly enabled: boolean;
+    // (undocumented)
+    readonly farPixels: number;
+    // (undocumented)
+    readonly nearPixels: number;
+    // (undocumented)
+    readonly strength: number;
+}
+
+// @public
 export interface ResolvedFocusLensOptions {
     // (undocumented)
     readonly centerScale: number;
@@ -1034,6 +1074,14 @@ export function trimEdgeEndpoints(input: TrimEdgeEndpointsInput): {
     source: GraphraumPosition;
     target: GraphraumPosition;
 };
+
+// Warning: (ae-forgotten-export) The symbol "OrthographicFrame" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function visibleWorldHeight(camera: Pick<OrthographicFrame, "bottom" | "top" | "zoom">): number;
+
+// @public
+export function worldUnitsPerPixel(camera: Pick<OrthographicFrame, "left" | "right" | "zoom">, canvasWidthPixels: number): number;
 
 // (No @packageDocumentation comment for this package)
 

@@ -183,8 +183,6 @@ interface ActiveMorph {
 	next: DrawnSet;
 	/** Resting node of every tracked id: where a staying element ends, or the leaving one as it was. */
 	rest: Map<string, GraphraumNode>;
-	/** Place and size each tracked id was last drawn at, so a newer update starts from there. */
-	shown: Map<string, { position: Vec3; scale: number }>;
 	tracks: MorphTrack[];
 }
 
@@ -361,15 +359,26 @@ export function attachClusterLod(
 		...scaledSize(node, scale),
 	});
 
+	/**
+	 * Moves nodes in the graph and notes where they now are in `drawn`, so the next swap compares with what is
+	 * really on screen, not with where an animation was headed.
+	 */
+	function place(placements: readonly { node: GraphraumNode; position: Vec3; scale: number }[]) {
+		if (placements.length === 0) return;
+		graph.updateNodes(placements.map(({ node, position, scale }) => nodeUpdate(node, position, scale)));
+		for (const { node, position, scale } of placements) {
+			drawn.nodes.set(node.id, { ...node, position, ...scaledSize(node, scale) });
+		}
+	}
+
 	function finishTransition(active: ActiveTransition) {
 		active.cancel();
 		transition = null;
+		place(
+			[...active.plan.entering.map(({ key }) => key), ...active.plan.growing].map((key) => restPlacement(active, key)),
+		);
 		const rest = new Map(drawn.nodes);
 		for (const { key } of active.plan.leaving) rest.delete(elementNode(key).id);
-		const finalUpdates: GraphraumNodeUpdate[] = [];
-		for (const { key } of active.plan.entering) finalUpdates.push(restUpdate(active, key));
-		for (const key of active.plan.growing) finalUpdates.push(restUpdate(active, key));
-		if (finalUpdates.length > 0) graph.updateNodes(finalUpdates);
 		for (const [key, node] of active.final)
 			if (rest.has(node.id) && !active.plan.leaving.some((l) => l.key === key)) rest.set(node.id, node);
 		const edges = new Map(drawn.edges);
@@ -384,15 +393,15 @@ export function attachClusterLod(
 		}
 	}
 
-	const restUpdate = (active: ActiveTransition, key: string): GraphraumNodeUpdate => {
+	const restPlacement = (active: ActiveTransition, key: string) => {
 		const node = active.final.get(key) as GraphraumNode;
-		return nodeUpdate(node, { x: node.position.x, y: node.position.y, z: node.position.z ?? 0 }, 1);
+		return { node, position: { x: node.position.x, y: node.position.y, z: node.position.z ?? 0 }, scale: 1 };
 	};
 
 	function startTransition(plan: TransitionPlan, final: Map<string, GraphraumNode>) {
 		const active: ActiveTransition = { cancel: () => undefined, final, plan, startedAt: null };
 		transition = active;
-		const place = (key: string): Vec3 => {
+		const finalPosition = (key: string): Vec3 => {
 			const node = final.get(key) as GraphraumNode;
 			return { x: node.position.x, y: node.position.y, z: node.position.z ?? 0 };
 		};
@@ -404,10 +413,12 @@ export function attachClusterLod(
 				finishTransition(active);
 				return;
 			}
-			graph.updateNodes(
-				sampleTransition(plan, progress, place).map(({ key, position, scale }) =>
-					nodeUpdate(final.get(key) as GraphraumNode, position, scale),
-				),
+			place(
+				sampleTransition(plan, progress, finalPosition).map(({ key, position, scale }) => ({
+					node: final.get(key) as GraphraumNode,
+					position,
+					scale,
+				})),
 			);
 			labels?.update();
 			active.cancel = schedule(tick);
@@ -505,26 +516,14 @@ export function attachClusterLod(
 
 	const sizeOf = (node: GraphraumNode) => node.size ?? DEFAULT_NODE_SIZE;
 
-	/** What the graph shows now, by id: drawn nodes, with the place and size a running morph gave them. */
-	function shownNodes(): Map<string, GraphraumNode> {
-		if (!morph) return drawn.nodes;
-		const shown = new Map(drawn.nodes);
-		for (const [id, sample] of morph.shown) {
-			const node = morph.rest.get(id) ?? shown.get(id);
-			if (node) shown.set(id, { ...node, position: sample.position, ...scaledSize(node, sample.scale) });
-		}
-		return shown;
-	}
-
 	function finishMorph(active: ActiveMorph) {
 		active.cancel();
 		morph = null;
-		const finals: GraphraumNodeUpdate[] = [];
-		for (const track of active.tracks) {
-			if (track.toScale !== 1) continue;
-			finals.push(nodeUpdate(active.rest.get(track.id) as GraphraumNode, track.to, 1));
-		}
-		if (finals.length > 0) graph.updateNodes(finals);
+		place(
+			active.tracks
+				.filter((track) => track.toScale === 1)
+				.map((track) => ({ node: active.rest.get(track.id) as GraphraumNode, position: track.to, scale: 1 })),
+		);
 		swap(active.next);
 		labels?.setItems(aggregateItems());
 		labels?.update();
@@ -546,7 +545,8 @@ export function attachClusterLod(
 			throw new Error("Cluster LOD update must keep every node of the old tree.");
 		pending = false;
 		if (transition) finishTransition(transition);
-		const shown = shownNodes();
+		// What the graph shows now, by id, with the place and size a running animation gave each node.
+		const shown = drawn.nodes;
 		if (morph) {
 			morph.cancel();
 			morph = null;
@@ -614,7 +614,7 @@ export function attachClusterLod(
 		swap({ edges: next.edges, nodes: start });
 		recordCut(cut, startedAt);
 		if (tracks.length === 0) return;
-		const active: ActiveMorph = { cancel: () => undefined, next, rest, shown: new Map(), tracks };
+		const active: ActiveMorph = { cancel: () => undefined, next, rest, tracks };
 		morph = active;
 		diagnostics = { ...diagnostics, transitioning: true };
 		let begun: number | null = null;
@@ -626,13 +626,12 @@ export function attachClusterLod(
 				finishMorph(active);
 				return;
 			}
-			const updates: GraphraumNodeUpdate[] = [];
-			for (const track of tracks) {
-				const sample = sampleMorph(track, progress);
-				active.shown.set(track.id, sample);
-				updates.push(nodeUpdate(rest.get(track.id) as GraphraumNode, sample.position, sample.scale));
-			}
-			graph.updateNodes(updates);
+			place(
+				tracks.map((track) => {
+					const { position, scale } = sampleMorph(track, progress);
+					return { node: rest.get(track.id) as GraphraumNode, position, scale };
+				}),
+			);
 			labels?.update();
 			active.cancel = schedule(tick);
 		};

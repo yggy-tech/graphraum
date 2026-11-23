@@ -745,6 +745,9 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		const nodeGeometry = createNodeGeometry(nodeCapacity);
 		const nodeMaterial = createNodeMaterial(this.mode === "3d", this.farLook.uniforms);
 		const nodeMesh = new InstancedMesh(nodeGeometry, nodeMaterial, nodeCapacity);
+		// three.js measures an instanced mesh's bounds once and never again, so nodes that moved after the first
+		// frame would vanish whole when those old bounds leave the view. The GPU clips what is off screen.
+		nodeMesh.frustumCulled = false;
 		allocateNodeInstanceColors(nodeMesh, nodeCapacity);
 		nodeMesh.renderOrder = NODE_RENDER_ORDER;
 		this.nodeMesh = nodeMesh;
@@ -907,6 +910,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		if (prepared.some((update) => update.positionChanged || update.sizeChanged)) {
 			nodeMesh.instanceMatrix.needsUpdate = true;
 			nodePickMesh.instanceMatrix.needsUpdate = true;
+			forgetInstanceBounds(nodePickMesh);
 		}
 		if (prepared.some((update) => update.colorChanged) && nodeMesh.instanceColor) {
 			nodeMesh.instanceColor.needsUpdate = true;
@@ -3257,6 +3261,7 @@ export class Graphraum<NodeAttributes = undefined, EdgeAttributes = undefined> {
 		nodeMesh.count = count;
 		nodePickMesh.count = count;
 		this.farLook.setCount(count);
+		forgetInstanceBounds(nodePickMesh);
 	}
 
 	private materializeNodes(indices: readonly number[], bounds: Bounds2D | null): readonly MaterializedNode[] {
@@ -3417,4 +3422,13 @@ export function edgeInstanceCapacities(edgeCount: number, maxVisibleEdges: numbe
 		markerCapacity,
 		edgeInstanceCapacity: segmentCapacity + markerCapacity,
 	};
+}
+
+/**
+ * Drops the bounds three.js keeps for an instanced mesh, which it measures once and reuses. A raycast then
+ * measures them again from the instances as they are now, so nodes that moved can still be picked.
+ */
+function forgetInstanceBounds(mesh: InstancedMesh) {
+	mesh.boundingSphere = null;
+	mesh.boundingBox = null;
 }

@@ -6,6 +6,10 @@ import type { GraphraumCameraState, GraphraumData } from "./types";
 afterEach(() => unmountGraphs());
 
 const NODE_COUNT = 400;
+// A software-rendered frame can take longer than a short idle window, which would restore full quality
+// mid-move and make these tests flaky. Keep the window well above the slowest frame a CI runner shows.
+const IDLE_MS = 600;
+const REST_MS = IDLE_MS * 3;
 
 function ring(): GraphraumData {
 	return {
@@ -28,7 +32,11 @@ describe("interaction quality in real WebGL2", () => {
 	test("lowers the tier while the camera moves slowly and restores it at rest", async () => {
 		// A target no frame can meet makes every camera frame slow, whatever this machine does.
 		const graph = mountGraph(
-			{ interactionQuality: { enabled: true, idleMs: 120, targetFrameMs: 0.001 }, maxVisibleEdges: 400, mode: "3d" },
+			{
+				interactionQuality: { enabled: true, idleMs: IDLE_MS, targetFrameMs: 0.001 },
+				maxVisibleEdges: 400,
+				mode: "3d",
+			},
 			ring(),
 		);
 		await nextFrame();
@@ -49,7 +57,7 @@ describe("interaction quality in real WebGL2", () => {
 		expect(moving.gpuDrawCalls).toBe(before.gpuDrawCalls);
 		expect(moving.totalEdges).toBe(before.totalEdges);
 
-		await wait(400);
+		await wait(REST_MS);
 		const rested = graph.getDiagnostics();
 		expect(rested.interactionQuality).toBe("full");
 		expect(rested.visibleEdges).toBe(before.visibleEdges);
@@ -95,7 +103,7 @@ describe("interaction quality in real WebGL2", () => {
 			edges: [],
 		};
 		const graph = mountGraph(
-			{ interactionQuality: { enabled: true, idleMs: 120, targetFrameMs: 0.001 }, maxVisibleNodes: 400 },
+			{ interactionQuality: { enabled: true, idleMs: IDLE_MS, targetFrameMs: 0.001 }, maxVisibleNodes: 400 },
 			data,
 		);
 		await nextFrame();
@@ -108,7 +116,7 @@ describe("interaction quality in real WebGL2", () => {
 		}
 		expect(graph.getDiagnostics().interactionQuality).not.toBe("full");
 		expect(graph.getDiagnostics().aggregatedNodeClusters).toBeGreaterThan(0);
-		await wait(400);
+		await wait(REST_MS);
 		const rested = graph.getDiagnostics();
 		expect(rested.interactionQuality).toBe("full");
 		expect(rested.aggregatedNodeClusters).toBe(0);
